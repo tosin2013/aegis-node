@@ -141,10 +141,10 @@ message HealthCheckResponse {
   bool ready = 2;
 }
 
-// ControlPlane is implemented by the Go control plane and consumed by the
-// Rust inference engine. It owns policy decisions, approval routing, and
+// ControlPlaneService is implemented by the Go control plane and consumed by
+// the Rust inference engine. It owns policy decisions, approval routing, and
 // ledger writes.
-service ControlPlane {
+service ControlPlaneService {
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
   rpc EndSession(EndSessionRequest) returns (EndSessionResponse);
   rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
@@ -152,8 +152,9 @@ service ControlPlane {
   rpc AppendLedgerEntry(LedgerEntry) returns (AppendLedgerEntryResponse);
 }
 
-// AgentRuntime is implemented by the Rust inference engine and consumed by
-// the Go control plane (CLI, operator). It owns model lifecycle and inference.
-service AgentRuntime {
+// AgentRuntimeService is implemented by the Rust inference engine and
+// consumed by the Go control plane (CLI, operator). It owns model lifecycle
+// and inference.
+service AgentRuntimeService {
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }

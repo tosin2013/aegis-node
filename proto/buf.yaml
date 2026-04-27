@@ -2,6 +2,14 @@ version: v2
 lint:
   use:
     - STANDARD
+  except:
+    # Allow reusing meaningful message types across RPCs (e.g. LedgerEntry as
+    # the AppendLedgerEntry request, ApprovalRequest/Response on RequestApproval).
+    # Per-RPC unique types would force trivial wrapper messages that obscure the
+    # data model. Same opt-out used by k8s, etcd, and similar infra projects.
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
 breaking:
   use:
     - FILE
