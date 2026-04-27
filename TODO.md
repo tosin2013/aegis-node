@@ -17,11 +17,12 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 - [x] **P0** [ADR-011, ADR-006] Define and freeze the Trajectory Ledger and Access Log JSON-LD `@context` documents (stable URIs, content fields, `prev_hash`, `timestamp`, `agent_identity_hash`). — `schemas/ledger/v1/context.jsonld`
 - [x] **P0** [ADR-002] Stand up Rust + Go monorepo with shared CI (cross-language conformance test harness from day one). — workspace + `cmd/`, `pkg/`, `crates/`, `Makefile`, 5 GitHub Actions workflows
 - [x] **P0** [ADR-017] Set up Devcontainer + `mise.toml` with pinned Rust/Go/buf/ajv/cosign/oras/golangci-lint versions; CI consumes the same definition. — `.devcontainer/Dockerfile` + `mise.toml` (CI still uses native installs; switch to image is a follow-up)
-- [x] **P1** [ADR-017] Build, Cosign-sign, and publish the devbox OCI image; document `oras pull` + `cosign verify` flow for air-gapped reviewers. — image at `ghcr.io/tosin2013/aegis-node-devbox`, Cosign-signed via Sigstore keyless. **Docs (oras pull / cosign verify flow) still pending.**
-- [ ] **P1** [ADR-002] Document the cross-phase Compatibility Charter (which schemas cannot break across versions).
-- [ ] **P1** [ADR-016] CONTRIBUTING.md + DCO/CLA decision; finalize before first external contribution. (License + NOTICE shipped.)
-- [ ] **P1** [ADR-013, ADR-017] Document the air-gapped reviewer workflow: `oras pull` + `cosign verify` against the signed devbox image.
+- [x] **P1** [ADR-017] Build, Cosign-sign, and publish the devbox OCI image; document `oras pull` + `cosign verify` flow for air-gapped reviewers. — image at `ghcr.io/tosin2013/aegis-node-devbox`, Cosign-signed via Sigstore keyless; reviewer flow documented in `docs/SUPPLY_CHAIN.md`.
+- [x] **P1** [ADR-002] Document the cross-phase Compatibility Charter (which schemas cannot break across versions). — `docs/COMPATIBILITY_CHARTER.md`
+- [x] **P1** [ADR-016] CONTRIBUTING.md + DCO/CLA decision; finalize before first external contribution. — `CONTRIBUTING.md` (DCO over CLA, Apache 2.0).
+- [x] **P1** [ADR-013, ADR-017] Document the air-gapped reviewer workflow: `oras pull` + `cosign verify` against the signed devbox image. — `docs/SUPPLY_CHAIN.md`
 - [ ] **P2** [ADR-015] Document phase exit criteria publicly so the design-partner review milestone is unambiguous.
+- [ ] **P2** [ADR-016] Wire DCO sign-off check into CI (currently maintainer-verified at PR review).
 
 ## Phase 1a — Core Security Primitives (target: v0.5.0, 2026-07-20)
 

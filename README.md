@@ -26,6 +26,9 @@ Aegis-Node is structured around the ten questions a zero-trust security team ask
 ## Documentation
 
 - **[Architectural Decision Records](docs/adrs/)** — 17 ADRs covering the security primitives, runtime architecture, supply chain, and dev environment.
+- **[Compatibility Charter](docs/COMPATIBILITY_CHARTER.md)** — what the project promises not to break across versions (manifest, ledger, IPC).
+- **[Supply Chain Verification](docs/SUPPLY_CHAIN.md)** — `cosign verify` / `oras pull` flow for the signed devbox image and (later) model artifacts.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — DCO sign-off, dev workflow, ADR process.
 - **[RELEASE_PLAN.md](RELEASE_PLAN.md)** — 7 baseline milestones (v0.1.0 → v3.0.0). v1.0.0 anchors to the U.S. CMMC 2.0 deadline (2026-11-02).
 - **[TODO.md](TODO.md)** — phase-grouped task plan plus paired test+production tasks decomposed from each ADR.
 
