@@ -34,9 +34,10 @@ jobs:
           shopt -s globstar nullglob
           schemas=(schemas/manifest/**/*.schema.json)
           if (( ${#schemas[@]} )); then
+            npm install --no-save --no-audit --no-fund ajv-cli@5 ajv-formats@3
             for s in "${schemas[@]}"; do
               echo "Compiling $s"
-              npx -y ajv-cli@5 compile -s "$s"
+              ./node_modules/.bin/ajv compile -s "$s" -c ajv-formats
             done
           else
             echo "No JSON schemas yet — skipping"

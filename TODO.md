@@ -12,14 +12,15 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 
 ## Phase 0 — Foundations (target: v0.1.0, 2026-05-25)
 
-- [ ] **P0** [ADR-002, ADR-015] Define and commit IPC contract `aegis.proto` (gRPC over UDS local / mTLS K8s). Treat as a versioned API.
-- [ ] **P0** [ADR-004] Define and freeze the Permission Manifest JSON Schema v1 (versioned, extensible). Cover scoped permissions, `write_grants`, `approval_required_for`, `extends:` composition.
-- [ ] **P0** [ADR-011, ADR-006] Define and freeze the Trajectory Ledger and Access Log JSON-LD `@context` documents (stable URIs, content fields, `prev_hash`, `timestamp`, `agent_identity_hash`).
-- [ ] **P0** [ADR-002] Stand up Rust + Go monorepo with shared CI (cross-language conformance test harness from day one).
-- [ ] **P0** [ADR-017] Set up Devcontainer + `mise.toml` with pinned Rust/Go/buf/ajv/cosign/oras/golangci-lint versions; CI consumes the same definition.
-- [ ] **P1** [ADR-017] Build, Cosign-sign, and publish the devbox OCI image; document `oras pull` + `cosign verify` flow for air-gapped reviewers.
+- [x] **P0** [ADR-002, ADR-015] Define and commit IPC contract `aegis.proto` (gRPC over UDS local / mTLS K8s). Treat as a versioned API. — `proto/aegis/v1/aegis.proto` + `proto/buf.yaml`
+- [x] **P0** [ADR-004] Define and freeze the Permission Manifest JSON Schema v1 (versioned, extensible). Cover scoped permissions, `write_grants`, `approval_required_for`, `extends:` composition. — `schemas/manifest/v1/manifest.schema.json` + 2 examples
+- [x] **P0** [ADR-011, ADR-006] Define and freeze the Trajectory Ledger and Access Log JSON-LD `@context` documents (stable URIs, content fields, `prev_hash`, `timestamp`, `agent_identity_hash`). — `schemas/ledger/v1/context.jsonld`
+- [x] **P0** [ADR-002] Stand up Rust + Go monorepo with shared CI (cross-language conformance test harness from day one). — workspace + `cmd/`, `pkg/`, `crates/`, `Makefile`, 5 GitHub Actions workflows
+- [x] **P0** [ADR-017] Set up Devcontainer + `mise.toml` with pinned Rust/Go/buf/ajv/cosign/oras/golangci-lint versions; CI consumes the same definition. — `.devcontainer/Dockerfile` + `mise.toml` (CI still uses native installs; switch to image is a follow-up)
+- [x] **P1** [ADR-017] Build, Cosign-sign, and publish the devbox OCI image; document `oras pull` + `cosign verify` flow for air-gapped reviewers. — image at `ghcr.io/tosin2013/aegis-node-devbox`, Cosign-signed via Sigstore keyless. **Docs (oras pull / cosign verify flow) still pending.**
 - [ ] **P1** [ADR-002] Document the cross-phase Compatibility Charter (which schemas cannot break across versions).
-- [ ] **P1** [ADR-016] Apply Apache 2.0 license + CONTRIBUTING + DCO/CLA decision; finalize before first external contribution.
+- [ ] **P1** [ADR-016] CONTRIBUTING.md + DCO/CLA decision; finalize before first external contribution. (License + NOTICE shipped.)
+- [ ] **P1** [ADR-013, ADR-017] Document the air-gapped reviewer workflow: `oras pull` + `cosign verify` against the signed devbox image.
 - [ ] **P2** [ADR-015] Document phase exit criteria publicly so the design-partner review milestone is unambiguous.
 
 ## Phase 1a — Core Security Primitives (target: v0.5.0, 2026-07-20)
