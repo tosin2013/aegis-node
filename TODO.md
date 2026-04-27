@@ -16,6 +16,8 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 - [ ] **P0** [ADR-004] Define and freeze the Permission Manifest JSON Schema v1 (versioned, extensible). Cover scoped permissions, `write_grants`, `approval_required_for`, `extends:` composition.
 - [ ] **P0** [ADR-011, ADR-006] Define and freeze the Trajectory Ledger and Access Log JSON-LD `@context` documents (stable URIs, content fields, `prev_hash`, `timestamp`, `agent_identity_hash`).
 - [ ] **P0** [ADR-002] Stand up Rust + Go monorepo with shared CI (cross-language conformance test harness from day one).
+- [ ] **P0** [ADR-017] Set up Devcontainer + `mise.toml` with pinned Rust/Go/buf/ajv/cosign/oras/golangci-lint versions; CI consumes the same definition.
+- [ ] **P1** [ADR-017] Build, Cosign-sign, and publish the devbox OCI image; document `oras pull` + `cosign verify` flow for air-gapped reviewers.
 - [ ] **P1** [ADR-002] Document the cross-phase Compatibility Charter (which schemas cannot break across versions).
 - [ ] **P1** [ADR-016] Apply Apache 2.0 license + CONTRIBUTING + DCO/CLA decision; finalize before first external contribution.
 - [ ] **P2** [ADR-015] Document phase exit criteria publicly so the design-partner review milestone is unambiguous.

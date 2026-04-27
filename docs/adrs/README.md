@@ -24,6 +24,7 @@ The decisions are anchored in the Architecture Principles (PRD §7) and the ten-
 | [014](014-cpu-first-gguf-inference-via-llama-cpp.md) | CPU-First GGUF Inference via llama.cpp | §5 Phase 1 |
 | [015](015-three-phase-deployment-roadmap.md) | Three-Phase Deployment Roadmap | §5 |
 | [016](016-open-core-licensing-model.md) | Open-Core Licensing Model | §9.1 |
+| [017](017-local-development-environment-devcontainer-mise.md) | Local Development Environment: Devcontainer + mise | §7 (#3, #4), §6.1 |
 
 ## Decision Coverage Matrix
 

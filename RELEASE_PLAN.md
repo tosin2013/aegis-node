@@ -49,49 +49,49 @@ _Synced from `.mcp-adr-cache/milestones.local.json`. Run `release_tracking` with
 
 ### v0.1.0 — Foundations
 <!-- milestone-id: v0-1-0-foundations -->
-- **Status:** local-only
+- **Status:** pushed (#1)
 - **Due:** 2026-05-25
 
 Manifest schema v1 frozen, ledger JSON-LD schema frozen, IPC contract (aegis.proto) committed, Rust+Go monorepo + CI scaffolding. Sets the format-stability invariant for all downstream phases. Maps to ADRs 002, 004, 011, 015.
 
 ### v0.5.0 — Core Security Primitives
 <!-- milestone-id: v0-5-0-core-security-primitives -->
-- **Status:** local-only
+- **Status:** pushed (#2)
 - **Due:** 2026-07-20
 
 Phase 1a: F1 SPIFFE-compatible workload identity with built-in CA, F2 Permission Manifest parser + enforcer, F9 hash-chained ledger writer + verify CLI, F4 access log emitter wired into Rust syscalls. Maps to ADRs 003, 004, 006, 011.
 
 ### v0.8.0 — Reasoning + Approval
 <!-- milestone-id: v0-8-0-reasoning-approval -->
-- **Status:** local-only
+- **Status:** pushed (#3)
 - **Due:** 2026-08-31
 
 Phase 1b: F5 pre-execution trajectory recorder, F3 human approval gate (CLI + local web UI + signed API), F6 network-deny-by-default runtime gate with end-of-session attestation, F7 read-only default + write_grants enforcement (incl. time-bounded grants). Maps to ADRs 005, 007, 008, 009.
 
 ### v0.9.0 — Tooling and Replay
 <!-- milestone-id: v0-9-0-tooling-and-replay -->
-- **Status:** local-only
+- **Status:** pushed (#4)
 - **Due:** 2026-10-05
 
 Phase 1c: F10 policy-as-code validator (aegis validate) with composition + linter, F8 deterministic offline single-file HTML replay viewer, OCI artifact pull + Cosign verification (aegis pull), llama.cpp Rust FFI binding integrated with Backend trait. Maps to ADRs 010, 012, 013, 014.
 
 ### v1.0.0 — Phase 1 GA / Security Review Milestone
 <!-- milestone-id: v1-0-0-phase-1-ga-security-review-milestone -->
-- **Status:** local-only
+- **Status:** pushed (#5)
 - **Due:** 2026-11-02
 
 End-to-end conformance test suite green, auditor evidence package generator, first design-partner security review passed, Apache 2.0 community release. Anchored to the U.S. CMMC 2.0 deadline (PRD §9 — defense beachhead). Maps to ADRs 001, 016.
 
 ### v2.0.0 — Kubernetes Runtime
 <!-- milestone-id: v2-0-0-kubernetes-runtime -->
-- **Status:** local-only
+- **Status:** pushed (#6)
 - **Due:** 2027-01-25
 
 Phase 2: Kubernetes Operator + CRDs (AegisAgent, PermissionManifest, Ledger), SPIRE workload-attestation integration, GPU backends (vLLM/TGI/KServe) against the Backend trait, persistent ledger storage, NetworkPolicies stacked under runtime-level F6 deny. Maps to ADRs 002, 003, 008, 014, 015.
 
 ### v3.0.0 — OpenShift Enterprise Runtime
 <!-- milestone-id: v3-0-0-openshift-enterprise-runtime -->
-- **Status:** local-only
+- **Status:** pushed (#7)
 - **Due:** 2027-04-19
 
 Phase 3: OpenShift Security Context Constraints (SCC) integration, disconnected (air-gapped) install path, GitOps deployment + RBAC mapping, automated CMMC/FedRAMP report exports from the ledger + manifest history. Maps to ADRs 001, 013, 015.
