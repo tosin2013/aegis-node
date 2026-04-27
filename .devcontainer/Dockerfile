@@ -51,7 +51,8 @@ ENV CARGO_HOME=/usr/local/cargo \
 RUN curl -fsSL https://sh.rustup.rs \
     | sh -s -- -y \
         --default-toolchain "${RUST_VERSION}" \
-        --component clippy rustfmt \
+        --component clippy \
+        --component rustfmt \
         --profile minimal \
  && chmod -R a+rwX /usr/local/cargo /usr/local/rustup
 
