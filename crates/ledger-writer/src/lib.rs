@@ -116,10 +116,7 @@ impl LedgerWriter {
         session_id: String,
         uuid_generator: UuidGenerator,
     ) -> Result<Self> {
-        let file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(path)?;
+        let file = OpenOptions::new().create_new(true).write(true).open(path)?;
         Ok(Self {
             file: BufWriter::new(file),
             session_id,
@@ -149,36 +146,20 @@ impl LedgerWriter {
         let sequence = self.next_sequence;
 
         let mut obj = Map::new();
-        obj.insert(
-            "@context".to_string(),
-            Value::String(LEDGER_CONTEXT.to_string()),
-        );
+        obj.insert("@context".to_string(), Value::String(LEDGER_CONTEXT.to_string()));
         obj.insert("entryId".to_string(), Value::String(entry_id.to_string()));
-        obj.insert(
-            "sessionId".to_string(),
-            Value::String(self.session_id.clone()),
-        );
-        obj.insert(
-            "sequenceNumber".to_string(),
-            Value::Number(sequence.into()),
-        );
+        obj.insert("sessionId".to_string(), Value::String(self.session_id.clone()));
+        obj.insert("sequenceNumber".to_string(), Value::Number(sequence.into()));
         obj.insert("entryType".to_string(), serde_json::to_value(entry.entry_type)?);
         obj.insert(
             "timestamp".to_string(),
-            Value::String(
-                entry
-                    .timestamp
-                    .to_rfc3339_opts(SecondsFormat::Nanos, true),
-            ),
+            Value::String(entry.timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true)),
         );
         obj.insert(
             "agentIdentityHash".to_string(),
             Value::String(hex::encode(entry.agent_identity_hash)),
         );
-        obj.insert(
-            "prevHash".to_string(),
-            Value::String(hex::encode(self.prev_hash)),
-        );
+        obj.insert("prevHash".to_string(), Value::String(hex::encode(self.prev_hash)));
 
         for (k, v) in entry.payload {
             obj.insert(k, v);
@@ -260,7 +241,7 @@ mod tests {
     fn hash_line_matches_sha256_of_input() {
         let input = b"hello";
         let h = hash_line(input);
-        // Known SHA-256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        // SHA-256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
         assert_eq!(
             hex::encode(h),
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

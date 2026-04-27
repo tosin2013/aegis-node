@@ -4,9 +4,7 @@
 
 use std::fs;
 
-use aegis_ledger_writer::{
-    hash_line, Entry, EntryType, Error, LedgerWriter, GENESIS_PREV_HASH,
-};
+use aegis_ledger_writer::{hash_line, Entry, EntryType, Error, LedgerWriter, GENESIS_PREV_HASH};
 use chrono::{TimeZone, Utc};
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -29,12 +27,9 @@ fn writes_and_chains_entries_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session-test.jsonl");
 
-    let mut writer = LedgerWriter::create_with_uuid_generator(
-        &path,
-        "session-test".to_string(),
-        fixed_uuids(),
-    )
-    .unwrap();
+    let mut writer =
+        LedgerWriter::create_with_uuid_generator(&path, "session-test".to_string(), fixed_uuids())
+            .unwrap();
 
     let ts = Utc.with_ymd_and_hms(2026, 4, 27, 22, 0, 0).unwrap();
 
@@ -50,18 +45,9 @@ fn writes_and_chains_entries_end_to_end() {
     assert_eq!(r1.sequence_number, 0);
 
     let mut payload = Map::new();
-    payload.insert(
-        "resourceUri".to_string(),
-        Value::String("file:///data/x".to_string()),
-    );
-    payload.insert(
-        "accessType".to_string(),
-        Value::String("read".to_string()),
-    );
-    payload.insert(
-        "bytesAccessed".to_string(),
-        Value::Number(1024u64.into()),
-    );
+    payload.insert("resourceUri".to_string(), Value::String("file:///data/x".to_string()));
+    payload.insert("accessType".to_string(), Value::String("read".to_string()));
+    payload.insert("bytesAccessed".to_string(), Value::Number(1024u64.into()));
 
     let r2 = writer
         .append(Entry {
@@ -91,10 +77,7 @@ fn writes_and_chains_entries_end_to_end() {
     // Chain: line 0's prevHash is genesis; line 1's prevHash is h0.
     let v0: Value = serde_json::from_str(lines[0]).unwrap();
     let v1: Value = serde_json::from_str(lines[1]).unwrap();
-    assert_eq!(
-        v0["prevHash"].as_str().unwrap(),
-        hex::encode(GENESIS_PREV_HASH)
-    );
+    assert_eq!(v0["prevHash"].as_str().unwrap(), hex::encode(GENESIS_PREV_HASH));
     assert_eq!(v1["prevHash"].as_str().unwrap(), hex::encode(h0));
 
     // Sanity-check key chain fields.
@@ -112,14 +95,10 @@ fn writes_and_chains_entries_end_to_end() {
 fn rejects_payload_keys_that_collide_with_chain_fields() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("conflict.jsonl");
-    let mut writer =
-        LedgerWriter::create(&path, "session-conflict".to_string()).unwrap();
+    let mut writer = LedgerWriter::create(&path, "session-conflict".to_string()).unwrap();
 
     let mut payload = Map::new();
-    payload.insert(
-        "entryId".to_string(),
-        Value::String("malicious".to_string()),
-    );
+    payload.insert("entryId".to_string(), Value::String("malicious".to_string()));
 
     let result = writer.append(Entry {
         session_id: "session-conflict".to_string(),
@@ -139,8 +118,7 @@ fn rejects_payload_keys_that_collide_with_chain_fields() {
 fn rejects_session_id_mismatch() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mismatch.jsonl");
-    let mut writer =
-        LedgerWriter::create(&path, "session-A".to_string()).unwrap();
+    let mut writer = LedgerWriter::create(&path, "session-A".to_string()).unwrap();
 
     let result = writer.append(Entry {
         session_id: "session-B".to_string(),
@@ -206,8 +184,7 @@ fn run_fixture() -> [u8; 32] {
 fn close_with_no_entries_returns_genesis() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("empty.jsonl");
-    let writer =
-        LedgerWriter::create(&path, "session-empty".to_string()).unwrap();
+    let writer = LedgerWriter::create(&path, "session-empty".to_string()).unwrap();
     let root = writer.close().unwrap();
     assert_eq!(root, GENESIS_PREV_HASH);
 }
