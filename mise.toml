@@ -1,0 +1,15 @@
+# Aegis-Node tool versions per ADR-017.
+# Keep aligned with .devcontainer/Dockerfile so devcontainer and native installs
+# resolve to the same tools.
+
+[tools]
+go = "1.23.4"
+rust = "1.83.0"
+buf = "1.47.2"
+golangci-lint = "1.62.2"
+cosign = "2.4.1"
+protoc = "28.3"
+node = "20"
+
+[settings]
+experimental = false

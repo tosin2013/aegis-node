@@ -1,0 +1,46 @@
+name: Schemas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: proto + JSON Schema + JSON-LD
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: 1.47.2
+
+      - name: Buf lint (proto)
+        run: |
+          if find proto -maxdepth 3 -name '*.proto' -print -quit | grep -q .; then
+            buf lint proto
+          else
+            echo "No .proto files yet — skipping (Phase 0 substrate)"
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate JSON Schemas (ajv)
+        run: |
+          if compgen -G "schemas/manifest/*.json" > /dev/null; then
+            npx -y ajv-cli@5 compile -s "schemas/manifest/*.json"
+          else
+            echo "No JSON schemas yet — skipping (Phase 0 substrate)"
+          fi
+
+      - name: Validate JSON-LD contexts
+        run: |
+          if compgen -G "schemas/ledger/*.jsonld" > /dev/null; then
+            for f in schemas/ledger/*.jsonld; do jq empty "$f"; done
+          else
+            echo "No JSON-LD contexts yet — skipping (Phase 0 substrate)"
+          fi

@@ -1,0 +1,16 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - gofmt
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - unused
+
+linters-settings:
+  revive:
+    severity: warning

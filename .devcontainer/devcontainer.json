@@ -1,0 +1,19 @@
+{
+  "name": "Aegis-Node Devbox",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "golang.go",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "bufbuild.vscode-buf"
+      ]
+    }
+  },
+  "postCreateCommand": "go version && rustc --version && buf --version || true"
+}

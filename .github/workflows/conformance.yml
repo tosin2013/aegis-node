@@ -1,0 +1,20 @@
+name: Conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cross-language:
+    name: Go validator ↔ Rust enforcer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Conformance harness (placeholder)
+        run: |
+          echo "Cross-language conformance suite per ADR-002 and ADR-012."
+          echo "Validator (Go) and enforcer (Rust) must agree on every manifest semantic."
+          echo "Implementation pending Phase 1a (manifest schema + validator + enforcer all live)."

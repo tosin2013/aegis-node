@@ -10,3 +10,21 @@ PRD.md
 
 # MCP ADR analysis cache (local milestones, planning state)
 .mcp-adr-cache/
+
+# Build outputs
+/target/
+/dist/
+/bin/
+*.test
+*.out
+coverage.out
+
+# Go vendor (if used)
+/vendor/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
