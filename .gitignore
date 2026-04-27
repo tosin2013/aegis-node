@@ -1,0 +1,12 @@
+
+# Auto-generated MCP server context (added automatically)
+.mcp-server-context.md
+
+# Requirements document — keep out of source control
+PRD.md
+
+# Local agent / IDE state
+.claude/
+
+# MCP ADR analysis cache (local milestones, planning state)
+.mcp-adr-cache/
