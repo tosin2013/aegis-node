@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aegis-node.dev/schemas/manifest/v1.schema.json",
+  "title": "Aegis-Node Permission Manifest v1",
+  "description": "Per ADR-004 (F2), ADR-007 (F7), and ADR-009. Closed-by-default, versioned, composable.",
+  "type": "object",
+  "required": ["schemaVersion", "agent", "identity", "tools"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["1"],
+      "description": "Schema version. Runtime refuses unsupported values."
+    },
+    "agent": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$"
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "required": ["spiffeId"],
+      "additionalProperties": false,
+      "properties": {
+        "spiffeId": {
+          "type": "string",
+          "pattern": "^spiffe://"
+        }
+      }
+    },
+    "extends": {
+      "type": "array",
+      "description": "Parent manifests (org/team) whose permissions this manifest inherits and may narrow but never exceed (per ADR-012).",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "read": { "$ref": "#/definitions/pathList" },
+            "write": { "$ref": "#/definitions/pathList" }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "outbound": { "$ref": "#/definitions/networkPolicy" },
+            "inbound": { "$ref": "#/definitions/networkPolicy" }
+          }
+        },
+        "apis": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/apiGrant" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "write_grants": {
+      "type": "array",
+      "description": "Per ADR-009 (F7). Closed by default; only resources listed here may be mutated.",
+      "items": { "$ref": "#/definitions/writeGrant" },
+      "uniqueItems": true
+    },
+    "approval_required_for": {
+      "type": "array",
+      "description": "Action classes that trigger the Human Approval Gate (F3, ADR-005).",
+      "items": {
+        "type": "string",
+        "enum": [
+          "any_write",
+          "any_delete",
+          "any_network_outbound",
+          "any_exec"
+        ]
+      },
+      "uniqueItems": true
+    }
+  },
+  "definitions": {
+    "pathList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^/"
+      },
+      "uniqueItems": true
+    },
+    "networkPolicy": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["deny", "allow"]
+        },
+        {
+          "type": "object",
+          "required": ["allowlist"],
+          "additionalProperties": false,
+          "properties": {
+            "allowlist": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["host"],
+                "additionalProperties": false,
+                "properties": {
+                  "host": { "type": "string", "minLength": 1 },
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "protocol": {
+                    "type": "string",
+                    "enum": ["http", "https", "tcp", "udp"]
+                  }
+                }
+              },
+              "uniqueItems": true
+            }
+          }
+        }
+      ]
+    },
+    "apiGrant": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "writeGrant": {
+      "type": "object",
+      "required": ["resource", "actions"],
+      "additionalProperties": false,
+      "properties": {
+        "resource": { "type": "string", "minLength": 1 },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["write", "delete", "update", "create"]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "duration": {
+          "type": "string",
+          "description": "ISO-8601 duration. Per ADR-009; expired grants are inert."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "approval_required": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

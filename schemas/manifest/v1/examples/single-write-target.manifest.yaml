@@ -1,0 +1,25 @@
+# Example Permission Manifest — agent with one narrow write target,
+# time-bounded, approval-gated. Per ADR-009 (F7) and ADR-005 (F3).
+
+schemaVersion: "1"
+agent:
+  name: "report-writer"
+  version: "0.2.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/reports/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/data/sources"
+    write: []
+  network:
+    outbound: deny
+    inbound: deny
+write_grants:
+  - resource: "/data/output/daily-report.md"
+    actions: ["write", "create"]
+    duration: "PT1H"
+    approval_required: true
+approval_required_for:
+  - "any_write"
+  - "any_delete"

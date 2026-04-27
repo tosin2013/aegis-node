@@ -1,0 +1,68 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "aegis": "https://aegis-node.dev/schemas/ledger/v1#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+
+    "entryId": "aegis:entryId",
+    "sessionId": "aegis:sessionId",
+    "entryType": "aegis:entryType",
+    "timestamp": {
+      "@id": "aegis:timestamp",
+      "@type": "xsd:dateTime"
+    },
+    "agentIdentityHash": {
+      "@id": "aegis:agentIdentityHash",
+      "@type": "xsd:hexBinary"
+    },
+    "prevHash": {
+      "@id": "aegis:prevHash",
+      "@type": "xsd:hexBinary"
+    },
+    "sequenceNumber": {
+      "@id": "aegis:sequenceNumber",
+      "@type": "xsd:nonNegativeInteger"
+    },
+
+    "reasoningStepId": "aegis:reasoningStepId",
+    "input": "aegis:input",
+    "reasoning": "aegis:reasoning",
+    "toolsConsidered": {
+      "@id": "aegis:toolsConsidered",
+      "@container": "@list"
+    },
+    "toolSelected": "aegis:toolSelected",
+
+    "resourceUri": {
+      "@id": "aegis:resourceUri",
+      "@type": "@id"
+    },
+    "accessType": "aegis:accessType",
+    "bytesAccessed": {
+      "@id": "aegis:bytesAccessed",
+      "@type": "xsd:nonNegativeInteger"
+    },
+
+    "approverId": "aegis:approverId",
+    "actionSummary": "aegis:actionSummary",
+    "decision": "aegis:decision",
+    "decidedAt": {
+      "@id": "aegis:decidedAt",
+      "@type": "xsd:dateTime"
+    },
+    "expiresAt": {
+      "@id": "aegis:expiresAt",
+      "@type": "xsd:dateTime"
+    },
+
+    "violationReason": "aegis:violationReason",
+    "networkConnectionsObserved": {
+      "@id": "aegis:networkConnectionsObserved",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "ledgerRootHash": {
+      "@id": "aegis:ledgerRootHash",
+      "@type": "xsd:hexBinary"
+    }
+  }
+}

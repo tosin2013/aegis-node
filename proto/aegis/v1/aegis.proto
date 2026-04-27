@@ -1,0 +1,159 @@
+// Aegis-Node IPC contract — Rust ↔ Go boundary.
+//
+// Per ADR-002 (Split-Language Architecture). Treat as a versioned, committed API.
+// v1 is frozen at v0.1.0 (Phase 0); subsequent breaking changes go to aegis/v2.
+
+syntax = "proto3";
+
+package aegis.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/tosin2013/aegis-node/pkg/api/aegis/v1;aegisv1";
+
+// AgentIdentity binds the agent to a (model, manifest, configuration) triple
+// per ADR-003 (F1). Any change to any digest invalidates the identity and
+// halts execution.
+message AgentIdentity {
+  // SPIFFE workload identity, e.g.
+  // "spiffe://aegis-node.local/agent/research/inst-001".
+  string spiffe_id = 1;
+  // SHA-256 digest of the model artifact loaded.
+  bytes model_digest = 2;
+  // SHA-256 digest of the resolved Permission Manifest.
+  bytes manifest_digest = 3;
+  // SHA-256 digest of the agent runtime configuration.
+  bytes config_digest = 4;
+}
+
+// AccessType enumerates the kinds of resource access the runtime mediates.
+enum AccessType {
+  ACCESS_TYPE_UNSPECIFIED = 0;
+  ACCESS_TYPE_READ = 1;
+  ACCESS_TYPE_WRITE = 2;
+  ACCESS_TYPE_DELETE = 3;
+  ACCESS_TYPE_NETWORK_OUTBOUND = 4;
+  ACCESS_TYPE_NETWORK_INBOUND = 5;
+  ACCESS_TYPE_EXEC = 6;
+}
+
+// Decision is the result of a policy evaluation.
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_ALLOW = 1;
+  DECISION_DENY = 2;
+}
+
+// EntryType classifies a Trajectory Ledger entry per ADR-011 (F9) and
+// ADR-006 (F4).
+enum EntryType {
+  ENTRY_TYPE_UNSPECIFIED = 0;
+  ENTRY_TYPE_REASONING_STEP = 1;
+  ENTRY_TYPE_ACCESS = 2;
+  ENTRY_TYPE_APPROVAL_REQUEST = 3;
+  ENTRY_TYPE_APPROVAL_GRANTED = 4;
+  ENTRY_TYPE_APPROVAL_REJECTED = 5;
+  ENTRY_TYPE_APPROVAL_TIMED_OUT = 6;
+  ENTRY_TYPE_VIOLATION = 7;
+  ENTRY_TYPE_NETWORK_ATTESTATION = 8;
+  ENTRY_TYPE_SESSION_START = 9;
+  ENTRY_TYPE_SESSION_END = 10;
+}
+
+// LedgerEntry is one entry in the hash-chained Trajectory Ledger.
+// The payload varies by entry_type and is JSON-LD per the ledger v1 @context
+// (schemas/ledger/v1/context.jsonld).
+message LedgerEntry {
+  string entry_id = 1;
+  string session_id = 2;
+  EntryType entry_type = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  bytes agent_identity_hash = 5;
+  bytes prev_hash = 6;
+  bytes payload_jsonld = 7;
+}
+
+// CheckPermissionRequest asks the control plane whether an agent may
+// perform a specific access. Per ADR-004 (F2), ADR-008 (F6), ADR-009 (F7).
+message CheckPermissionRequest {
+  string session_id = 1;
+  string resource_uri = 2;
+  AccessType access_type = 3;
+  string reasoning_step_id = 4;
+  uint64 bytes_estimated = 5;
+}
+
+message CheckPermissionResponse {
+  Decision decision = 1;
+  bool approval_required = 2;
+  string violation_reason = 3;
+}
+
+// ApprovalRequest is sent to the human approval gate per ADR-005 (F3).
+message ApprovalRequest {
+  string session_id = 1;
+  string action_summary = 2;
+  string resource_uri = 3;
+  AccessType access_type = 4;
+  string reasoning_step_id = 5;
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+message ApprovalResponse {
+  bool granted = 1;
+  string approver_identity = 2;
+  string rejection_reason = 3;
+  google.protobuf.Timestamp decided_at = 4;
+}
+
+message StartSessionRequest {
+  AgentIdentity identity = 1;
+  string manifest_path = 2;
+}
+
+message StartSessionResponse {
+  string session_id = 1;
+  bytes identity_token = 2;
+}
+
+message EndSessionRequest {
+  string session_id = 1;
+}
+
+// EndSessionResponse closes a session and returns artifacts the auditor
+// will consume: the ledger root hash and the network attestation per
+// ADR-008 (F6).
+message EndSessionResponse {
+  bytes ledger_root_hash = 1;
+  uint64 entry_count = 2;
+  bytes network_attestation = 3;
+}
+
+message AppendLedgerEntryResponse {
+  bytes entry_hash = 1;
+  uint64 sequence_number = 2;
+}
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string version = 1;
+  bool ready = 2;
+}
+
+// ControlPlane is implemented by the Go control plane and consumed by the
+// Rust inference engine. It owns policy decisions, approval routing, and
+// ledger writes.
+service ControlPlane {
+  rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
+  rpc EndSession(EndSessionRequest) returns (EndSessionResponse);
+  rpc CheckPermission(CheckPermissionRequest) returns (CheckPermissionResponse);
+  rpc RequestApproval(ApprovalRequest) returns (ApprovalResponse);
+  rpc AppendLedgerEntry(LedgerEntry) returns (AppendLedgerEntryResponse);
+}
+
+// AgentRuntime is implemented by the Rust inference engine and consumed by
+// the Go control plane (CLI, operator). It owns model lifecycle and inference.
+service AgentRuntime {
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}

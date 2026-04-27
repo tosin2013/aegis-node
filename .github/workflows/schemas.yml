@@ -19,10 +19,10 @@ jobs:
 
       - name: Buf lint (proto)
         run: |
-          if find proto -maxdepth 3 -name '*.proto' -print -quit | grep -q .; then
+          if find proto -name '*.proto' -print -quit | grep -q .; then
             buf lint proto
           else
-            echo "No .proto files yet — skipping (Phase 0 substrate)"
+            echo "No .proto files yet — skipping"
           fi
 
       - uses: actions/setup-node@v4
@@ -31,16 +31,28 @@ jobs:
 
       - name: Validate JSON Schemas (ajv)
         run: |
-          if compgen -G "schemas/manifest/*.json" > /dev/null; then
-            npx -y ajv-cli@5 compile -s "schemas/manifest/*.json"
+          shopt -s globstar nullglob
+          schemas=(schemas/manifest/**/*.schema.json)
+          if (( ${#schemas[@]} )); then
+            for s in "${schemas[@]}"; do
+              echo "Compiling $s"
+              npx -y ajv-cli@5 compile -s "$s"
+            done
           else
-            echo "No JSON schemas yet — skipping (Phase 0 substrate)"
+            echo "No JSON schemas yet — skipping"
           fi
+        shell: bash
 
       - name: Validate JSON-LD contexts
         run: |
-          if compgen -G "schemas/ledger/*.jsonld" > /dev/null; then
-            for f in schemas/ledger/*.jsonld; do jq empty "$f"; done
+          shopt -s globstar nullglob
+          contexts=(schemas/ledger/**/*.jsonld)
+          if (( ${#contexts[@]} )); then
+            for f in "${contexts[@]}"; do
+              echo "Validating $f"
+              jq empty "$f"
+            done
           else
-            echo "No JSON-LD contexts yet — skipping (Phase 0 substrate)"
+            echo "No JSON-LD contexts yet — skipping"
           fi
+        shell: bash

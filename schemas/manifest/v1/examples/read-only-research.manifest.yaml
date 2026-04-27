@@ -1,0 +1,19 @@
+# Example Permission Manifest — read-only research agent.
+# Per schemas/manifest/v1/manifest.schema.json. ADR-004 + ADR-007.
+
+schemaVersion: "1"
+agent:
+  name: "research-assistant"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/research/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/data/reports"
+      - "/data/papers"
+    write: []
+  network:
+    outbound: deny
+    inbound: deny
+write_grants: []
