@@ -45,7 +45,10 @@ fn writes_and_chains_entries_end_to_end() {
     assert_eq!(r1.sequence_number, 0);
 
     let mut payload = Map::new();
-    payload.insert("resourceUri".to_string(), Value::String("file:///data/x".to_string()));
+    payload.insert(
+        "resourceUri".to_string(),
+        Value::String("file:///data/x".to_string()),
+    );
     payload.insert("accessType".to_string(), Value::String("read".to_string()));
     payload.insert("bytesAccessed".to_string(), Value::Number(1024u64.into()));
 
@@ -77,7 +80,10 @@ fn writes_and_chains_entries_end_to_end() {
     // Chain: line 0's prevHash is genesis; line 1's prevHash is h0.
     let v0: Value = serde_json::from_str(lines[0]).unwrap();
     let v1: Value = serde_json::from_str(lines[1]).unwrap();
-    assert_eq!(v0["prevHash"].as_str().unwrap(), hex::encode(GENESIS_PREV_HASH));
+    assert_eq!(
+        v0["prevHash"].as_str().unwrap(),
+        hex::encode(GENESIS_PREV_HASH)
+    );
     assert_eq!(v1["prevHash"].as_str().unwrap(), hex::encode(h0));
 
     // Sanity-check key chain fields.
@@ -98,7 +104,10 @@ fn rejects_payload_keys_that_collide_with_chain_fields() {
     let mut writer = LedgerWriter::create(&path, "session-conflict".to_string()).unwrap();
 
     let mut payload = Map::new();
-    payload.insert("entryId".to_string(), Value::String("malicious".to_string()));
+    payload.insert(
+        "entryId".to_string(),
+        Value::String("malicious".to_string()),
+    );
 
     let result = writer.append(Entry {
         session_id: "session-conflict".to_string(),

@@ -146,11 +146,20 @@ impl LedgerWriter {
         let sequence = self.next_sequence;
 
         let mut obj = Map::new();
-        obj.insert("@context".to_string(), Value::String(LEDGER_CONTEXT.to_string()));
+        obj.insert(
+            "@context".to_string(),
+            Value::String(LEDGER_CONTEXT.to_string()),
+        );
         obj.insert("entryId".to_string(), Value::String(entry_id.to_string()));
-        obj.insert("sessionId".to_string(), Value::String(self.session_id.clone()));
+        obj.insert(
+            "sessionId".to_string(),
+            Value::String(self.session_id.clone()),
+        );
         obj.insert("sequenceNumber".to_string(), Value::Number(sequence.into()));
-        obj.insert("entryType".to_string(), serde_json::to_value(entry.entry_type)?);
+        obj.insert(
+            "entryType".to_string(),
+            serde_json::to_value(entry.entry_type)?,
+        );
         obj.insert(
             "timestamp".to_string(),
             Value::String(entry.timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true)),
@@ -159,7 +168,10 @@ impl LedgerWriter {
             "agentIdentityHash".to_string(),
             Value::String(hex::encode(entry.agent_identity_hash)),
         );
-        obj.insert("prevHash".to_string(), Value::String(hex::encode(self.prev_hash)));
+        obj.insert(
+            "prevHash".to_string(),
+            Value::String(hex::encode(self.prev_hash)),
+        );
 
         for (k, v) in entry.payload {
             obj.insert(k, v);
