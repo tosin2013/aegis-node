@@ -11,3 +11,5 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+aegis-policy = { path = "../policy" }
+thiserror = "1"
