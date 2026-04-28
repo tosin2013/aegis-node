@@ -25,12 +25,9 @@ fn fixed_uuids() -> Box<dyn FnMut() -> Uuid + Send> {
 }
 
 fn write_three_entries(path: &std::path::Path) -> [u8; 32] {
-    let mut writer = LedgerWriter::create_with_uuid_generator(
-        path,
-        "session-verify".to_string(),
-        fixed_uuids(),
-    )
-    .unwrap();
+    let mut writer =
+        LedgerWriter::create_with_uuid_generator(path, "session-verify".to_string(), fixed_uuids())
+            .unwrap();
     let ts = Utc.with_ymd_and_hms(2026, 4, 28, 0, 0, 0).unwrap();
     let agent_hash = [0xAAu8; 32];
     for i in 0..3u64 {
@@ -122,7 +119,11 @@ fn detects_sequence_skip() {
 
     let err = verify_reader(line.as_bytes()).unwrap_err();
     match err {
-        VerifyError::Break(VerifyBreak::SequenceMismatch { line, expected, got }) => {
+        VerifyError::Break(VerifyBreak::SequenceMismatch {
+            line,
+            expected,
+            got,
+        }) => {
             assert_eq!(line, 0);
             assert_eq!(expected, 0);
             assert_eq!(got, 7);
@@ -146,14 +147,20 @@ fn detects_bad_context() {
     .to_string()
         + "\n";
     let err = verify_reader(line.as_bytes()).unwrap_err();
-    assert!(matches!(err, VerifyError::Break(VerifyBreak::BadContext { line: 0, .. })));
+    assert!(matches!(
+        err,
+        VerifyError::Break(VerifyBreak::BadContext { line: 0, .. })
+    ));
 }
 
 #[test]
 fn detects_invalid_json() {
     let bytes = b"{not valid json}\n";
     let err = verify_reader(&bytes[..]).unwrap_err();
-    assert!(matches!(err, VerifyError::Break(VerifyBreak::InvalidJson { line: 0, .. })));
+    assert!(matches!(
+        err,
+        VerifyError::Break(VerifyBreak::InvalidJson { line: 0, .. })
+    ));
 }
 
 #[test]

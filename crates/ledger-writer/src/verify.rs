@@ -212,12 +212,10 @@ pub fn verify_reader<R: BufRead>(mut reader: R) -> Result<VerifySummary, VerifyE
 }
 
 fn required_str<'a>(v: &'a Value, field: &str, line: u64) -> Result<&'a str, VerifyError> {
-    v.get(field)
-        .and_then(|x| x.as_str())
-        .ok_or_else(|| {
-            VerifyError::Break(VerifyBreak::MissingField {
-                line,
-                field: field.to_string(),
-            })
+    v.get(field).and_then(|x| x.as_str()).ok_or_else(|| {
+        VerifyError::Break(VerifyBreak::MissingField {
+            line,
+            field: field.to_string(),
         })
+    })
 }
