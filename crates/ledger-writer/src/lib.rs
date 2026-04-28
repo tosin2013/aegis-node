@@ -215,6 +215,13 @@ impl LedgerWriter {
     pub fn entry_count(&self) -> u64 {
         self.next_sequence
     }
+
+    /// Session ID this writer is bound to. Used by typed event emitters
+    /// (access log F4, reasoning step F5, …) to populate `Entry.session_id`
+    /// without requiring callers to thread it separately.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
 }
 
 fn sha256(bytes: &[u8]) -> [u8; 32] {

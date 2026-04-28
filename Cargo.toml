@@ -6,6 +6,7 @@ members = [
     "crates/ledger-writer",
     "crates/identity",
     "crates/cli",
+    "crates/access-log",
 ]
 
 [workspace.package]

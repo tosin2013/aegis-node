@@ -1,0 +1,22 @@
+[package]
+name = "aegis-access-log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aegis-ledger-writer = { path = "../ledger-writer" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+hex = "0.4"
