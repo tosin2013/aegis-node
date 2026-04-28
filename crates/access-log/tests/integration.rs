@@ -75,7 +75,11 @@ fn multi_tool_run_correlates_one_to_one() {
     let events = vec![
         ("file:///data/in.csv", AccessType::Read, 1024),
         ("file:///data/out.csv", AccessType::Write, 2048),
-        ("tcp://api.example.com:443", AccessType::NetworkOutbound, 512),
+        (
+            "tcp://api.example.com:443",
+            AccessType::NetworkOutbound,
+            512,
+        ),
         ("file:///tmp/scratch", AccessType::Delete, 0),
         ("/usr/bin/ffmpeg", AccessType::Exec, 0),
     ];

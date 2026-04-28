@@ -67,10 +67,7 @@ pub fn emit_access(
     }
 
     let mut payload = Map::new();
-    payload.insert(
-        "resourceUri".to_string(),
-        Value::String(event.resource_uri),
-    );
+    payload.insert("resourceUri".to_string(), Value::String(event.resource_uri));
     payload.insert(
         "accessType".to_string(),
         serde_json::to_value(event.access_type)?,
