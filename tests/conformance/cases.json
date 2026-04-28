@@ -1,0 +1,114 @@
+{
+  "_doc": "Cross-language conformance fixture (issue #16). Both pkg/manifest (Go) and aegis_policy::Policy (Rust) MUST agree with every expected decision below. Manifest paths are relative to this file's directory. Updating a case requires both runners to pass; if they disagree the engines drifted.",
+  "version": "1",
+  "cases": [
+    {
+      "name": "read_only_research_grants_listed_path",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "filesystem_read", "resource_uri": "/data/reports/q1.md" },
+      "expected": "allow"
+    },
+    {
+      "name": "read_only_research_grants_other_listed_path",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "filesystem_read", "resource_uri": "/data/papers/abstract.txt" },
+      "expected": "allow"
+    },
+    {
+      "name": "read_only_research_denies_unlisted_read",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "filesystem_read", "resource_uri": "/etc/passwd" },
+      "expected": "deny"
+    },
+    {
+      "name": "read_only_research_boundary_denies_data2",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "filesystem_read", "resource_uri": "/data2/secret" },
+      "expected": "deny"
+    },
+    {
+      "name": "read_only_research_denies_all_writes",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "filesystem_write", "resource_uri": "/data/reports/x" },
+      "expected": "deny"
+    },
+    {
+      "name": "read_only_research_denies_all_deletes",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "filesystem_delete", "resource_uri": "/data/reports/x" },
+      "expected": "deny"
+    },
+    {
+      "name": "read_only_research_denies_outbound",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "api.example.com", "port": 443, "protocol": "https" },
+      "expected": "deny"
+    },
+    {
+      "name": "single_write_target_allows_listed_read",
+      "manifest": "../../schemas/manifest/v1/examples/single-write-target.manifest.yaml",
+      "query": { "kind": "filesystem_read", "resource_uri": "/data/sources/in.csv" },
+      "expected": "allow"
+    },
+    {
+      "name": "single_write_target_grant_requires_approval",
+      "manifest": "../../schemas/manifest/v1/examples/single-write-target.manifest.yaml",
+      "query": { "kind": "filesystem_write", "resource_uri": "/data/output/daily-report.md" },
+      "expected": "require_approval"
+    },
+    {
+      "name": "single_write_target_denies_other_writes",
+      "manifest": "../../schemas/manifest/v1/examples/single-write-target.manifest.yaml",
+      "query": { "kind": "filesystem_write", "resource_uri": "/data/output/other.md" },
+      "expected": "deny"
+    },
+    {
+      "name": "allowlist_match_host_port_protocol",
+      "manifest": "manifests/network-allowlist.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "api.example.com", "port": 443, "protocol": "https" },
+      "expected": "allow"
+    },
+    {
+      "name": "allowlist_miss_port",
+      "manifest": "manifests/network-allowlist.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "api.example.com", "port": 80, "protocol": "https" },
+      "expected": "deny"
+    },
+    {
+      "name": "allowlist_miss_host",
+      "manifest": "manifests/network-allowlist.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "evil.example.com", "port": 443, "protocol": "https" },
+      "expected": "deny"
+    },
+    {
+      "name": "allowlist_miss_protocol",
+      "manifest": "manifests/network-allowlist.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "api.example.com", "port": 443, "protocol": "tcp" },
+      "expected": "deny"
+    },
+    {
+      "name": "allow_all_outbound_anywhere",
+      "manifest": "manifests/network-allow-all.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "anywhere.example.org", "port": 80, "protocol": "http" },
+      "expected": "allow"
+    },
+    {
+      "name": "approval_class_upgrades_allowlist_hit",
+      "manifest": "manifests/approval-class.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "api.example.com", "port": 443, "protocol": "https" },
+      "expected": "require_approval"
+    },
+    {
+      "name": "approval_class_does_not_promote_a_deny",
+      "manifest": "manifests/approval-class.manifest.yaml",
+      "query": { "kind": "network_outbound", "host": "evil.example.com", "port": 443, "protocol": "https" },
+      "expected": "deny"
+    },
+    {
+      "name": "exec_is_always_denied_in_v1",
+      "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/usr/bin/ffmpeg" },
+      "expected": "deny"
+    }
+  ]
+}

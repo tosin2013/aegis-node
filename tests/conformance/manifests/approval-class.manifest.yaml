@@ -1,0 +1,19 @@
+# Conformance fixture: allowlist + any_network_outbound approval class.
+# An allowed entry is upgraded to require_approval rather than allowed
+# silently.
+
+schemaVersion: "1"
+agent:
+  name: "approval-class-test"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/approval/inst-001"
+tools:
+  network:
+    outbound:
+      allowlist:
+        - host: "api.example.com"
+          port: 443
+          protocol: "https"
+approval_required_for:
+  - "any_network_outbound"
