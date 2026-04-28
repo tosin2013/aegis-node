@@ -1,0 +1,13 @@
+# Conformance fixture: outbound = allow (escape hatch). Should match
+# anything; used to verify the deny < allowlist < allow ladder.
+
+schemaVersion: "1"
+agent:
+  name: "allow-all-test"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/allow-all/inst-001"
+tools:
+  network:
+    outbound: allow
+    inbound: deny

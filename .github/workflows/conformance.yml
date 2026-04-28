@@ -13,8 +13,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Conformance harness (placeholder)
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Go conformance
+        # Both engines load the same fixture (tests/conformance/cases.json).
+        # If either disagrees with the fixture, that side fails — and since
+        # they share the fixture, agreeing with it transitively means the
+        # two engines agree with each other.
         run: |
-          echo "Cross-language conformance suite per ADR-002 and ADR-012."
-          echo "Validator (Go) and enforcer (Rust) must agree on every manifest semantic."
-          echo "Implementation pending Phase 1a (manifest schema + validator + enforcer all live)."
+          go mod tidy
+          go test -v -run TestConformance ./pkg/manifest/...
+
+      - name: Rust conformance
+        run: cargo test -p aegis-policy --test conformance -- --nocapture

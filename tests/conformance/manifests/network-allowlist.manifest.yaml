@@ -1,0 +1,17 @@
+# Conformance fixture: outbound network allowlist with one entry.
+# Used to exercise allowlist match / port-miss / host-miss / proto-miss.
+
+schemaVersion: "1"
+agent:
+  name: "allowlist-test"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/allowlist/inst-001"
+tools:
+  network:
+    outbound:
+      allowlist:
+        - host: "api.example.com"
+          port: 443
+          protocol: "https"
+    inbound: deny
