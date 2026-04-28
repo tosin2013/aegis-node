@@ -76,12 +76,11 @@ fn read_outside_grant_denies_and_writes_violation() {
     // Policy grants only "/granted-but-empty" — the actual file is outside.
     let p = policy_for(&["/granted-but-empty"], &[], &[]);
     let (mut writer, ledger_path) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
-
-    let err = gate.read(&outside).unwrap_err();
-    assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
-
-    drop(gate);
+    {
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let err = gate.read(&outside).unwrap_err();
+        assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
+    }
     writer.close().unwrap();
 
     let v = read_one_entry(&ledger_path);
@@ -109,12 +108,12 @@ fn write_outside_grant_denies_and_writes_violation() {
     let dir = tempfile::tempdir().unwrap();
     let p = policy_for(&[], &["/granted-but-empty"], &[]);
     let (mut writer, ledger_path) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
-
     let outside = dir.path().join("nope.txt");
-    let err = gate.write(&outside, b"x").unwrap_err();
-    assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
-    drop(gate);
+    {
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let err = gate.write(&outside, b"x").unwrap_err();
+        assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
+    }
     writer.close().unwrap();
 
     let v = read_one_entry(&ledger_path);
@@ -148,13 +147,12 @@ fn delete_without_grant_denies_and_writes_violation() {
         &[],
     );
     let (mut writer, ledger_path) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
-
-    let err = gate.remove_file(&target).unwrap_err();
-    assert!(matches!(err, Error::Denied { .. }));
-    assert!(target.exists(), "file must not be deleted on Deny");
-
-    drop(gate);
+    {
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let err = gate.remove_file(&target).unwrap_err();
+        assert!(matches!(err, Error::Denied { .. }));
+        assert!(target.exists(), "file must not be deleted on Deny");
+    }
     writer.close().unwrap();
 
     let v = read_one_entry(&ledger_path);
@@ -172,14 +170,13 @@ fn rename_requires_delete_on_src_and_write_on_dst() {
     // before any syscall (file at src must remain).
     let p = policy_for(&[], &[dir.path().to_str().unwrap()], &[]);
     let (mut writer, ledger_path) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
-
-    let err = gate.rename(&src, &dst).unwrap_err();
-    assert!(matches!(err, Error::Denied { .. }));
-    assert!(src.exists());
-    assert!(!dst.exists());
-
-    drop(gate);
+    {
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let err = gate.rename(&src, &dst).unwrap_err();
+        assert!(matches!(err, Error::Denied { .. }));
+        assert!(src.exists());
+        assert!(!dst.exists());
+    }
     writer.close().unwrap();
 
     let v = read_one_entry(&ledger_path);
@@ -231,11 +228,11 @@ write_grants:
     );
     let policy = Policy::from_yaml_bytes(yaml.as_bytes()).unwrap();
     let (mut writer, ledger_path) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&policy, &mut writer, AGENT_HASH);
-
-    let err = gate.write(&target, b"x").unwrap_err();
-    assert!(matches!(err, Error::RequireApproval { .. }), "got {err:?}");
-    drop(gate);
+    {
+        let mut gate = GateContext::new(&policy, &mut writer, AGENT_HASH);
+        let err = gate.write(&target, b"x").unwrap_err();
+        assert!(matches!(err, Error::RequireApproval { .. }), "got {err:?}");
+    }
     writer.close().unwrap();
 
     // Empty ledger — no violation written.
