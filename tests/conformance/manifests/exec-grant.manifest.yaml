@@ -1,0 +1,12 @@
+# Conformance fixture: a basename exec_grant. Used to exercise
+# basename-vs-absolute matching and the closed-by-default deny path.
+
+schemaVersion: "1"
+agent:
+  name: "exec-grant-test"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/exec-test/inst-001"
+tools: {}
+exec_grants:
+  - program: "ffmpeg"

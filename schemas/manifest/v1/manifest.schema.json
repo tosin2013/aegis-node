@@ -91,6 +91,12 @@
         ]
       },
       "uniqueItems": true
+    },
+    "exec_grants": {
+      "type": "array",
+      "description": "Programs the agent may exec (F2 in PRD §4). Closed-by-default — without an entry, exec is denied. Per-issue #15.",
+      "items": { "$ref": "#/definitions/execGrant" },
+      "uniqueItems": true
     }
   },
   "definitions": {
@@ -151,6 +157,23 @@
             "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
           },
           "uniqueItems": true
+        }
+      }
+    },
+    "execGrant": {
+      "type": "object",
+      "required": ["program"],
+      "additionalProperties": false,
+      "properties": {
+        "program": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path (e.g. /usr/bin/git) or bare basename (e.g. ffmpeg). Bare basename matches any path whose basename is equal."
+        },
+        "args_match": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional regex applied to the joined argv (space-separated). Engine support is staged: parsed in Phase 1, enforced when the runtime ships."
         }
       }
     },

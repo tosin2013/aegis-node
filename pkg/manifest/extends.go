@@ -134,6 +134,24 @@ func narrowsParent(child, parent *Manifest, childPath, parentPath string) error 
 		}
 	}
 
+	// exec_grants narrowing: every child program must exist in parent.
+	// args_match: if parent has no args_match, child can have any (parent
+	// is wider). If parent has args_match, child must have exactly the
+	// same string (regex inclusion is undecidable in general; exact
+	// match is the defensible v1 rule). Documented in the PR for #15.
+	for _, ce := range child.ExecGrants {
+		pe := findExecGrant(parent.ExecGrants, ce.Program)
+		if pe == nil {
+			return mk(fmt.Sprintf("exec_grants[%s]", ce.Program),
+				fmt.Sprintf("program %q is not granted by parent", ce.Program))
+		}
+		if pe.ArgsMatch != "" && pe.ArgsMatch != ce.ArgsMatch {
+			return mk(fmt.Sprintf("exec_grants[%s].args_match", ce.Program),
+				fmt.Sprintf("parent restricts args_match to %q; child must match exactly (got %q)",
+					pe.ArgsMatch, ce.ArgsMatch))
+		}
+	}
+
 	// approval_required_for runs the *opposite* direction: child cannot
 	// drop a class the parent insists on. Narrowing here means "at least
 	// as strict", so child ⊇ parent.
@@ -144,6 +162,15 @@ func narrowsParent(child, parent *Manifest, childPath, parentPath string) error 
 		}
 	}
 
+	return nil
+}
+
+func findExecGrant(grants []ExecGrant, program string) *ExecGrant {
+	for i := range grants {
+		if grants[i].Program == program {
+			return &grants[i]
+		}
+	}
 	return nil
 }
 

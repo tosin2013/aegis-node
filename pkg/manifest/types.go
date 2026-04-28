@@ -20,6 +20,7 @@ type Manifest struct {
 	Tools               Tools           `yaml:"tools" json:"tools"`
 	WriteGrants         []WriteGrant    `yaml:"write_grants,omitempty" json:"write_grants,omitempty"`
 	ApprovalRequiredFor []ApprovalClass `yaml:"approval_required_for,omitempty" json:"approval_required_for,omitempty"`
+	ExecGrants          []ExecGrant     `yaml:"exec_grants,omitempty" json:"exec_grants,omitempty"`
 }
 
 type Agent struct {
@@ -81,6 +82,15 @@ type WriteGrant struct {
 	Duration         string   `yaml:"duration,omitempty" json:"duration,omitempty"`
 	ExpiresAt        string   `yaml:"expires_at,omitempty" json:"expires_at,omitempty"`
 	ApprovalRequired bool     `yaml:"approval_required,omitempty" json:"approval_required,omitempty"`
+}
+
+// ExecGrant is one entry in `exec_grants`. `Program` may be an absolute
+// path (matched exactly) or a bare basename (matches any path with that
+// file name). `ArgsMatch` is parsed in Phase 1 and enforced once the
+// runtime can pass argv to the gate.
+type ExecGrant struct {
+	Program   string `yaml:"program" json:"program"`
+	ArgsMatch string `yaml:"args_match,omitempty" json:"args_match,omitempty"`
 }
 
 // ApprovalClass enumerates the valid string values of `approval_required_for`.

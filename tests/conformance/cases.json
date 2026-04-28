@@ -105,9 +105,51 @@
       "expected": "deny"
     },
     {
-      "name": "exec_is_always_denied_in_v1",
+      "name": "exec_denied_when_no_grants",
       "manifest": "../../schemas/manifest/v1/examples/read-only-research.manifest.yaml",
       "query": { "kind": "exec", "resource_uri": "/usr/bin/ffmpeg" },
+      "expected": "deny"
+    },
+    {
+      "name": "exec_basename_grant_matches_any_path",
+      "manifest": "manifests/exec-grant.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/usr/bin/ffmpeg" },
+      "expected": "allow"
+    },
+    {
+      "name": "exec_basename_grant_matches_alt_path",
+      "manifest": "manifests/exec-grant.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/snap/bin/ffmpeg" },
+      "expected": "allow"
+    },
+    {
+      "name": "exec_basename_grant_denies_other_program",
+      "manifest": "manifests/exec-grant.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/usr/bin/curl" },
+      "expected": "deny"
+    },
+    {
+      "name": "exec_grant_with_any_exec_upgrades_to_approval",
+      "manifest": "manifests/exec-with-approval.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/usr/bin/git" },
+      "expected": "require_approval"
+    },
+    {
+      "name": "exec_any_exec_does_not_promote_a_deny",
+      "manifest": "manifests/exec-with-approval.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/usr/bin/curl" },
+      "expected": "deny"
+    },
+    {
+      "name": "exec_absolute_path_grant_matches_exact",
+      "manifest": "../../schemas/manifest/v1/examples/agent-with-exec.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/usr/bin/ffmpeg" },
+      "expected": "require_approval"
+    },
+    {
+      "name": "exec_absolute_path_grant_rejects_alt_location",
+      "manifest": "../../schemas/manifest/v1/examples/agent-with-exec.manifest.yaml",
+      "query": { "kind": "exec", "resource_uri": "/usr/local/bin/ffmpeg" },
       "expected": "deny"
     }
   ]

@@ -1,0 +1,13 @@
+# Conformance fixture: matched exec_grant + any_exec approval upgrade.
+
+schemaVersion: "1"
+agent:
+  name: "exec-approval-test"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/exec-approval/inst-001"
+tools: {}
+exec_grants:
+  - program: "/usr/bin/git"
+approval_required_for:
+  - "any_exec"

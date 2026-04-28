@@ -26,6 +26,8 @@ pub struct Manifest {
     pub write_grants: Vec<WriteGrant>,
     #[serde(default, rename = "approval_required_for")]
     pub approval_required_for: Vec<ApprovalClass>,
+    #[serde(default, rename = "exec_grants")]
+    pub exec_grants: Vec<ExecGrant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +135,17 @@ pub enum WriteAction {
     Delete,
     Update,
     Create,
+}
+
+/// One entry in `exec_grants`. `program` is either an absolute path or
+/// a bare basename. `args_match` is parsed in Phase 1 and enforced when
+/// the runtime can pass argv to the gate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecGrant {
+    pub program: String,
+    #[serde(default, rename = "args_match")]
+    pub args_match: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
