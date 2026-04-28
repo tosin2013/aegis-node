@@ -1,0 +1,25 @@
+# Example Permission Manifest — agent allowed to exec a single program.
+# Per ADR-004 (F2). Demonstrates exec_grants per issue #15.
+
+schemaVersion: "1"
+agent:
+  name: "media-transcoder"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/transcoder/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/data/media/in"
+    write:
+      - "/data/media/out"
+  network:
+    outbound: deny
+    inbound: deny
+write_grants: []
+exec_grants:
+  # Absolute path — only this binary, anywhere on $PATH won't substitute.
+  - program: "/usr/bin/ffmpeg"
+    args_match: "^-i .+ -c:v "
+approval_required_for:
+  - "any_exec"

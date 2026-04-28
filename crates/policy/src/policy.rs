@@ -135,14 +135,27 @@ impl Policy {
         network_decision(policy, host, port, protocol, "inbound")
     }
 
-    /// Exec: v1 schema has no exec-grant primitive. Always denied. A future
-    /// schema version will introduce explicit exec grants — this method
-    /// will gain a corresponding manifest lookup at that point.
+    /// Exec: closed-by-default. A grant matches if its `program` field
+    /// equals the query path (when the field has a slash) or the query's
+    /// basename (when the field is a bare name). `any_exec` upgrades a
+    /// hit to RequireApproval. `args_match` is stored but not enforced
+    /// until the runtime can pass argv through.
     pub fn check_exec(&self, program: &Path) -> Decision {
-        let _ = program;
-        Decision::deny(
-            "exec is not grantable in manifest schema v1; future schema will add exec_grants"
-                .to_string(),
+        let matched = self
+            .manifest
+            .exec_grants
+            .iter()
+            .any(|g| program_matches(&g.program, program));
+        if !matched {
+            return Decision::deny(format!(
+                "exec of {} not granted by manifest",
+                program.display()
+            ));
+        }
+        self.upgrade_for_approval(
+            Decision::Allow,
+            ApprovalClass::AnyExec,
+            "any_exec requires approval",
         )
     }
 
@@ -177,6 +190,19 @@ impl Policy {
             other => other,
         }
     }
+}
+
+/// True if a manifest's exec_grant `program` field matches the query.
+/// Slash-bearing strings are treated as absolute paths; bare strings are
+/// treated as basenames.
+fn program_matches(grant_program: &str, query: &Path) -> bool {
+    if grant_program.contains('/') {
+        return Path::new(grant_program) == query;
+    }
+    query
+        .file_name()
+        .map(|f| f == grant_program)
+        .unwrap_or(false)
 }
 
 /// Returns true if `path` is at-or-under any of `parents`. "/data" covers

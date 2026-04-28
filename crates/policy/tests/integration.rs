@@ -149,10 +149,56 @@ tools:
 }
 
 #[test]
-fn exec_is_always_denied_in_v1() {
+fn exec_denied_when_manifest_has_no_grants() {
+    // read-only-research has no exec_grants → closed-by-default.
     let p = read_only_research();
     let dec = p.check_exec(Path::new("/usr/bin/ffmpeg"));
     assert!(dec.is_deny(), "got {dec:?}");
+}
+
+#[test]
+fn exec_grant_absolute_path_matches_exact() {
+    let yaml = r#"schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools: {}
+exec_grants:
+  - program: "/usr/bin/git"
+"#;
+    let p = Policy::from_yaml_bytes(yaml.as_bytes()).unwrap();
+    assert!(p.check_exec(Path::new("/usr/bin/git")).is_allow());
+    assert!(p.check_exec(Path::new("/usr/local/bin/git")).is_deny());
+}
+
+#[test]
+fn exec_grant_basename_matches_anywhere() {
+    let yaml = r#"schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools: {}
+exec_grants:
+  - program: "ffmpeg"
+"#;
+    let p = Policy::from_yaml_bytes(yaml.as_bytes()).unwrap();
+    assert!(p.check_exec(Path::new("/usr/bin/ffmpeg")).is_allow());
+    assert!(p.check_exec(Path::new("/snap/bin/ffmpeg")).is_allow());
+    assert!(p.check_exec(Path::new("/usr/bin/curl")).is_deny());
+}
+
+#[test]
+fn exec_any_exec_upgrades_match_to_approval() {
+    let yaml = r#"schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools: {}
+exec_grants:
+  - program: "/usr/bin/git"
+approval_required_for: ["any_exec"]
+"#;
+    let p = Policy::from_yaml_bytes(yaml.as_bytes()).unwrap();
+    assert!(p.check_exec(Path::new("/usr/bin/git")).is_approval());
+    // any_exec must NOT promote a deny into approval.
+    assert!(p.check_exec(Path::new("/usr/bin/curl")).is_deny());
 }
 
 #[test]

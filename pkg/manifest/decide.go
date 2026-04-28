@@ -1,6 +1,10 @@
 package manifest
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // DecisionKind mirrors aegis_policy::Decision in Rust. The cross-language
 // conformance harness (issue #16) asserts both engines produce the same
@@ -66,7 +70,7 @@ func (m *Manifest) Decide(q Query) Decision {
 	case QueryNetworkInbound:
 		return m.decideNetwork(false, q.Host, q.Port, q.Protocol)
 	case QueryExec:
-		return denyDecision("exec is not grantable in manifest schema v1; future schema will add exec_grants")
+		return m.decideExec(q.ResourceURI)
 	default:
 		return denyDecision(fmt.Sprintf("unknown query kind %q", q.Kind))
 	}
@@ -103,6 +107,31 @@ func (m *Manifest) decideFsDelete(uri string) Decision {
 		return m.writeGrantDecision(uri, g, ActionDelete)
 	}
 	return denyDecision(fmt.Sprintf("filesystem delete of %s not granted by any write_grant", uri))
+}
+
+func (m *Manifest) decideExec(program string) Decision {
+	matched := false
+	for _, g := range m.ExecGrants {
+		if programMatches(g.Program, program) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return denyDecision(fmt.Sprintf("exec of %s not granted by manifest", program))
+	}
+	return upgradeForApproval(allowDecision(), m.ApprovalRequiredFor, ApprovalAnyExec,
+		"any_exec requires approval")
+}
+
+// programMatches: slash-bearing grants are absolute paths matched
+// exactly; bare basenames match the query's path.Base. MUST stay in
+// lockstep with Rust's program_matches.
+func programMatches(grant, query string) bool {
+	if strings.Contains(grant, "/") {
+		return grant == query
+	}
+	return filepath.Base(query) == grant
 }
 
 func (m *Manifest) decideNetwork(outbound bool, host string, port int, protocol string) Decision {

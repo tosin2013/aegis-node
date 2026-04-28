@@ -280,6 +280,38 @@ tools: {}
 	}
 }
 
+func TestExecGrantsNarrowingRejected(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent.yaml")
+	child := filepath.Join(dir, "child.yaml")
+	mustWrite(t, parent, `schemaVersion: "1"
+agent: { name: "p", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/p/1" }
+tools: {}
+exec_grants:
+  - program: "/usr/bin/git"
+`)
+	mustWrite(t, child, `schemaVersion: "1"
+agent: { name: "c", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/c/1" }
+extends: ["parent.yaml"]
+tools: {}
+exec_grants:
+  - program: "/usr/bin/curl"
+`)
+	_, err := LoadResolved(child)
+	if err == nil {
+		t.Fatal("expected NarrowingError for new exec program")
+	}
+	var ne *NarrowingError
+	if !errors.As(err, &ne) {
+		t.Fatalf("error type: %T", err)
+	}
+	if !strings.HasPrefix(ne.Field, "exec_grants[") {
+		t.Errorf("field: %q", ne.Field)
+	}
+}
+
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
