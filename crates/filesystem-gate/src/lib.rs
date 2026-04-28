@@ -27,8 +27,8 @@ pub enum Error {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("ledger: {0}")]
-    Ledger(#[from] aegis_ledger_writer::Error),
+    #[error("policy: {0}")]
+    Policy(#[from] aegis_policy::Error),
 
     #[error("filesystem policy denied: {reason}")]
     Denied { reason: String },
