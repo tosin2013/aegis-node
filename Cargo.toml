@@ -5,6 +5,7 @@ members = [
     "crates/network-gate",
     "crates/ledger-writer",
     "crates/identity",
+    "crates/cli",
 ]
 
 [workspace.package]
