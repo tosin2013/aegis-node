@@ -1,0 +1,262 @@
+//! File-backed local CA for issuing Aegis workload identities.
+//!
+//! Per ADR-003 (F1) the local CLI ships a built-in lightweight CA so a
+//! developer can run `aegis identity init` once and have a working SPIFFE
+//! trust domain on disk without standing up SPIRE. Phase 2 swaps this for
+//! SPIRE workload attestation; the on-disk artifacts stay user-private.
+//!
+//! Layout under `<dir>`:
+//!
+//! ```text
+//! ca.crt           PEM root certificate, mode 0644
+//! ca.key           PEM PKCS#8 private key, mode 0600
+//! trust_domain     plain-text trust domain string
+//! ```
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use rcgen::{
+    BasicConstraints, Certificate, CertificateParams, CustomExtension, DnType, Ia5String, IsCa,
+    KeyPair, SanType,
+};
+use time::{Duration, OffsetDateTime};
+
+use crate::error::{Error, Result};
+use crate::spiffe::SpiffeId;
+use crate::svid::{DigestTriple, X509Svid, DIGEST_BINDING_OID};
+
+const CA_CERT_FILE: &str = "ca.crt";
+const CA_KEY_FILE: &str = "ca.key";
+const TRUST_DOMAIN_FILE: &str = "trust_domain";
+
+const CA_VALIDITY_YEARS: i64 = 10;
+const SVID_VALIDITY_HOURS: i64 = 24;
+
+/// File-backed local CA. Holds the issuer cert + key in memory, ready to
+/// stamp leaf SVIDs.
+pub struct LocalCa {
+    dir: PathBuf,
+    trust_domain: String,
+    ca_cert: Certificate,
+    ca_key: KeyPair,
+}
+
+impl LocalCa {
+    /// First-time setup. Creates `dir`, generates a fresh CA, persists it.
+    /// Refuses to overwrite an existing CA — re-init would silently break
+    /// every previously issued SVID.
+    pub fn init<P: AsRef<Path>>(dir: P, trust_domain: &str) -> Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        let cert_path = dir.join(CA_CERT_FILE);
+        if cert_path.exists() {
+            return Err(Error::CaAlreadyInitialized(dir.display().to_string()));
+        }
+        validate_trust_domain_for_ca(trust_domain)?;
+        fs::create_dir_all(&dir)?;
+
+        let now = OffsetDateTime::now_utc();
+        let mut params = CertificateParams::default();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.not_before = now - Duration::minutes(5);
+        params.not_after = now + Duration::days(365 * CA_VALIDITY_YEARS);
+        params.distinguished_name.push(DnType::CommonName, "Aegis-Node Local CA");
+        params.distinguished_name.push(
+            DnType::OrganizationName,
+            format!("Aegis-Node trust domain {trust_domain}"),
+        );
+
+        let ca_key = KeyPair::generate()?;
+        let ca_cert = params.self_signed(&ca_key)?;
+
+        write_file(&cert_path, ca_cert.pem().as_bytes(), 0o644)?;
+        write_file(
+            &dir.join(CA_KEY_FILE),
+            ca_key.serialize_pem().as_bytes(),
+            0o600,
+        )?;
+        write_file(
+            &dir.join(TRUST_DOMAIN_FILE),
+            trust_domain.as_bytes(),
+            0o644,
+        )?;
+
+        Ok(Self {
+            dir,
+            trust_domain: trust_domain.to_string(),
+            ca_cert,
+            ca_key,
+        })
+    }
+
+    /// Load an existing CA from disk. The cert is reconstituted from PEM and
+    /// re-signed in memory with the loaded key — issued leaves chain back via
+    /// issuer DN + key, so the on-disk PEM is the authority.
+    pub fn load<P: AsRef<Path>>(dir: P) -> Result<Self> {
+        let dir = dir.as_ref().to_path_buf();
+        let cert_path = dir.join(CA_CERT_FILE);
+        let key_path = dir.join(CA_KEY_FILE);
+        let td_path = dir.join(TRUST_DOMAIN_FILE);
+        if !cert_path.exists() || !key_path.exists() || !td_path.exists() {
+            return Err(Error::CaNotInitialized(dir.display().to_string()));
+        }
+
+        let ca_pem = fs::read_to_string(&cert_path)?;
+        let key_pem = fs::read_to_string(&key_path)?;
+        let trust_domain = fs::read_to_string(&td_path)?.trim().to_string();
+        validate_trust_domain_for_ca(&trust_domain)?;
+
+        let ca_key = KeyPair::from_pem(&key_pem)?;
+        let ca_params = CertificateParams::from_ca_cert_pem(&ca_pem)?;
+        let ca_cert = ca_params.self_signed(&ca_key)?;
+
+        Ok(Self {
+            dir,
+            trust_domain,
+            ca_cert,
+            ca_key,
+        })
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    pub fn trust_domain(&self) -> &str {
+        &self.trust_domain
+    }
+
+    /// Issue a fresh X.509-SVID for the named workload + instance, binding
+    /// the (model, manifest, config) digest triple into a custom extension.
+    pub fn issue_svid(
+        &self,
+        workload_name: &str,
+        instance: &str,
+        digests: DigestTriple,
+    ) -> Result<X509Svid> {
+        let spiffe_id = SpiffeId::new(&self.trust_domain, workload_name, instance)?;
+        let now = OffsetDateTime::now_utc();
+
+        let mut params = CertificateParams::default();
+        params.not_before = now - Duration::minutes(5);
+        params.not_after = now + Duration::hours(SVID_VALIDITY_HOURS);
+        params.distinguished_name.push(DnType::CommonName, workload_name);
+        params.subject_alt_names = vec![SanType::URI(
+            Ia5String::try_from(spiffe_id.uri()).map_err(|e| {
+                Error::CertParse(format!("SPIFFE URI not IA5-encodable: {e}"))
+            })?,
+        )];
+
+        let mut ext = CustomExtension::from_oid_content(
+            DIGEST_BINDING_OID,
+            digests.encode().to_vec(),
+        );
+        ext.set_criticality(true);
+        params.custom_extensions.push(ext);
+
+        let leaf_key = KeyPair::generate()?;
+        let leaf = params.signed_by(&leaf_key, &self.ca_cert, &self.ca_key)?;
+
+        Ok(X509Svid {
+            spiffe_id,
+            digests,
+            cert_pem: leaf.pem(),
+            key_pem: leaf_key.serialize_pem(),
+        })
+    }
+
+    /// PEM of the CA root certificate. Useful for trust-bundle distribution.
+    pub fn root_cert_pem(&self) -> String {
+        self.ca_cert.pem()
+    }
+}
+
+fn validate_trust_domain_for_ca(td: &str) -> Result<()> {
+    // Reuse SpiffeId's validator by attempting to construct a sentinel ID.
+    SpiffeId::new(td, "ca", "root").map(|_| ())
+}
+
+#[cfg(unix)]
+fn write_file(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create_new(true).write(true).mode(mode);
+    let mut f = opts.open(path)?;
+    use std::io::Write;
+    f.write_all(contents)?;
+    f.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_file(path: &Path, contents: &[u8], _mode: u32) -> Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create_new(true).write(true);
+    let mut f = opts.open(path)?;
+    use std::io::Write;
+    f.write_all(contents)?;
+    f.sync_all()?;
+    Ok(())
+}
+
+/// Helper used by issued-cert verifiers (and the future `aegis identity verify`
+/// command) to extract the digest triple from an X.509-SVID PEM. The cert
+/// must contain the digest-binding extension or this returns an error.
+pub fn extract_digest_triple_from_pem(cert_pem: &str) -> Result<DigestTriple> {
+    use x509_parser::pem::Pem;
+    use x509_parser::prelude::FromDer;
+    use x509_parser::x509::X509Certificate;
+
+    let pem = Pem::iter_from_buffer(cert_pem.as_bytes())
+        .next()
+        .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
+        .map_err(|e| Error::CertParse(e.to_string()))?;
+    let (_, cert) = X509Certificate::from_der(&pem.contents)
+        .map_err(|e| Error::CertParse(e.to_string()))?;
+
+    let oid_str = oid_components_to_dotted(DIGEST_BINDING_OID);
+    let ext = cert
+        .extensions()
+        .iter()
+        .find(|e| e.oid.to_id_string() == oid_str)
+        .ok_or_else(|| Error::CertParse(format!("missing digest-binding extension {oid_str}")))?;
+
+    DigestTriple::decode(ext.value)
+}
+
+/// Like `extract_digest_triple_from_pem` but for the SPIFFE ID encoded in the
+/// leaf cert's URI SAN.
+pub fn extract_spiffe_id_from_pem(cert_pem: &str) -> Result<SpiffeId> {
+    use x509_parser::extensions::{GeneralName, ParsedExtension};
+    use x509_parser::pem::Pem;
+    use x509_parser::prelude::FromDer;
+    use x509_parser::x509::X509Certificate;
+
+    let pem = Pem::iter_from_buffer(cert_pem.as_bytes())
+        .next()
+        .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
+        .map_err(|e| Error::CertParse(e.to_string()))?;
+    let (_, cert) = X509Certificate::from_der(&pem.contents)
+        .map_err(|e| Error::CertParse(e.to_string()))?;
+
+    for ext in cert.extensions() {
+        if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
+            for name in &san.general_names {
+                if let GeneralName::URI(uri) = name {
+                    return SpiffeId::parse(uri);
+                }
+            }
+        }
+    }
+    Err(Error::CertParse("no URI SAN found".to_string()))
+}
+
+fn oid_components_to_dotted(parts: &[u64]) -> String {
+    parts
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
