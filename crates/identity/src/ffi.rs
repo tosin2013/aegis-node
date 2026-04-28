@@ -77,10 +77,10 @@ pub unsafe extern "C" fn aegis_identity_ca_init(
     dir: *const c_char,
     trust_domain: *const c_char,
 ) -> *mut LocalCa {
-    let Some(dir) = unsafe { c_str(dir, "dir") } else {
+    let Some(dir) = (unsafe { c_str(dir, "dir") }) else {
         return ptr::null_mut();
     };
-    let Some(td) = unsafe { c_str(trust_domain, "trust_domain") } else {
+    let Some(td) = (unsafe { c_str(trust_domain, "trust_domain") }) else {
         return ptr::null_mut();
     };
     match LocalCa::init(Path::new(dir), td) {
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn aegis_identity_ca_init(
 /// `dir` must be a NUL-terminated UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn aegis_identity_ca_load(dir: *const c_char) -> *mut LocalCa {
-    let Some(dir) = unsafe { c_str(dir, "dir") } else {
+    let Some(dir) = (unsafe { c_str(dir, "dir") }) else {
         return ptr::null_mut();
     };
     match LocalCa::load(Path::new(dir)) {
