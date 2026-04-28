@@ -8,6 +8,7 @@ members = [
     "crates/cli",
     "crates/access-log",
     "crates/policy",
+    "crates/filesystem-gate",
 ]
 
 [workspace.package]
