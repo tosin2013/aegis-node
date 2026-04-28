@@ -151,7 +151,7 @@ impl Policy {
         self.manifest
             .write_grants
             .iter()
-            .find(|g| g.resource == p && g.actions.iter().any(|a| *a == want))
+            .find(|g| g.resource == p && g.actions.contains(&want))
     }
 
     fn write_decision(&self, path: &Path, g: &WriteGrant, action: WriteAction) -> Decision {
@@ -159,13 +159,7 @@ impl Policy {
             WriteAction::Delete => ApprovalClass::AnyDelete,
             _ => ApprovalClass::AnyWrite,
         };
-        if g.approval_required
-            || self
-                .manifest
-                .approval_required_for
-                .iter()
-                .any(|c| *c == class)
-        {
+        if g.approval_required || self.manifest.approval_required_for.contains(&class) {
             return Decision::approval(format!(
                 "{:?} on {} requires approval per write_grant",
                 action,
@@ -177,13 +171,7 @@ impl Policy {
 
     fn upgrade_for_approval(&self, base: Decision, class: ApprovalClass, reason: &str) -> Decision {
         match base {
-            Decision::Allow
-                if self
-                    .manifest
-                    .approval_required_for
-                    .iter()
-                    .any(|c| *c == class) =>
-            {
+            Decision::Allow if self.manifest.approval_required_for.contains(&class) => {
                 Decision::approval(reason)
             }
             other => other,
