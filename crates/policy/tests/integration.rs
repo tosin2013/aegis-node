@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use aegis_ledger_writer::{EntryType, LedgerWriter};
-use aegis_policy::{emit_violation, Decision, NetworkProto, Policy, ViolationEvent};
+use aegis_policy::{emit_violation, NetworkProto, Policy, ViolationEvent};
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
