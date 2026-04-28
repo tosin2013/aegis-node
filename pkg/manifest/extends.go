@@ -8,12 +8,12 @@ import (
 
 // Resolved is a child manifest plus the resolved chain of parents
 // (`extends:` walked transitively). Narrowing checks have already passed
-// for every adjacent (child, parent) pair in the chain.
+// for every adjacent (child, parent) pair in the chain. The Parents slice
+// is closest-first: Parents[0] is the direct parent, Parents[1] its
+// grandparent, and so on.
 type Resolved struct {
-	Child  *Manifest
-	Path   string
-	// Parents is the closest-first list: Parents[0] is the direct parent,
-	// Parents[1] its parent, …
+	Child   *Manifest
+	Path    string
 	Parents []*ResolvedParent
 }
 
