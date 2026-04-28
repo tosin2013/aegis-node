@@ -35,6 +35,7 @@ const SVID_VALIDITY_HOURS: i64 = 24;
 
 /// File-backed local CA. Holds the issuer cert + key in memory, ready to
 /// stamp leaf SVIDs.
+#[derive(Debug)]
 pub struct LocalCa {
     dir: PathBuf,
     trust_domain: String,
