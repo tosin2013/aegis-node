@@ -167,7 +167,7 @@ fn fixture_root_matches_pinned_golden() {
     // verifier (issue #5 `aegis verify`) will disagree with this writer —
     // i.e. the chain semantics frozen by the Compatibility Charter changed.
     const GOLDEN_ROOT_HEX: &str =
-        "0000000000000000000000000000000000000000000000000000000000000000";
+        "a3c72aee194b645e524c76b492a11a9347dd393da83bb7792dc6ae8d32c7dba2";
     let root = run_fixture();
     let actual = hex::encode(root);
     assert_eq!(
