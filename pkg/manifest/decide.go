@@ -1,9 +1,6 @@
 package manifest
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 // DecisionKind mirrors aegis_policy::Decision in Rust. The cross-language
 // conformance harness (issue #16) asserts both engines produce the same
@@ -158,24 +155,6 @@ func matchesAllowEntry(e NetworkAllowEntry, host string, port int, protocol stri
 		return false
 	}
 	return true
-}
-
-// pathCovered: child path is at-or-under any parent. "/data" covers
-// "/data" and "/data/x" but not "/data2". MUST match Rust's
-// `paths_cover` exactly.
-func pathCovered(child string, parents []string) bool {
-	for _, p := range parents {
-		if p == child {
-			return true
-		}
-		if p == "/" {
-			return true
-		}
-		if strings.HasPrefix(child, p+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 // Action-name shortcuts so callers don't import the WriteAction enum

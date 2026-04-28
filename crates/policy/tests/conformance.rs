@@ -32,9 +32,15 @@ struct ConformanceCase {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Query {
-    FilesystemRead { resource_uri: String },
-    FilesystemWrite { resource_uri: String },
-    FilesystemDelete { resource_uri: String },
+    FilesystemRead {
+        resource_uri: String,
+    },
+    FilesystemWrite {
+        resource_uri: String,
+    },
+    FilesystemDelete {
+        resource_uri: String,
+    },
     NetworkOutbound {
         host: String,
         port: u16,
@@ -113,12 +119,16 @@ fn conformance_rust_side() {
             Query::FilesystemDelete { resource_uri } => {
                 policy.check_filesystem_delete(Path::new(resource_uri))
             }
-            Query::NetworkOutbound { host, port, protocol } => {
-                policy.check_network_outbound(host, *port, (*protocol).into())
-            }
-            Query::NetworkInbound { host, port, protocol } => {
-                policy.check_network_inbound(host, *port, (*protocol).into())
-            }
+            Query::NetworkOutbound {
+                host,
+                port,
+                protocol,
+            } => policy.check_network_outbound(host, *port, (*protocol).into()),
+            Query::NetworkInbound {
+                host,
+                port,
+                protocol,
+            } => policy.check_network_inbound(host, *port, (*protocol).into()),
             Query::Exec { resource_uri } => policy.check_exec(Path::new(resource_uri)),
         };
 
