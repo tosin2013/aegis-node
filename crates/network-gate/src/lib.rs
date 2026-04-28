@@ -47,9 +47,7 @@ impl AegisTcpStream {
         match policy.check_network_outbound(host, port, proto) {
             Decision::Allow => {}
             Decision::Deny { reason } => return Err(Error::Denied { reason }),
-            Decision::RequireApproval { reason } => {
-                return Err(Error::RequireApproval { reason })
-            }
+            Decision::RequireApproval { reason } => return Err(Error::RequireApproval { reason }),
         }
 
         let addr = (host, port);

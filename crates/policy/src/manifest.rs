@@ -76,9 +76,7 @@ pub struct Network {
 #[serde(untagged)]
 pub enum NetworkPolicy {
     Mode(NetworkMode),
-    Allowlist {
-        allowlist: Vec<NetworkAllowEntry>,
-    },
+    Allowlist { allowlist: Vec<NetworkAllowEntry> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
