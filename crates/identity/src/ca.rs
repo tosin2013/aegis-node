@@ -35,12 +35,20 @@ const SVID_VALIDITY_HOURS: i64 = 24;
 
 /// File-backed local CA. Holds the issuer cert + key in memory, ready to
 /// stamp leaf SVIDs.
-#[derive(Debug)]
 pub struct LocalCa {
     dir: PathBuf,
     trust_domain: String,
     ca_cert: Certificate,
     ca_key: KeyPair,
+}
+
+impl std::fmt::Debug for LocalCa {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalCa")
+            .field("dir", &self.dir)
+            .field("trust_domain", &self.trust_domain)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LocalCa {
