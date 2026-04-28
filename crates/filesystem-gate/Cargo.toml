@@ -1,0 +1,21 @@
+[package]
+name = "aegis-filesystem-gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aegis-policy = { path = "../policy" }
+aegis-ledger-writer = { path = "../ledger-writer" }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"
