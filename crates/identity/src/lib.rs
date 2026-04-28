@@ -16,6 +16,7 @@
 mod binding;
 mod ca;
 pub mod error;
+pub mod ffi;
 mod spiffe;
 mod svid;
 
