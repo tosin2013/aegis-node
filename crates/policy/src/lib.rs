@@ -13,12 +13,14 @@
 
 pub mod decision;
 pub mod error;
+mod identity_binding;
 pub mod manifest;
 mod policy;
 mod violation;
 
 pub use decision::{Decision, NetworkProto};
 pub use error::{Error, Result};
+pub use identity_binding::{check_identity_binding, check_identity_binding_now};
 pub use manifest::{
     Agent, ApiGrant, ApprovalClass, Filesystem, Identity, Manifest, Network, NetworkAllowEntry,
     NetworkMode, NetworkPolicy, NetworkProtocol, Tools, WriteAction, WriteGrant,

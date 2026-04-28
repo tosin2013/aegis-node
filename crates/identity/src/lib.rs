@@ -13,11 +13,13 @@
 //! Phase 0 ships the local-CA flavor only. Phase 2 swaps `LocalCa` for SPIRE
 //! workload-attestation; the SVID format on the wire stays identical.
 
+mod binding;
 mod ca;
 pub mod error;
 mod spiffe;
 mod svid;
 
+pub use binding::{verify_digest_binding, DigestField, DigestMismatch};
 pub use ca::{extract_digest_triple_from_pem, extract_spiffe_id_from_pem, LocalCa};
 pub use error::{Error, Result};
 pub use spiffe::SpiffeId;
