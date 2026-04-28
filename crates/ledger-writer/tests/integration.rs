@@ -160,6 +160,22 @@ fn deterministic_with_fixed_uuids_and_timestamps() {
     assert_eq!(root_a, root_b);
 }
 
+#[test]
+fn fixture_root_matches_pinned_golden() {
+    // Golden fixture per issue #1 acceptance criteria: a known sequence of
+    // entries produces a known root hash. Drift here means a downstream
+    // verifier (issue #5 `aegis verify`) will disagree with this writer —
+    // i.e. the chain semantics frozen by the Compatibility Charter changed.
+    const GOLDEN_ROOT_HEX: &str =
+        "a3c72aee194b645e524c76b492a11a9347dd393da83bb7792dc6ae8d32c7dba2";
+    let root = run_fixture();
+    let actual = hex::encode(root);
+    assert_eq!(
+        actual, GOLDEN_ROOT_HEX,
+        "fixture root drift: actual={actual}"
+    );
+}
+
 fn run_fixture() -> [u8; 32] {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fixture.jsonl");
