@@ -18,6 +18,16 @@ jobs:
           go-version: '1.23'
           cache: true
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build aegis-identity cdylib
+        # pkg/identity/ffi cgo-links against libaegis_identity.so produced
+        # by the cdylib crate-type. Build it before any go test/vet so the
+        # link is satisfied.
+        run: cargo build -p aegis-identity --release
+
       - name: Tidy
         # Phase 1a doesn't commit go.sum yet — `go mod tidy` populates it
         # from the proxy on every run. Once the Go surface stabilizes, lock
@@ -26,12 +36,22 @@ jobs:
         run: go mod tidy
 
       - name: Vet
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/target/release
+          CGO_CFLAGS: -I${{ github.workspace }}/pkg/identity/ffi
         run: go vet ./...
 
       - name: Test
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/target/release
+          CGO_CFLAGS: -I${{ github.workspace }}/pkg/identity/ffi
+          LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
         run: go test -race -count=1 ./...
 
       - name: golangci-lint
+        env:
+          CGO_LDFLAGS: -L${{ github.workspace }}/target/release
+          CGO_CFLAGS: -I${{ github.workspace }}/pkg/identity/ffi
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.62.2

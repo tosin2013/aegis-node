@@ -10,6 +10,13 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[lib]
+# rlib for downstream Rust consumers (policy, cli, tests). cdylib +
+# staticlib for the Go FFI surface (issue #17). Building all three by
+# default keeps `cargo test` fast — pay for the cdylib only when
+# `cargo build` is invoked.
+crate-type = ["lib", "cdylib", "staticlib"]
+
 [dependencies]
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring", "x509-parser"] }
 x509-parser = "0.16"
