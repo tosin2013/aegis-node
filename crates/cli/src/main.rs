@@ -1,21 +1,23 @@
 //! `aegis` — Aegis-Node command-line interface.
 //!
-//! Phase 1a ships the `identity` subcommand surface required by issue #2:
+//! Phase 1a ships:
 //!
 //! ```text
 //! aegis identity init   --trust-domain <td>
 //! aegis identity issue  <workload-name> --instance <i>
 //!                       --model-digest <hex> --manifest-digest <hex>
 //!                       --config-digest <hex>
+//! aegis verify          <ledger-path> [--format text|json]
 //! ```
 //!
-//! Future phases extend this with `aegis verify` (issue #5) and `aegis run`.
+//! Future phases extend this with `aegis run`, `aegis identity verify`, etc.
 
 use std::path::PathBuf;
 
 use aegis_identity::{Digest, DigestTriple, LocalCa};
+use aegis_ledger_writer::{verify_file, VerifyError};
 use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "aegis", version, about = "Aegis-Node CLI")]
@@ -31,6 +33,23 @@ enum Command {
         #[command(subcommand)]
         sub: IdentityCommand,
     },
+    /// Walk a Trajectory Ledger file and verify the SHA-256 hash chain (F9).
+    Verify(VerifyArgs),
+}
+
+#[derive(Debug, Args)]
+struct VerifyArgs {
+    /// Path to the .jsonl ledger file.
+    path: PathBuf,
+    /// Output format. `json` is intended for CI/CD consumption.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
 }
 
 #[derive(Debug, Subcommand)]
@@ -85,6 +104,7 @@ fn main() -> Result<()> {
             IdentityCommand::Init(args) => cmd_init(args),
             IdentityCommand::Issue(args) => cmd_issue(args),
         },
+        Command::Verify(args) => cmd_verify(args),
     }
 }
 
@@ -141,4 +161,44 @@ fn resolve_identity_dir(override_dir: Option<PathBuf>) -> Result<PathBuf> {
 
 fn parse_digest_arg(name: &'static str, hex_str: &str) -> Result<Digest> {
     Digest::from_hex(hex_str).with_context(|| format!("--{name} must be a 64-char hex SHA-256"))
+}
+
+fn cmd_verify(args: VerifyArgs) -> Result<()> {
+    match verify_file(&args.path) {
+        Ok(summary) => {
+            match args.format {
+                OutputFormat::Text => {
+                    let session = summary.session_id.as_deref().unwrap_or("(empty)");
+                    let range = match (summary.first_timestamp, summary.last_timestamp) {
+                        (Some(a), Some(b)) => format!("{a}..{b}"),
+                        _ => "(no entries)".to_string(),
+                    };
+                    println!(
+                        "ledger ok: session={session} entries={} root={} time={range}",
+                        summary.entry_count, summary.root_hash_hex
+                    );
+                }
+                OutputFormat::Json => {
+                    let out = serde_json::json!({ "ok": true, "summary": summary });
+                    println!("{}", serde_json::to_string(&out)?);
+                }
+            }
+            Ok(())
+        }
+        Err(VerifyError::Break(brk)) => {
+            match args.format {
+                OutputFormat::Text => {
+                    eprintln!("ledger break: {brk:?}");
+                }
+                OutputFormat::Json => {
+                    let out = serde_json::json!({ "ok": false, "break": brk });
+                    println!("{}", serde_json::to_string(&out)?);
+                }
+            }
+            std::process::exit(1);
+        }
+        Err(VerifyError::Io(e)) => {
+            Err(e).with_context(|| format!("opening ledger file {}", args.path.display()))
+        }
+    }
 }
