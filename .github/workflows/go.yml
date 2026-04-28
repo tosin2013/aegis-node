@@ -18,6 +18,13 @@ jobs:
           go-version: '1.23'
           cache: true
 
+      - name: Tidy
+        # Phase 1a doesn't commit go.sum yet — `go mod tidy` populates it
+        # from the proxy on every run. Once the Go surface stabilizes, lock
+        # by committing go.sum and switching this step to `go mod download`
+        # plus a `git diff --exit-code` verifier.
+        run: go mod tidy
+
       - name: Vet
         run: go vet ./...
 
