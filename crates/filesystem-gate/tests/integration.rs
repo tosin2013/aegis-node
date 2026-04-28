@@ -19,9 +19,7 @@ fn policy_for(read: &[&str], write: &[&str], write_grants: &[&str]) -> Policy {
     let grants: Vec<String> = write_grants
         .iter()
         .map(|p| {
-            format!(
-                "  - resource: \"{p}\"\n    actions: [\"write\", \"delete\", \"create\"]\n"
-            )
+            format!("  - resource: \"{p}\"\n    actions: [\"write\", \"delete\", \"create\"]\n")
         })
         .collect();
 
