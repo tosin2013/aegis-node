@@ -60,7 +60,9 @@ impl LocalCa {
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.not_before = now - Duration::minutes(5);
         params.not_after = now + Duration::days(365 * CA_VALIDITY_YEARS);
-        params.distinguished_name.push(DnType::CommonName, "Aegis-Node Local CA");
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "Aegis-Node Local CA");
         params.distinguished_name.push(
             DnType::OrganizationName,
             format!("Aegis-Node trust domain {trust_domain}"),
@@ -75,11 +77,7 @@ impl LocalCa {
             ca_key.serialize_pem().as_bytes(),
             0o600,
         )?;
-        write_file(
-            &dir.join(TRUST_DOMAIN_FILE),
-            trust_domain.as_bytes(),
-            0o644,
-        )?;
+        write_file(&dir.join(TRUST_DOMAIN_FILE), trust_domain.as_bytes(), 0o644)?;
 
         Ok(Self {
             dir,
@@ -140,17 +138,16 @@ impl LocalCa {
         let mut params = CertificateParams::default();
         params.not_before = now - Duration::minutes(5);
         params.not_after = now + Duration::hours(SVID_VALIDITY_HOURS);
-        params.distinguished_name.push(DnType::CommonName, workload_name);
+        params
+            .distinguished_name
+            .push(DnType::CommonName, workload_name);
         params.subject_alt_names = vec![SanType::URI(
-            Ia5String::try_from(spiffe_id.uri()).map_err(|e| {
-                Error::CertParse(format!("SPIFFE URI not IA5-encodable: {e}"))
-            })?,
+            Ia5String::try_from(spiffe_id.uri())
+                .map_err(|e| Error::CertParse(format!("SPIFFE URI not IA5-encodable: {e}")))?,
         )];
 
-        let mut ext = CustomExtension::from_oid_content(
-            DIGEST_BINDING_OID,
-            digests.encode().to_vec(),
-        );
+        let mut ext =
+            CustomExtension::from_oid_content(DIGEST_BINDING_OID, digests.encode().to_vec());
         ext.set_criticality(true);
         params.custom_extensions.push(ext);
 
@@ -212,8 +209,8 @@ pub fn extract_digest_triple_from_pem(cert_pem: &str) -> Result<DigestTriple> {
         .next()
         .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
         .map_err(|e| Error::CertParse(e.to_string()))?;
-    let (_, cert) = X509Certificate::from_der(&pem.contents)
-        .map_err(|e| Error::CertParse(e.to_string()))?;
+    let (_, cert) =
+        X509Certificate::from_der(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
 
     let oid_str = oid_components_to_dotted(DIGEST_BINDING_OID);
     let ext = cert
@@ -237,8 +234,8 @@ pub fn extract_spiffe_id_from_pem(cert_pem: &str) -> Result<SpiffeId> {
         .next()
         .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
         .map_err(|e| Error::CertParse(e.to_string()))?;
-    let (_, cert) = X509Certificate::from_der(&pem.contents)
-        .map_err(|e| Error::CertParse(e.to_string()))?;
+    let (_, cert) =
+        X509Certificate::from_der(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
 
     for ext in cert.extensions() {
         if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
@@ -259,4 +256,3 @@ fn oid_components_to_dotted(parts: &[u64]) -> String {
         .collect::<Vec<_>>()
         .join(".")
 }
-

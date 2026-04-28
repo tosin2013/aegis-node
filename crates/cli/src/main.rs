@@ -107,8 +107,8 @@ fn cmd_init(args: InitArgs) -> Result<()> {
 
 fn cmd_issue(args: IssueArgs) -> Result<()> {
     let dir = resolve_identity_dir(args.config_dir)?;
-    let ca = LocalCa::load(&dir)
-        .with_context(|| format!("loading local CA from {}", dir.display()))?;
+    let ca =
+        LocalCa::load(&dir).with_context(|| format!("loading local CA from {}", dir.display()))?;
 
     let digests = DigestTriple {
         model: parse_digest_arg("model-digest", &args.model_digest)?,
@@ -118,12 +118,7 @@ fn cmd_issue(args: IssueArgs) -> Result<()> {
 
     let svid = ca
         .issue_svid(&args.workload_name, &args.instance, digests)
-        .with_context(|| {
-            format!(
-                "issuing SVID for {}/{}",
-                args.workload_name, args.instance
-            )
-        })?;
+        .with_context(|| format!("issuing SVID for {}/{}", args.workload_name, args.instance))?;
 
     // The CLI prints both PEMs to stdout in a labeled, machine-friendly form.
     // Callers (control plane, scripts) split on the labels to consume them.

@@ -79,7 +79,9 @@ fn loaded_ca_can_issue_svids() {
         LocalCa::init(dir.path(), TRUST_DOMAIN).unwrap();
     }
     let ca = LocalCa::load(dir.path()).unwrap();
-    let svid = ca.issue_svid("research", "inst-load", test_digests()).unwrap();
+    let svid = ca
+        .issue_svid("research", "inst-load", test_digests())
+        .unwrap();
     let parsed = extract_spiffe_id_from_pem(&svid.cert_pem).unwrap();
     assert_eq!(parsed.trust_domain(), TRUST_DOMAIN);
     assert_eq!(parsed.workload_name(), "research");
