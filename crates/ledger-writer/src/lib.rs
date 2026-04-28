@@ -29,7 +29,9 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 pub mod error;
+pub mod verify;
 pub use error::{Error, Result};
+pub use verify::{verify_file, verify_reader, VerifyBreak, VerifyError, VerifySummary};
 
 /// JSON-LD `@context` URI for v1 ledger entries.
 pub const LEDGER_CONTEXT: &str = "https://aegis-node.dev/schemas/ledger/v1";
