@@ -201,16 +201,15 @@ fn write_file(path: &Path, contents: &[u8], _mode: u32) -> Result<()> {
 /// command) to extract the digest triple from an X.509-SVID PEM. The cert
 /// must contain the digest-binding extension or this returns an error.
 pub fn extract_digest_triple_from_pem(cert_pem: &str) -> Result<DigestTriple> {
+    use x509_parser::parse_x509_certificate;
     use x509_parser::pem::Pem;
-    use x509_parser::prelude::FromDer;
-    use x509_parser::x509::X509Certificate;
 
     let pem = Pem::iter_from_buffer(cert_pem.as_bytes())
         .next()
         .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
         .map_err(|e| Error::CertParse(e.to_string()))?;
     let (_, cert) =
-        X509Certificate::from_der(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
+        parse_x509_certificate(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
 
     let oid_str = oid_components_to_dotted(DIGEST_BINDING_OID);
     let ext = cert
@@ -226,16 +225,15 @@ pub fn extract_digest_triple_from_pem(cert_pem: &str) -> Result<DigestTriple> {
 /// leaf cert's URI SAN.
 pub fn extract_spiffe_id_from_pem(cert_pem: &str) -> Result<SpiffeId> {
     use x509_parser::extensions::{GeneralName, ParsedExtension};
+    use x509_parser::parse_x509_certificate;
     use x509_parser::pem::Pem;
-    use x509_parser::prelude::FromDer;
-    use x509_parser::x509::X509Certificate;
 
     let pem = Pem::iter_from_buffer(cert_pem.as_bytes())
         .next()
         .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
         .map_err(|e| Error::CertParse(e.to_string()))?;
     let (_, cert) =
-        X509Certificate::from_der(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
+        parse_x509_certificate(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
 
     for ext in cert.extensions() {
         if let ParsedExtension::SubjectAlternativeName(san) = ext.parsed_extension() {
