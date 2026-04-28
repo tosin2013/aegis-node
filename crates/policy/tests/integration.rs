@@ -5,9 +5,7 @@
 use std::path::Path;
 
 use aegis_ledger_writer::{EntryType, LedgerWriter};
-use aegis_policy::{
-    emit_violation, Decision, NetworkProto, Policy, ViolationEvent,
-};
+use aegis_policy::{emit_violation, Decision, NetworkProto, Policy, ViolationEvent};
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
@@ -56,7 +54,9 @@ fn read_only_manifest_denies_all_writes() {
     assert!(p
         .check_filesystem_write(Path::new("/data/reports/x"))
         .is_deny());
-    assert!(p.check_filesystem_delete(Path::new("/data/reports/x")).is_deny());
+    assert!(p
+        .check_filesystem_delete(Path::new("/data/reports/x"))
+        .is_deny());
 }
 
 #[test]
@@ -114,10 +114,7 @@ extends: ["base.yaml"]
 tools: {}
 "#;
     let err = Policy::from_yaml_bytes(yaml.as_bytes()).unwrap_err();
-    assert!(matches!(
-        err,
-        aegis_policy::Error::ExtendsUnsupported(1)
-    ));
+    assert!(matches!(err, aegis_policy::Error::ExtendsUnsupported(1)));
 }
 
 #[test]

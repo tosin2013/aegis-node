@@ -125,12 +125,7 @@ impl Policy {
         )
     }
 
-    pub fn check_network_inbound(
-        &self,
-        host: &str,
-        port: u16,
-        protocol: NetworkProto,
-    ) -> Decision {
+    pub fn check_network_inbound(&self, host: &str, port: u16, protocol: NetworkProto) -> Decision {
         let policy = self
             .manifest
             .tools
@@ -153,9 +148,10 @@ impl Policy {
 
     fn find_write_grant(&self, path: &Path, want: WriteAction) -> Option<&WriteGrant> {
         let p = path.to_string_lossy();
-        self.manifest.write_grants.iter().find(|g| {
-            g.resource == p && g.actions.iter().any(|a| *a == want)
-        })
+        self.manifest
+            .write_grants
+            .iter()
+            .find(|g| g.resource == p && g.actions.iter().any(|a| *a == want))
     }
 
     fn write_decision(&self, path: &Path, g: &WriteGrant, action: WriteAction) -> Decision {
@@ -164,7 +160,11 @@ impl Policy {
             _ => ApprovalClass::AnyWrite,
         };
         if g.approval_required
-            || self.manifest.approval_required_for.iter().any(|c| *c == class)
+            || self
+                .manifest
+                .approval_required_for
+                .iter()
+                .any(|c| *c == class)
         {
             return Decision::approval(format!(
                 "{:?} on {} requires approval per write_grant",
@@ -175,15 +175,14 @@ impl Policy {
         Decision::Allow
     }
 
-    fn upgrade_for_approval(
-        &self,
-        base: Decision,
-        class: ApprovalClass,
-        reason: &str,
-    ) -> Decision {
+    fn upgrade_for_approval(&self, base: Decision, class: ApprovalClass, reason: &str) -> Decision {
         match base {
             Decision::Allow
-                if self.manifest.approval_required_for.iter().any(|c| *c == class) =>
+                if self
+                    .manifest
+                    .approval_required_for
+                    .iter()
+                    .any(|c| *c == class) =>
             {
                 Decision::approval(reason)
             }
@@ -228,9 +227,9 @@ fn network_decision(
     };
     match policy {
         NetworkPolicy::Mode(NetworkMode::Allow) => Decision::Allow,
-        NetworkPolicy::Mode(NetworkMode::Deny) => Decision::deny(format!(
-            "network {direction} denied: manifest sets deny"
-        )),
+        NetworkPolicy::Mode(NetworkMode::Deny) => {
+            Decision::deny(format!("network {direction} denied: manifest sets deny"))
+        }
         NetworkPolicy::Allowlist { allowlist } => {
             if allowlist
                 .iter()

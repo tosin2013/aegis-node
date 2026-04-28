@@ -62,10 +62,7 @@ pub fn emit_violation(
     event: ViolationEvent,
 ) -> Result<EntryRecord> {
     let mut payload = Map::new();
-    payload.insert(
-        "violationReason".to_string(),
-        Value::String(event.reason),
-    );
+    payload.insert("violationReason".to_string(), Value::String(event.reason));
     if let Some(uri) = event.resource_uri {
         payload.insert("resourceUri".to_string(), Value::String(uri));
     }
