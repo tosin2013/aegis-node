@@ -63,7 +63,7 @@ fn refuses_non_loopback_bind() {
 
 #[test]
 fn missing_token_returns_401() {
-    let mut channel = WebApprovalChannel::new("127.0.0.1:0").unwrap();
+    let channel = WebApprovalChannel::new("127.0.0.1:0").unwrap();
     let url = format!("http://{}/approvals", channel.local_addr());
     // Empty token still must not match the channel's real one.
     let (status, _) = http_get(&url, "");
