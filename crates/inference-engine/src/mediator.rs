@@ -25,14 +25,47 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use aegis_access_log::{emit_access, AccessEvent, AccessType};
+use aegis_access_log::{
+    emit_access, emit_reasoning_step, AccessEvent, AccessType, ReasoningStepEvent,
+};
 use aegis_policy::{check_identity_binding, Decision, NetworkProto};
 use chrono::Utc;
+use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::session::Session;
 
 impl Session {
+    /// Record a reasoning step (F5 per ADR-007) and return the step ID.
+    /// The caller threads the returned ID into the next
+    /// `mediate_*` call's `reasoning_step_id` parameter so an auditor
+    /// can correlate the resulting Access entry back to the agent's
+    /// stated rationale.
+    ///
+    /// Phase 1a accepts pre-computed reasoning text — the LLM-driven
+    /// runtime that generates input/reasoning/tools_considered/
+    /// tool_selected arrives in Phase 2 (ADR-014's llama.cpp Backend).
+    pub fn record_reasoning_step(
+        &mut self,
+        input: impl Into<String>,
+        reasoning: impl Into<String>,
+        tools_considered: Vec<String>,
+        tool_selected: Option<String>,
+    ) -> Result<Uuid> {
+        let event = ReasoningStepEvent {
+            step_id: ReasoningStepEvent::new_v7_id(),
+            input: input.into(),
+            reasoning: reasoning.into(),
+            tools_considered,
+            tool_selected,
+            timestamp: Utc::now(),
+        };
+        let step_id = event.step_id;
+        let agent_hash = self.agent_identity_hash();
+        emit_reasoning_step(self.ledger_writer_mut(), agent_hash, event)?;
+        Ok(step_id)
+    }
+
     /// Read a file with full mediation. Returns the file bytes.
     pub fn mediate_filesystem_read(
         &mut self,

@@ -4,10 +4,13 @@
 
 use std::fs;
 
-use aegis_access_log::{emit_access, AccessEvent, AccessType, Error};
+use aegis_access_log::{
+    emit_access, emit_reasoning_step, AccessEvent, AccessType, Error, ReasoningStepEvent,
+};
 use aegis_ledger_writer::{EntryType, LedgerWriter};
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
+use uuid::Uuid;
 
 const SESSION: &str = "session-access-log";
 const AGENT_HASH: [u8; 32] = [0x11u8; 32];
@@ -227,4 +230,149 @@ fn each_access_type_serializes_via_payload() {
         assert_eq!(v["entryType"].as_str().unwrap(), "access");
     }
     let _ = EntryType::Access; // sanity reference
+}
+
+// ---------- F5 reasoning-step emitter tests (issue #26) ----------
+
+fn fixed_step_id() -> Uuid {
+    // Fixed UUIDv7 for golden-style assertions; the version + variant
+    // bits land in the right places so it parses identically on both
+    // engines.
+    Uuid::parse_str("01977a85-1234-7000-8000-aabbccddeeff").unwrap()
+}
+
+#[test]
+fn reasoning_step_carries_all_jsonld_terms() {
+    let (_dir, mut writer, path) = open_writer();
+
+    let record = emit_reasoning_step(
+        &mut writer,
+        AGENT_HASH,
+        ReasoningStepEvent {
+            step_id: fixed_step_id(),
+            input: "user asked: summarize Q1 results".to_string(),
+            reasoning: "I need to read the source CSV before summarizing.".to_string(),
+            tools_considered: vec!["filesystem.read".to_string(), "search_index".to_string()],
+            tool_selected: Some("filesystem.read".to_string()),
+            timestamp: ts(),
+        },
+    )
+    .unwrap();
+    assert_eq!(record.sequence_number, 0);
+
+    writer.close().unwrap();
+    let content = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(lines.len(), 1);
+
+    let v: Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(v["entryType"], "reasoning_step");
+    assert_eq!(v["reasoningStepId"], fixed_step_id().to_string());
+    assert_eq!(v["input"], "user asked: summarize Q1 results");
+    assert_eq!(
+        v["reasoning"],
+        "I need to read the source CSV before summarizing."
+    );
+    assert_eq!(v["toolsConsidered"][0], "filesystem.read");
+    assert_eq!(v["toolsConsidered"][1], "search_index");
+    assert_eq!(v["toolSelected"], "filesystem.read");
+}
+
+#[test]
+fn reasoning_step_omits_tool_selected_when_none() {
+    let (_dir, mut writer, path) = open_writer();
+    emit_reasoning_step(
+        &mut writer,
+        AGENT_HASH,
+        ReasoningStepEvent {
+            step_id: fixed_step_id(),
+            input: "user prompt".to_string(),
+            reasoning: "no tool needed".to_string(),
+            tools_considered: vec![],
+            tool_selected: None,
+            timestamp: ts(),
+        },
+    )
+    .unwrap();
+    writer.close().unwrap();
+
+    let content = fs::read_to_string(&path).unwrap();
+    let v: Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+    assert!(
+        v.get("toolSelected").is_none(),
+        "toolSelected must be absent when not provided"
+    );
+    assert_eq!(v["toolsConsidered"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn rejects_empty_reasoning_input() {
+    let (_dir, mut writer, _) = open_writer();
+    let err = emit_reasoning_step(
+        &mut writer,
+        AGENT_HASH,
+        ReasoningStepEvent {
+            step_id: fixed_step_id(),
+            input: String::new(),
+            reasoning: "rationale".to_string(),
+            tools_considered: vec![],
+            tool_selected: None,
+            timestamp: ts(),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::EmptyReasoningInput));
+    assert_eq!(writer.entry_count(), 0);
+}
+
+#[test]
+fn reasoning_step_then_access_correlate_one_to_one() {
+    // The F5 audit invariant: every Access entry's reasoningStepId
+    // resolves to a preceding ReasoningStep entry whose stepId matches.
+    // Tested here at the emitter level (the runtime mediator wires the
+    // same flow per-tool-call in inference-engine tests).
+    let (_dir, mut writer, path) = open_writer();
+    let step_id = fixed_step_id();
+
+    emit_reasoning_step(
+        &mut writer,
+        AGENT_HASH,
+        ReasoningStepEvent {
+            step_id,
+            input: "user prompt".to_string(),
+            reasoning: "reading the report file".to_string(),
+            tools_considered: vec!["filesystem.read".to_string()],
+            tool_selected: Some("filesystem.read".to_string()),
+            timestamp: ts(),
+        },
+    )
+    .unwrap();
+    emit_access(
+        &mut writer,
+        AGENT_HASH,
+        AccessEvent {
+            resource_uri: "file:///data/report.md".to_string(),
+            access_type: AccessType::Read,
+            bytes_accessed: 4096,
+            reasoning_step_id: Some(step_id.to_string()),
+            timestamp: ts(),
+        },
+    )
+    .unwrap();
+    writer.close().unwrap();
+
+    let content = fs::read_to_string(&path).unwrap();
+    let entries: Vec<Value> = content
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["entryType"], "reasoning_step");
+    assert_eq!(entries[1]["entryType"], "access");
+    assert_eq!(
+        entries[0]["reasoningStepId"], entries[1]["reasoningStepId"],
+        "Access entry's reasoningStepId must match preceding ReasoningStep's stepId"
+    );
+
+    let _ = EntryType::ReasoningStep; // sanity reference
 }

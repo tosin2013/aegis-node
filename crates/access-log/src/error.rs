@@ -12,4 +12,7 @@ pub enum Error {
 
     #[error("resource_uri must be non-empty")]
     EmptyResourceUri,
+
+    #[error("reasoning step input must be non-empty")]
+    EmptyReasoningInput,
 }
