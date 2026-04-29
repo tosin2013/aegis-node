@@ -75,33 +75,46 @@ impl Policy {
     /// time fields are treated as eternal (current behavior pre-#38).
     /// NTP skew during a session can cause early/late expiry — short
     /// sessions are the documented mitigation.
+    ///
+    /// **Explicit-takes-precedence (ADR-019, issue #40)**: if any
+    /// `write_grant` names the resource for the requested action, that
+    /// grant's time window is decisive — broader `tools.filesystem.write`
+    /// coverage does NOT paper over an expired explicit grant. A
+    /// time-expired explicit grant returns `Deny` (so the runtime emits
+    /// an F9 violation per ADR-009) instead of falling through.
     pub fn check_filesystem_write(
         &self,
         path: &Path,
         now: DateTime<Utc>,
         session_start: DateTime<Utc>,
     ) -> Decision {
-        if let Some(g) = self.find_write_grant(path, WriteAction::Write, now, session_start) {
-            return self.write_decision(path, g, WriteAction::Write);
+        match self.classify_write_grant(path, WriteAction::Write, now, session_start) {
+            ExplicitGrant::Valid(g) => self.write_decision(path, g, WriteAction::Write),
+            ExplicitGrant::Expired => Decision::deny(format!(
+                "filesystem write of {} blocked by expired write_grant",
+                path.display()
+            )),
+            ExplicitGrant::None => {
+                let covered = self
+                    .manifest
+                    .tools
+                    .filesystem
+                    .as_ref()
+                    .map(|f| paths_cover(path, &f.write))
+                    .unwrap_or(false);
+                if covered {
+                    return self.upgrade_for_approval(
+                        Decision::Allow,
+                        ApprovalClass::AnyWrite,
+                        "any_write requires approval",
+                    );
+                }
+                Decision::deny(format!(
+                    "filesystem write of {} not granted by manifest",
+                    path.display()
+                ))
+            }
         }
-        let covered = self
-            .manifest
-            .tools
-            .filesystem
-            .as_ref()
-            .map(|f| paths_cover(path, &f.write))
-            .unwrap_or(false);
-        if covered {
-            return self.upgrade_for_approval(
-                Decision::Allow,
-                ApprovalClass::AnyWrite,
-                "any_write requires approval",
-            );
-        }
-        Decision::deny(format!(
-            "filesystem write of {} not granted by manifest",
-            path.display()
-        ))
     }
 
     /// Filesystem delete: only allowed via a write grant whose `actions`
@@ -113,13 +126,17 @@ impl Policy {
         now: DateTime<Utc>,
         session_start: DateTime<Utc>,
     ) -> Decision {
-        if let Some(g) = self.find_write_grant(path, WriteAction::Delete, now, session_start) {
-            return self.write_decision(path, g, WriteAction::Delete);
+        match self.classify_write_grant(path, WriteAction::Delete, now, session_start) {
+            ExplicitGrant::Valid(g) => self.write_decision(path, g, WriteAction::Delete),
+            ExplicitGrant::Expired => Decision::deny(format!(
+                "filesystem delete of {} blocked by expired write_grant",
+                path.display()
+            )),
+            ExplicitGrant::None => Decision::deny(format!(
+                "filesystem delete of {} not granted by any write_grant",
+                path.display()
+            )),
         }
-        Decision::deny(format!(
-            "filesystem delete of {} not granted by any write_grant",
-            path.display()
-        ))
     }
 
     /// Network outbound: closed-by-default. Per ADR-008 the absence of a
@@ -179,17 +196,36 @@ impl Policy {
         )
     }
 
-    fn find_write_grant(
+    /// Classify whether the manifest has an explicit `write_grant` for
+    /// `(path, action)` — and if so, whether any matching grant is
+    /// currently in its time window. Used by `check_filesystem_write`
+    /// and `check_filesystem_delete` to enforce the explicit-takes-
+    /// precedence rule (ADR-019).
+    fn classify_write_grant(
         &self,
         path: &Path,
         want: WriteAction,
         now: DateTime<Utc>,
         session_start: DateTime<Utc>,
-    ) -> Option<&WriteGrant> {
+    ) -> ExplicitGrant<'_> {
         let p = path.to_string_lossy();
-        self.manifest.write_grants.iter().find(|g| {
-            g.resource == p && g.actions.contains(&want) && grant_time_valid(g, now, session_start)
-        })
+        let matching: Vec<&WriteGrant> = self
+            .manifest
+            .write_grants
+            .iter()
+            .filter(|g| g.resource == p && g.actions.contains(&want))
+            .collect();
+        if matching.is_empty() {
+            return ExplicitGrant::None;
+        }
+        if let Some(g) = matching
+            .iter()
+            .copied()
+            .find(|g| grant_time_valid(g, now, session_start))
+        {
+            return ExplicitGrant::Valid(g);
+        }
+        ExplicitGrant::Expired
     }
 
     fn write_decision(&self, path: &Path, g: &WriteGrant, action: WriteAction) -> Decision {
@@ -215,6 +251,17 @@ impl Policy {
             other => other,
         }
     }
+}
+
+/// Outcome of inspecting `manifest.write_grants` for a resource/action.
+/// Drives the explicit-takes-precedence rule (ADR-019).
+enum ExplicitGrant<'a> {
+    /// No grant in the manifest names this resource for this action.
+    None,
+    /// At least one matching grant is currently in its time window.
+    Valid(&'a WriteGrant),
+    /// At least one matching grant exists but ALL of them are expired.
+    Expired,
 }
 
 /// True if a manifest's exec_grant `program` field matches the query.

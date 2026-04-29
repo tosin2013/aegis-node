@@ -2,13 +2,11 @@
 # `duration` (relative to session_start) and `expires_at` (absolute).
 # Per F7 / issue #38.
 #
-# NOTE: deliberately no `tools.filesystem.write` blanket coverage —
-# the only path-write coverage comes from the write_grants below, so
-# an expired grant correctly falls through to the closed-by-default
-# Deny rather than being undermined by a broader rule. The interaction
-# of expired write_grants with broader path coverage is a separate
-# semantic question (closed-by-default vs fallback) that deserves its
-# own issue once #38 lands.
+# NOTE: deliberately no `tools.filesystem.write` blanket coverage so
+# this fixture exercises the single-axis time-bound case in isolation.
+# The interaction of expired write_grants with broader coverage is
+# settled in ADR-019 and exercised by the
+# `explicit-overrides-broad.manifest.yaml` fixture.
 
 schemaVersion: "1"
 agent:

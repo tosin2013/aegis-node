@@ -206,6 +206,42 @@
         "session_start": "2026-04-29T10:00:00Z"
       },
       "expected": "allow"
+    },
+    {
+      "_doc": "ADR-019: explicit-takes-precedence. Inside the grant window, the explicit write_grant for /tmp/secret.txt allows the write — same as broad /tmp coverage would, so the rule is observably equivalent here.",
+      "name": "explicit_grant_in_window_allows",
+      "manifest": "manifests/explicit-overrides-broad.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/secret.txt",
+        "now": "2026-04-29T10:15:00Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "allow"
+    },
+    {
+      "_doc": "ADR-019: explicit-takes-precedence. AFTER the explicit grant's cutoff, the broader tools.filesystem.write: ['/tmp'] rule does NOT paper over the expired explicit grant — Deny.",
+      "name": "explicit_grant_expired_denies_despite_broad_coverage",
+      "manifest": "manifests/explicit-overrides-broad.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/secret.txt",
+        "now": "2026-04-29T11:00:00Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "deny"
+    },
+    {
+      "_doc": "ADR-019: any path NOT named by an explicit grant still falls through to the broad rule. /tmp/other.txt has no explicit grant, so /tmp coverage applies and the write is allowed regardless of clock.",
+      "name": "non_explicit_path_falls_through_to_broad_coverage",
+      "manifest": "manifests/explicit-overrides-broad.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/other.txt",
+        "now": "2026-04-29T11:00:00Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "allow"
     }
   ]
 }

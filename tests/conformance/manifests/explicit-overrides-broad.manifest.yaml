@@ -1,0 +1,23 @@
+# Conformance fixture for ADR-019 (issue #40):
+# explicit-takes-precedence over broader tools.filesystem.write coverage.
+#
+# An explicit write_grant for /tmp/secret.txt is the boundary for that
+# resource regardless of expiry. The broad /tmp coverage exists for
+# everything else under /tmp, but does NOT paper over the explicit
+# grant when it expires.
+
+schemaVersion: "1"
+agent:
+  name: "explicit-overrides-broad-test"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/overlap-test/inst-001"
+tools:
+  filesystem:
+    write: ["/tmp"]
+write_grants:
+  # Time-bounded explicit grant on a single resource. Per ADR-019 this
+  # is decisive for /tmp/secret.txt — both before AND after expiry.
+  - resource: "/tmp/secret.txt"
+    actions: ["write"]
+    expires_at: "2026-04-29T10:30:00Z"
