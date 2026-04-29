@@ -143,7 +143,8 @@ tools:
         outcome.halt_reason
     );
     // start + access + violation + access + end
-    assert_eq!(outcome.entry_count, 5);
+    // start + access + violation + access + network_attestation + end
+    assert_eq!(outcome.entry_count, 6);
 }
 
 #[test]
@@ -190,9 +191,9 @@ write_grants:
         reason.contains("approval required"),
         "halt reason: {reason}"
     );
-    // session_start + session_end (no access, no violation since it
-    // didn't actually run).
-    assert_eq!(outcome.entry_count, 2);
+    // session_start + network_attestation (zero connections, always emitted)
+    // + session_end. No access, no violation since it didn't actually run.
+    assert_eq!(outcome.entry_count, 3);
 }
 
 #[test]
@@ -249,10 +250,10 @@ tools:
         let reason = outcome.halt_reason.as_deref().unwrap_or("");
         assert!(reason.contains("rebind"), "halt reason: {reason}");
         // start + access (call 1) + violation (call 2 rebind) + end
-        assert_eq!(outcome.entry_count, 4);
+        assert_eq!(outcome.entry_count, 5);
     } else {
         // Race lost; both calls completed.
-        assert_eq!(outcome.entry_count, 4); // start + 2 access + end
+        assert_eq!(outcome.entry_count, 5); // start + 2 access + end
     }
 }
 

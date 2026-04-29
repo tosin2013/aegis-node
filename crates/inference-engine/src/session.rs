@@ -64,6 +64,33 @@ pub struct Session {
     /// means the legacy halt-on-RequireApproval behavior; set via
     /// [`Session::with_approval_channel`] after boot.
     pub(crate) approval_channel: Option<Box<dyn ApprovalChannel>>,
+    /// F6 end-of-session network attestation accumulator (issue #37).
+    /// Every `mediate_network_connect` call appends one entry, regardless
+    /// of outcome. `shutdown` summarizes + signs + emits a
+    /// `NetworkAttestation` ledger entry before `SessionEnd`.
+    pub(crate) network_log: Vec<NetworkConnectionMeta>,
+}
+
+/// One observed network-connection attempt + the gate's decision.
+/// Kept narrow: host + port + protocol + outcome + when. The full
+/// reasoning step lives in F5 entries already.
+#[derive(Debug, Clone)]
+pub struct NetworkConnectionMeta {
+    pub host: String,
+    pub port: u16,
+    pub protocol: String,
+    pub decision: NetworkConnectionDecision,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkConnectionDecision {
+    /// Policy returned Allow without invoking the approval gate.
+    Allowed,
+    /// Policy returned RequireApproval and the channel granted.
+    Approved,
+    /// Denied — by policy, by approval rejection, or by approval timeout.
+    Denied,
 }
 
 impl std::fmt::Debug for Session {
@@ -148,6 +175,7 @@ impl Session {
             model_path: cfg.model_path,
             config_path: cfg.config_path,
             approval_channel: None,
+            network_log: Vec::new(),
         })
     }
 
@@ -165,9 +193,13 @@ impl Session {
         self.session_start
     }
 
-    /// Emit `SessionEnd`, close the ledger, and return the chain root
-    /// hash. The root is what an auditor pins to detect tampering.
+    /// Emit a `NetworkAttestation` then a `SessionEnd`, close the
+    /// ledger, and return the chain root hash. The attestation MUST be
+    /// emitted even for zero-connection runs (per issue #37 / F6) —
+    /// "no attestation entry" is not equivalent to "no connections".
     pub fn shutdown(mut self) -> Result<[u8; 32]> {
+        crate::attestation::emit_network_attestation(&mut self)?;
+
         let mut payload = Map::new();
         payload.insert("spiffeId".to_string(), Value::String(self.spiffe_id.uri()));
         self.ledger.append(Entry {

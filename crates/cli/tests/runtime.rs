@@ -39,6 +39,10 @@ fn placeholder_for(field: &str) -> Option<&'static str> {
         "manifestDigestHex" => "<HEX64>",
         "configDigestHex" => "<HEX64>",
         "agentIdentityHash" => "<HEX64>",
+        // F6 attestation fields (issue #37) — derived from non-deterministic
+        // SVID key + per-run network log timestamps.
+        "signatureHex" => "<HEX64>",
+        "connectionsDigestHex" => "<HEX64>",
         _ => return None,
     })
 }
