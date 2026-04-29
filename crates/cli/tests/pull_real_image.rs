@@ -35,6 +35,8 @@ use aegis_cli::pull::{self, PullConfig};
 /// content hash of the GGUF bytes — what `pull::pull` returns and what
 /// the F1 boot path will bind into the SVID. They are different values.
 const PINNED_REF: &str = "ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6";
+const PINNED_MANIFEST_SHA: &str =
+    "240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6";
 const PINNED_BLOB_SHA: &str = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
 
 /// Identity regex matching the `models-publish.yml` workflow that signed
@@ -82,10 +84,21 @@ fn pull_qwen_model_round_trips_against_real_registry() {
         "returned sha256 does not match the pinned digest"
     );
     assert!(pulled.blob_path.exists(), "blob not in cache");
+    // Cache key is the *manifest* digest (per `pull::pull`'s public
+    // contract), not the blob digest — the two are different OCI
+    // concepts.
     assert_eq!(
         pulled.blob_path,
-        cache_blob_path(cache.path(), PINNED_BLOB_SHA),
+        cache_blob_path(cache.path(), PINNED_MANIFEST_SHA),
         "blob landed at unexpected cache path"
+    );
+    // sha256.txt sidecar carries the blob's actual SHA-256.
+    let sha_sidecar = pulled.blob_path.parent().unwrap().join("sha256.txt");
+    assert!(sha_sidecar.exists(), "sha256.txt sidecar missing");
+    assert_eq!(
+        std::fs::read_to_string(&sha_sidecar).unwrap().trim(),
+        PINNED_BLOB_SHA,
+        "sha256.txt should record the blob digest"
     );
     let ref_txt = pulled.blob_path.parent().unwrap().join("ref.txt");
     assert!(ref_txt.exists(), "ref.txt sidecar missing");
