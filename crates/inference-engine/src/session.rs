@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use aegis_identity::{verify_digest_binding, Digest, DigestField, DigestTriple, LocalCa, SpiffeId};
 use aegis_ledger_writer::{Entry, EntryType, LedgerWriter};
 use aegis_policy::Policy;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
@@ -52,6 +52,10 @@ pub struct Session {
     spiffe_id: SpiffeId,
     agent_identity_hash: [u8; 32],
     session_id: String,
+    /// Wall-clock timestamp captured at boot. Used as the anchor for
+    /// time-bounded write_grants (`duration: PT1H` means valid for the
+    /// first hour of THIS session). Per ADR-009 / issue #38.
+    pub(crate) session_start: DateTime<Utc>,
     pub(crate) manifest_path: PathBuf,
     pub(crate) model_path: PathBuf,
     pub(crate) config_path: Option<PathBuf>,
@@ -73,6 +77,7 @@ impl Session {
     /// Run the boot sequence end-to-end. On any failure the partial
     /// ledger is dropped (LedgerWriter cleans up via close-on-drop).
     pub fn boot(cfg: BootConfig) -> Result<Self> {
+        let session_start = Utc::now();
         let policy = Policy::from_yaml_file(&cfg.manifest_path)?;
 
         let model_digest = sha256_file(&cfg.model_path)?;
@@ -133,10 +138,16 @@ impl Session {
             spiffe_id: svid.spiffe_id,
             agent_identity_hash,
             session_id: cfg.session_id,
+            session_start,
             manifest_path: cfg.manifest_path,
             model_path: cfg.model_path,
             config_path: cfg.config_path,
         })
+    }
+
+    /// Wall-clock anchor for time-bounded write_grants — set once at boot.
+    pub fn session_start(&self) -> DateTime<Utc> {
+        self.session_start
     }
 
     /// Emit `SessionEnd`, close the ledger, and return the chain root

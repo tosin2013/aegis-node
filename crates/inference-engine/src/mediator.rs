@@ -69,7 +69,11 @@ impl Session {
         reasoning_step_id: Option<&str>,
     ) -> Result<()> {
         self.rebind()?;
-        let decision = self.policy().check_filesystem_write(path);
+        let now = Utc::now();
+        let session_start = self.session_start();
+        let decision = self
+            .policy()
+            .check_filesystem_write(path, now, session_start);
         let resource_uri = file_uri(path);
         match decision {
             Decision::Allow => {
@@ -97,7 +101,11 @@ impl Session {
         reasoning_step_id: Option<&str>,
     ) -> Result<()> {
         self.rebind()?;
-        let decision = self.policy().check_filesystem_delete(path);
+        let now = Utc::now();
+        let session_start = self.session_start();
+        let decision = self
+            .policy()
+            .check_filesystem_delete(path, now, session_start);
         let resource_uri = file_uri(path);
         match decision {
             Decision::Allow => {

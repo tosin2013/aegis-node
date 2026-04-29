@@ -5,9 +5,17 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const conformancePath = "../../tests/conformance/cases.json"
+
+// Default clock for cases that don't pin one. Mirrors the Rust runner's
+// defaults so both engines agree on time-naive cases.
+var (
+	defaultNow          = time.Date(2026, 4, 29, 10, 1, 0, 0, time.UTC)
+	defaultSessionStart = time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
+)
 
 type conformanceFile struct {
 	Version string            `json:"version"`
@@ -46,7 +54,14 @@ func TestConformance_GoSide(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load %s: %v", manifestPath, err)
 			}
-			got := m.Decide(c.Query)
+			q := c.Query
+			if q.Now.IsZero() {
+				q.Now = defaultNow
+			}
+			if q.SessionStart.IsZero() {
+				q.SessionStart = defaultSessionStart
+			}
+			got := m.Decide(q)
 			if got.Kind != c.Expected {
 				t.Errorf("decision drift: want %q got %q (reason=%q)", c.Expected, got.Kind, got.Reason)
 			}

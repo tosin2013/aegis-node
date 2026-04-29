@@ -151,6 +151,61 @@
       "manifest": "../../schemas/manifest/v1/examples/agent-with-exec.manifest.yaml",
       "query": { "kind": "exec", "resource_uri": "/usr/local/bin/ffmpeg" },
       "expected": "deny"
+    },
+    {
+      "name": "duration_grant_in_window_allows",
+      "manifest": "manifests/time-bounded-write.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/short-lived.txt",
+        "now": "2026-04-29T10:30:00Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "allow"
+    },
+    {
+      "name": "duration_grant_after_expiry_denies",
+      "manifest": "manifests/time-bounded-write.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/short-lived.txt",
+        "now": "2026-04-29T11:30:00Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "deny"
+    },
+    {
+      "name": "expires_at_grant_before_cutoff_allows",
+      "manifest": "manifests/time-bounded-write.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/until.txt",
+        "now": "2026-04-29T10:15:00Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "allow"
+    },
+    {
+      "name": "expires_at_grant_after_cutoff_denies",
+      "manifest": "manifests/time-bounded-write.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/until.txt",
+        "now": "2026-04-29T11:00:00Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "deny"
+    },
+    {
+      "name": "unbounded_grant_unaffected_by_clock",
+      "manifest": "manifests/time-bounded-write.manifest.yaml",
+      "query": {
+        "kind": "filesystem_write",
+        "resource_uri": "/tmp/forever.txt",
+        "now": "2099-12-31T23:59:59Z",
+        "session_start": "2026-04-29T10:00:00Z"
+      },
+      "expected": "allow"
     }
   ]
 }

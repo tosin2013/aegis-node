@@ -1,0 +1,25 @@
+# Conformance fixture: time-bounded write_grants exercising both
+# `duration` (relative to session_start) and `expires_at` (absolute).
+# Per F7 / issue #38.
+
+schemaVersion: "1"
+agent:
+  name: "time-bounded-test"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/time-bounded/inst-001"
+tools:
+  filesystem:
+    write: ["/tmp"]
+write_grants:
+  # Valid for the first hour of the session.
+  - resource: "/tmp/short-lived.txt"
+    actions: ["write"]
+    duration: "PT1H"
+  # Valid only until a hard wall-clock cut-off.
+  - resource: "/tmp/until.txt"
+    actions: ["write"]
+    expires_at: "2026-04-29T10:30:00Z"
+  # No time bounds — eternal (matches pre-#38 default).
+  - resource: "/tmp/forever.txt"
+    actions: ["write"]

@@ -17,5 +17,6 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 thiserror = "1"
 
 [dev-dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 tempfile = "3"
 serde_json = "1"
