@@ -1,0 +1,19 @@
+# Conformance fixture for the MCP allowlist (ADR-018, F2-MCP-C / issue #45).
+# Two server entries:
+#   - "research-tools" with two allowed tools (search, summarize)
+#   - "empty-server" with allowed_tools: [] (closed-by-default; tool calls
+#     against it are always denied)
+schemaVersion: "1"
+agent:
+  name: "mcp-conformance"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/mcp-conformance/inst-001"
+tools:
+  mcp:
+    - server_name: "research-tools"
+      server_uri: "stdio:/usr/local/bin/mcp-research"
+      allowed_tools: ["search", "summarize"]
+    - server_name: "empty-server"
+      server_uri: "stdio:/usr/local/bin/mcp-empty"
+      allowed_tools: []

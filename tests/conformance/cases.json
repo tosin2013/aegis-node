@@ -242,6 +242,50 @@
         "session_start": "2026-04-29T10:00:00Z"
       },
       "expected": "allow"
+    },
+    {
+      "_doc": "ADR-018 / F2-MCP-C: allowed server + allowed tool. tools.mcp[] explicitly grants research-tools/search.",
+      "name": "mcp_allowed_server_allowed_tool_allows",
+      "manifest": "manifests/mcp-allowlist.manifest.yaml",
+      "query": {
+        "kind": "mcp_tool_call",
+        "mcp_server": "research-tools",
+        "mcp_tool": "search"
+      },
+      "expected": "allow"
+    },
+    {
+      "_doc": "ADR-018 / F2-MCP-C: allowed server but disallowed tool — closed-by-default rejects unlisted tool names even when the server is in tools.mcp[].",
+      "name": "mcp_allowed_server_disallowed_tool_denies",
+      "manifest": "manifests/mcp-allowlist.manifest.yaml",
+      "query": {
+        "kind": "mcp_tool_call",
+        "mcp_server": "research-tools",
+        "mcp_tool": "delete_everything"
+      },
+      "expected": "deny"
+    },
+    {
+      "_doc": "ADR-018 / F2-MCP-C: server not in tools.mcp[] at all — closed-by-default denies regardless of tool name.",
+      "name": "mcp_disallowed_server_denies",
+      "manifest": "manifests/mcp-allowlist.manifest.yaml",
+      "query": {
+        "kind": "mcp_tool_call",
+        "mcp_server": "evil-server",
+        "mcp_tool": "search"
+      },
+      "expected": "deny"
+    },
+    {
+      "_doc": "ADR-018 / F2-MCP-C: empty allowed_tools means no tools are allowed from that server, even though the server is listed.",
+      "name": "mcp_empty_allowed_tools_denies",
+      "manifest": "manifests/mcp-allowlist.manifest.yaml",
+      "query": {
+        "kind": "mcp_tool_call",
+        "mcp_server": "empty-server",
+        "mcp_tool": "search"
+      },
+      "expected": "deny"
     }
   ]
 }
