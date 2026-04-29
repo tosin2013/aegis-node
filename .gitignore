@@ -22,6 +22,9 @@ coverage.out
 # Go vendor (if used)
 /vendor/
 
+# Node — only the replay-viewer's snapshot test uses Node deps.
+node_modules/
+
 # Editor / OS noise
 .DS_Store
 *.swp

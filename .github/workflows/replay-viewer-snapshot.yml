@@ -1,0 +1,40 @@
+name: Replay viewer (DOM snapshot)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/replay-viewer/**'
+      - 'crates/ledger-writer/examples/replay-fixture.rs'
+      - '.github/workflows/replay-viewer-snapshot.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/replay-viewer/**'
+      - 'crates/ledger-writer/examples/replay-fixture.rs'
+      - '.github/workflows/replay-viewer-snapshot.yml'
+
+# Per F8-C / ADR-010 / issue #64. Runs the offline viewer through a
+# headless DOM (jsdom — no browser binary needed) against the
+# committed fixture and asserts the rendered DOM matches the committed
+# expected snapshot. A regression that drifts the audit experience
+# fails the workflow on every PR.
+
+jobs:
+  snapshot:
+    name: F8-C DOM snapshot
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/replay-viewer/snapshot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tools/replay-viewer/snapshot/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Check snapshot
+        run: npm test

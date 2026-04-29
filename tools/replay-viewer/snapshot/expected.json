@@ -1,0 +1,275 @@
+{
+  "integrity": {
+    "state": "verified",
+    "label": "integrity: VERIFIED"
+  },
+  "chips": [
+    {
+      "value": "sample-session.jsonl"
+    },
+    {
+      "value": "session-replay-fixture"
+    },
+    {
+      "value": "11"
+    },
+    {
+      "value": "3f11690f1378ff227572d997a942646f8409c565ed74375c614594440566af13"
+    }
+  ],
+  "entryCount": 11,
+  "entries": [
+    {
+      "seq": "#0",
+      "type": "session_start",
+      "pill": "session_start",
+      "timestamp": "2026-04-29T14:00:00.000000000Z",
+      "rows": [
+        [
+          "spiffeId",
+          "spiffe://aegis-node.local/agent/research-mcp/inst-001"
+        ],
+        [
+          "modelDigestHex",
+          "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3"
+        ],
+        [
+          "manifestDigestHex",
+          "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4"
+        ],
+        [
+          "configDigestHex",
+          "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5"
+        ]
+      ]
+    },
+    {
+      "seq": "#1",
+      "type": "reasoning_step",
+      "pill": "reasoning_step",
+      "timestamp": "2026-04-29T14:00:01.000000000Z",
+      "rows": [
+        [
+          "reasoningStepId",
+          "rstep-q1-readsales"
+        ],
+        [
+          "toolSelected",
+          "read_text_file"
+        ],
+        [
+          "toolsConsidered",
+          "read_text_file, list_directory, write_file"
+        ]
+      ]
+    },
+    {
+      "seq": "#2",
+      "type": "access",
+      "pill": "access",
+      "timestamp": "2026-04-29T14:00:02.000000000Z",
+      "rows": [
+        [
+          "resourceUri",
+          "mcp://filesystem/read_text_file"
+        ],
+        [
+          "accessType",
+          "mcp_tool_call"
+        ],
+        [
+          "bytesAccessed",
+          "482"
+        ],
+        [
+          "reasoningStepId",
+          "rstep-q1-readsales"
+        ]
+      ]
+    },
+    {
+      "seq": "#3",
+      "type": "access",
+      "pill": "access",
+      "timestamp": "2026-04-29T14:00:03.000000000Z",
+      "rows": [
+        [
+          "resourceUri",
+          "file:///data/reports/q1.md"
+        ],
+        [
+          "accessType",
+          "read"
+        ],
+        [
+          "bytesAccessed",
+          "482"
+        ],
+        [
+          "reasoningStepId",
+          "rstep-q1-readsales"
+        ]
+      ]
+    },
+    {
+      "seq": "#4",
+      "type": "reasoning_step",
+      "pill": "reasoning_step",
+      "timestamp": "2026-04-29T14:00:04.000000000Z",
+      "rows": [
+        [
+          "reasoningStepId",
+          "rstep-writesum"
+        ],
+        [
+          "toolSelected",
+          "write_file"
+        ],
+        [
+          "toolsConsidered",
+          "write_file"
+        ]
+      ]
+    },
+    {
+      "seq": "#5",
+      "type": "violation",
+      "pill": "violation",
+      "timestamp": "2026-04-29T14:00:05.000000000Z",
+      "rows": [
+        [
+          "violationReason",
+          "mcp tool call \"filesystem\"/\"write_file\" not granted: tool not in allowed_tools"
+        ],
+        [
+          "resourceUri",
+          "mcp://filesystem/write_file"
+        ],
+        [
+          "accessType",
+          "mcp_tool_call"
+        ]
+      ]
+    },
+    {
+      "seq": "#6",
+      "type": "approval_request",
+      "pill": "approval_request",
+      "timestamp": "2026-04-29T14:00:06.000000000Z",
+      "rows": [
+        [
+          "actionSummary",
+          "Write summary to /data/output/summary.md"
+        ],
+        [
+          "resourceUri",
+          "file:///data/output/summary.md"
+        ],
+        [
+          "accessType",
+          "write"
+        ],
+        [
+          "expiresAt",
+          "2026-04-29T14:02:06Z"
+        ],
+        [
+          "reasoningStepId",
+          "rstep-writesum"
+        ]
+      ]
+    },
+    {
+      "seq": "#7",
+      "type": "approval_granted",
+      "pill": "approval_granted",
+      "timestamp": "2026-04-29T14:00:07.000000000Z",
+      "rows": [
+        [
+          "decision",
+          "granted"
+        ],
+        [
+          "approverId",
+          "spiffe://aegis-node.local/operator/security"
+        ],
+        [
+          "decidedAt",
+          "2026-04-29T14:00:06Z"
+        ],
+        [
+          "reasoningStepId",
+          "rstep-writesum"
+        ]
+      ]
+    },
+    {
+      "seq": "#8",
+      "type": "access",
+      "pill": "access",
+      "timestamp": "2026-04-29T14:00:08.000000000Z",
+      "rows": [
+        [
+          "resourceUri",
+          "file:///data/output/summary.md"
+        ],
+        [
+          "accessType",
+          "write"
+        ],
+        [
+          "bytesAccessed",
+          "214"
+        ],
+        [
+          "reasoningStepId",
+          "rstep-writesum"
+        ]
+      ]
+    },
+    {
+      "seq": "#9",
+      "type": "network_attestation",
+      "pill": "network_attestation",
+      "timestamp": "2026-04-29T14:00:09.000000000Z",
+      "rows": [
+        [
+          "totalConnections",
+          "0"
+        ],
+        [
+          "allowedCount",
+          "0"
+        ],
+        [
+          "approvedCount",
+          "0"
+        ],
+        [
+          "deniedCount",
+          "0"
+        ],
+        [
+          "connectionsDigestHex",
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ],
+        [
+          "signatureHex",
+          "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+        ]
+      ]
+    },
+    {
+      "seq": "#10",
+      "type": "session_end",
+      "pill": "session_end",
+      "timestamp": "2026-04-29T14:00:10.000000000Z",
+      "rows": [
+        [
+          "spiffeId",
+          "spiffe://aegis-node.local/agent/research-mcp/inst-001"
+        ]
+      ]
+    }
+  ]
+}
