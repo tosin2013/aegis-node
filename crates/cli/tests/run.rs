@@ -137,7 +137,11 @@ tools:
     );
     let outcome = execute(args).unwrap();
 
-    assert!(!outcome.halted, "deny does not halt; {:?}", outcome.halt_reason);
+    assert!(
+        !outcome.halted,
+        "deny does not halt; {:?}",
+        outcome.halt_reason
+    );
     // start + access + violation + access + end
     assert_eq!(outcome.entry_count, 5);
 }
@@ -281,5 +285,8 @@ tools: {}
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("script") || msg.contains("does-not-exist"), "{msg}");
+    assert!(
+        msg.contains("script") || msg.contains("does-not-exist"),
+        "{msg}"
+    );
 }

@@ -274,7 +274,8 @@ fn parse_proto(s: &str) -> Result<NetworkProto> {
 }
 
 fn load_script(path: &Path) -> Result<Script> {
-    let bytes = std::fs::read(path).with_context(|| format!("reading script {}", path.display()))?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("reading script {}", path.display()))?;
     serde_json::from_slice(&bytes)
         .with_context(|| format!("parsing script {} as JSON", path.display()))
 }
