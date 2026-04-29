@@ -119,7 +119,10 @@ fn runtime_conformance_golden() {
     assert_eq!(summary.entry_count, outcome.entry_count);
 
     // Normalize produced + load golden with workdir substitution.
-    let produced: Vec<Value> = read_jsonl(&ledger_path).into_iter().map(normalize).collect();
+    let produced: Vec<Value> = read_jsonl(&ledger_path)
+        .into_iter()
+        .map(normalize)
+        .collect();
 
     let golden_template = std::fs::read_to_string(fixture_path("golden.template.jsonl"))
         .expect("read golden template");
