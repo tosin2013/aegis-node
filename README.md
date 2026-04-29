@@ -4,7 +4,7 @@
 
 Every enterprise wants AI agents. Every enterprise security team blocks them. Aegis-Node is the agent runtime built to survive the security review — so organizations can finally say yes.
 
-**Status:** Phase 1a complete — [**v0.5.0** *Core Security Primitives*](https://github.com/tosin2013/aegis-node/releases/tag/v0.5.0) (pre-release, 2026-04-29). Working zero-trust runtime end-to-end: identity ([F1](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF1)), manifest enforcement ([F2](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF2)), access log ([F4](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF4)), hash-chained ledger ([F9](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF9)), plus an `aegis run` CLI that exercises them. Approval gate (F3) and reasoning trajectory (F5) ship in v0.8.0; replay viewer + policy validator + model-pull tooling in v0.9.0; v1.0.0 GA targets the [CMMC 2.0 deadline 2026-11-02](RELEASE_PLAN.md).
+**Status:** Phase 1b complete — [**v0.8.0** *Reasoning + Approval*](https://github.com/tosin2013/aegis-node/releases/tag/v0.8.0) (pre-release, 2026-04-29). Builds on [v0.5.0](https://github.com/tosin2013/aegis-node/releases/tag/v0.5.0) with the F3 human approval gate (TTY / file / [localhost web UI](https://github.com/tosin2013/aegis-node/issues/35) / [mTLS+SPIFFE signed-API](https://github.com/tosin2013/aegis-node/issues/36)), F5 [pre-execution reasoning trajectory](https://github.com/tosin2013/aegis-node/issues/26), F6 [end-of-session signed network attestation](https://github.com/tosin2013/aegis-node/issues/37), F7 [time-bounded write_grants](https://github.com/tosin2013/aegis-node/issues/38) with [explicit-takes-precedence](docs/adrs/019-explicit-write-grant-takes-precedence.md). Replay viewer + policy validator + model-pull tooling in v0.9.0; v1.0.0 GA targets the [CMMC 2.0 deadline 2026-11-02](RELEASE_PLAN.md).
 
 ## What it is
 
@@ -14,11 +14,11 @@ Aegis-Node is structured around the ten questions a zero-trust security team ask
 |---|---|---|
 | What identity is the agent running as? | F1 Workload Identity | ✅ v0.5.0 |
 | What tools can it access? | F2 Permission Manifest | ✅ v0.5.0 |
-| Who approved the tool action? | F3 Human Approval Gate | v0.8.0 |
+| Who approved the tool action? | F3 Human Approval Gate | ✅ v0.8.0 |
 | What data did it touch? | F4 Access Log | ✅ v0.5.0 |
-| Why did it act? | F5 Reasoning Trajectory | v0.8.0 |
-| Can it exfiltrate data? | F6 Network-Deny-by-Default | ✅ v0.5.0 (network gate) |
-| Can it mutate production? | F7 Read-Only + Explicit Write Grants | ✅ v0.5.0 |
+| Why did it act? | F5 Reasoning Trajectory | ✅ v0.8.0 |
+| Can it exfiltrate data? | F6 Network-Deny-by-Default | ✅ v0.5.0 + signed attestation v0.8.0 |
+| Can it mutate production? | F7 Read-Only + Explicit Write Grants | ✅ v0.5.0 + time-bounded v0.8.0 |
 | Can we replay what happened? | F8 Trajectory Replay | v0.9.0 |
 | Can logs be altered? | F9 Hash-Chained Ledger | ✅ v0.5.0 |
 | Can policies be reviewed before runtime? | F10 Policy-as-Code Validation | v0.9.0 |

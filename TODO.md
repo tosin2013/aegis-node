@@ -45,19 +45,20 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 - [x] **P0** F0 runtime — End-to-end golden-ledger conformance (PR #33, issue #29).
 - [x] **P1** F1 — Go-callable FFI surface for in-process SVID issuance (PR #22, issue #17).
 
-## Phase 1b — Reasoning + Approval (target: v0.8.0, 2026-08-31)
+## Phase 1b — Reasoning + Approval (target: v0.8.0, 2026-08-31) ✅ shipped 2026-04-29
 
-- [ ] **P0** [ADR-007, F5] Implement Reasoning Capturer that intercepts LLM tool-selection output and writes a structured trajectory entry **before** the action handler is invoked. Failure to write blocks the action.
-- [ ] **P0** [ADR-007, F5] Define + implement reasoning-step ID linkage between F5 trajectory entries and F4 access entries.
-- [ ] **P0** [ADR-005, F3] Implement three approval channels: TTY-attached CLI prompt, localhost-only web UI (session-token gated), signed-API (mTLS + identity).
-- [ ] **P0** [ADR-005, F3] Define action-summary template (plain English + structured action metadata); ledger schema events: `ApprovalRequested/Granted/Rejected/TimedOut`.
-- [ ] **P0** [ADR-008, F6] Implement Rust network gate wrapping `std::net` + the inference engine HTTP clients. Non-allowlisted connect → deterministic error + critical F9 violation + halt.
-- [ ] **P0** [ADR-008, F6] Define + emit signed end-of-session network attestation (zero-connections or allowed-only).
-- [ ] **P0** [ADR-009, F7] Implement `write_grants` enforcement at every mutation syscall (file write/truncate/rename/unlink, allowed-host POST/PUT/PATCH/DELETE, plugin-defined mutation tools).
-- [ ] **P0** [ADR-009, F7] Implement time-bounded grants using monotonic clock + validated wall clock at session start; expired grants emit F9 violations.
-- [ ] **P1** [ADR-005, F3] Default approval timeout (120 s) and refuse-on-timeout semantics.
-- [ ] **P1** [ADR-008, F6] Document tool-author contract for tools that bring their own network stack (wrapping or rejection rules).
-- [ ] **P2** [ADR-009, F7] Compose `approval_required` write grants with F3 approval gate (manifest field).
+- [x] **P0** [ADR-007, F5] Reasoning Capturer that intercepts LLM tool-selection output and writes a structured trajectory entry **before** the action handler is invoked. — PR #47 (issue #26).
+- [x] **P0** [ADR-007, F5] Reasoning-step ID linkage between F5 trajectory entries and F4 access entries. — PR #47 (issue #26).
+- [x] **P0** [ADR-005, F3] Three approval channels: TTY-attached CLI prompt + file channel (PR #48, issue #27), localhost-only web UI session-token gated (PR #51, issue #35), signed-API mTLS + SPIFFE identity (PR #50, issue #36).
+- [x] **P0** [ADR-005, F3] ApprovalRequest + Granted / Rejected / TimedOut outcomes; ledger entry types wired through Session::shutdown.
+- [x] **P0** [ADR-008, F6] Rust network gate landed earlier under v0.5.0; v0.8.0 added the F6 end-of-session signed network attestation. — PR #49 (issue #37).
+- [x] **P0** [ADR-008, F6] Signed end-of-session network attestation (HMAC-SHA-256 over canonical summary; zero-connection runs still emit). — PR #49 (issue #37).
+- [x] **P0** [ADR-009, F7] `write_grants` enforcement at every mutation syscall — landed under v0.5.0.
+- [x] **P0** [ADR-009, F7] Time-bounded grants (`duration` + `expires_at`); expired grants emit F9 violations. — PR #39 (issue #38).
+- [x] **P0** [ADR-019, F7] Explicit-takes-precedence over broad `tools.filesystem.write` coverage. — PR #53 (issue #40).
+- [ ] **P1** [ADR-005, F3] Default approval timeout (120 s) and refuse-on-timeout semantics — partial (TTY/file channel honor `req.timeout`; system-wide default deferred to runtime config).
+- [ ] **P1** [ADR-008, F6] Document tool-author contract for tools that bring their own network stack (wrapping or rejection rules) — deferred to v0.9.0.
+- [x] **P2** [ADR-009, F7] `approval_required` field on write_grant composes with F3 approval gate.
 
 ## Phase 1c — Tooling and Replay (target: v0.9.0, 2026-10-05)
 
