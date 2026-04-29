@@ -21,6 +21,10 @@ type Manifest struct {
 	WriteGrants         []WriteGrant    `yaml:"write_grants,omitempty" json:"write_grants,omitempty"`
 	ApprovalRequiredFor []ApprovalClass `yaml:"approval_required_for,omitempty" json:"approval_required_for,omitempty"`
 	ExecGrants          []ExecGrant     `yaml:"exec_grants,omitempty" json:"exec_grants,omitempty"`
+	// ApprovalAuthorities lists SPIFFE IDs allowed to issue approvals over
+	// the F3 mTLS signed-API channel (ADR-005, ADR-003, issue #36). Empty
+	// or absent => mTLS approvals are refused outright.
+	ApprovalAuthorities []string `yaml:"approval_authorities,omitempty" json:"approval_authorities,omitempty"`
 }
 
 type Agent struct {

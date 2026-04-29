@@ -97,6 +97,15 @@
       "description": "Programs the agent may exec (F2 in PRD §4). Closed-by-default — without an entry, exec is denied. Per-issue #15.",
       "items": { "$ref": "#/definitions/execGrant" },
       "uniqueItems": true
+    },
+    "approval_authorities": {
+      "type": "array",
+      "description": "SPIFFE IDs allowed to issue approval decisions over the F3 mTLS signed-API channel (ADR-005, ADR-003, issue #36). Closed-by-default — without an entry, mTLS approvals are refused.",
+      "items": {
+        "type": "string",
+        "pattern": "^spiffe://"
+      },
+      "uniqueItems": true
     }
   },
   "definitions": {

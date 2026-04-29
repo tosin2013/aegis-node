@@ -28,6 +28,11 @@ pub struct Manifest {
     pub approval_required_for: Vec<ApprovalClass>,
     #[serde(default, rename = "exec_grants")]
     pub exec_grants: Vec<ExecGrant>,
+    /// SPIFFE IDs allowed to issue approvals over the F3 mTLS signed-API
+    /// channel (ADR-005, ADR-003, issue #36). Empty/absent => mTLS
+    /// approvals are refused outright.
+    #[serde(default, rename = "approval_authorities")]
+    pub approval_authorities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

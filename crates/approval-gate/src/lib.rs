@@ -20,9 +20,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod file;
+pub mod mtls;
 pub mod tty;
 
 pub use file::FileApprovalChannel;
+pub use mtls::MtlsApprovalChannel;
 pub use tty::TtyApprovalChannel;
 
 /// One approval request the runtime hands to a channel.
