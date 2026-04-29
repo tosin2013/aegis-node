@@ -1,0 +1,17 @@
+{
+  "name": "aegis-replay-viewer-snapshot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless DOM snapshot test for the F8 replay viewer (F8-C / issue #64).",
+  "scripts": {
+    "test": "node run.mjs check",
+    "regenerate": "node run.mjs regenerate"
+  },
+  "dependencies": {
+    "jsdom": "29.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
