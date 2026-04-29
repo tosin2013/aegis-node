@@ -14,9 +14,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use aegis_identity::{
-    verify_digest_binding, Digest, DigestField, DigestTriple, LocalCa, SpiffeId,
-};
+use aegis_identity::{verify_digest_binding, Digest, DigestField, DigestTriple, LocalCa, SpiffeId};
 use aegis_ledger_writer::{Entry, EntryType, LedgerWriter};
 use aegis_policy::Policy;
 use chrono::Utc;
@@ -89,10 +87,7 @@ impl Session {
         let mut ledger = LedgerWriter::create(&cfg.ledger_path, cfg.session_id.clone())?;
 
         let mut payload = Map::new();
-        payload.insert(
-            "spiffeId".to_string(),
-            Value::String(svid.spiffe_id.uri()),
-        );
+        payload.insert("spiffeId".to_string(), Value::String(svid.spiffe_id.uri()));
         payload.insert(
             "modelDigestHex".to_string(),
             Value::String(hex::encode(bound_digests.model.0)),
@@ -129,10 +124,7 @@ impl Session {
     /// hash. The root is what an auditor pins to detect tampering.
     pub fn shutdown(mut self) -> Result<[u8; 32]> {
         let mut payload = Map::new();
-        payload.insert(
-            "spiffeId".to_string(),
-            Value::String(self.spiffe_id.uri()),
-        );
+        payload.insert("spiffeId".to_string(), Value::String(self.spiffe_id.uri()));
         self.ledger.append(Entry {
             session_id: self.session_id.clone(),
             entry_type: EntryType::SessionEnd,

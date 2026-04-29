@@ -56,7 +56,10 @@ fn boot_writes_session_start_then_shutdown_writes_session_end() {
 
     let session = Session::boot(cfg).unwrap();
     let spiffe = session.spiffe_id().uri();
-    assert_eq!(spiffe, "spiffe://session-boot.local/agent/research/inst-001");
+    assert_eq!(
+        spiffe,
+        "spiffe://session-boot.local/agent/research/inst-001"
+    );
 
     let root = session.shutdown().unwrap();
     assert_ne!(root, GENESIS_PREV_HASH);
