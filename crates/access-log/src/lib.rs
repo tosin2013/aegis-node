@@ -33,6 +33,12 @@ pub enum AccessType {
     NetworkOutbound,
     NetworkInbound,
     Exec,
+    /// One MCP tool invocation (per ADR-018 / F2-MCP-B). `resourceUri`
+    /// for these entries is `mcp://{server_name}/{tool_name}`.
+    /// Side-effects of the underlying tool (filesystem reads, network
+    /// connects, ...) emit their own access entries; this is the
+    /// summary, not a replacement.
+    McpToolCall,
 }
 
 /// One access event. The runtime constructs this at the syscall boundary

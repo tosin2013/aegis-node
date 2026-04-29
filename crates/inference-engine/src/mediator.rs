@@ -259,6 +259,82 @@ impl Session {
         }
     }
 
+    /// MCP tool call with full mediation (per ADR-018 / F2-MCP-B / issue
+    /// #44). Resolves `(server_name, tool_name)` against the manifest's
+    /// `tools.mcp[]` allowlist; on `Allow`, dispatches via the configured
+    /// MCP client and emits one `EntryType::Access` with
+    /// `accessType=mcp_tool_call`. On `Deny`, emits a Violation and
+    /// returns `Error::Denied`. On a missing MCP client, treats the call
+    /// as denied with reason `"no mcp client configured"` so audit still
+    /// shows the attempt.
+    ///
+    /// Side-effects produced *inside* the upstream tool (filesystem
+    /// reads, network connects, ...) emit their own access entries
+    /// through the existing `mediate_*` methods — this entry is the
+    /// summary, not a replacement.
+    pub fn mediate_mcp_tool_call(
+        &mut self,
+        server_name: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+        reasoning_step_id: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        self.rebind()?;
+        let decision = self.policy().check_mcp_tool(server_name, tool_name);
+        let resource_uri = mcp_uri(server_name, tool_name);
+        match decision {
+            Decision::Allow => {}
+            Decision::Deny { reason } => {
+                self.emit_deny(&resource_uri, "mcp_tool_call", &reason)?;
+                return Err(Error::Denied { reason });
+            }
+            Decision::RequireApproval { reason } => {
+                // Phase 1: approval gates over MCP not yet wired.
+                return Err(Error::RequireApproval { reason });
+            }
+        }
+        let server_uri = match self
+            .policy()
+            .manifest()
+            .tools
+            .mcp
+            .iter()
+            .find(|s| s.server_name == server_name)
+        {
+            Some(s) => s.server_uri.clone(),
+            None => {
+                let reason = format!(
+                    "mcp tool call to server {server_name:?} not granted: server not in tools.mcp[]",
+                );
+                self.emit_deny(&resource_uri, "mcp_tool_call", &reason)?;
+                return Err(Error::Denied { reason });
+            }
+        };
+        let mut client = match self.mcp_client.take() {
+            Some(c) => c,
+            None => {
+                let reason = "no mcp client configured for session".to_string();
+                self.emit_deny(&resource_uri, "mcp_tool_call", &reason)?;
+                return Err(Error::Denied { reason });
+            }
+        };
+        let result = client.call_tool(&server_uri, tool_name, args);
+        self.mcp_client = Some(client);
+        let value = result.map_err(|e| Error::Denied {
+            reason: format!("mcp client: {e}"),
+        })?;
+        let bytes = serde_json::to_vec(&value)
+            .map(|v| v.len() as u64)
+            .unwrap_or(0);
+        self.emit_success(
+            &resource_uri,
+            AccessType::McpToolCall,
+            bytes,
+            reasoning_step_id,
+        )?;
+        Ok(value)
+    }
+
     /// Exec a program with full mediation. Returns the captured Output.
     pub fn mediate_exec(
         &mut self,
@@ -553,6 +629,10 @@ fn file_uri(path: &Path) -> String {
             Err(_) => format!("file://{}", path.display()),
         }
     }
+}
+
+fn mcp_uri(server_name: &str, tool_name: &str) -> String {
+    format!("mcp://{server_name}/{tool_name}")
 }
 
 fn network_uri(host: &str, port: u16, proto: NetworkProto) -> String {

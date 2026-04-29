@@ -722,3 +722,161 @@ tools: {}
         "tampered attestation must fail signature verification"
     );
 }
+
+// ---------------------------------------------------------------------------
+// MCP mediator tests (ADR-018 / F2-MCP-B / issue #44).
+//
+// Use an in-process mock client implementing aegis_mcp_client::McpClient
+// directly — no subprocess needed for these end-to-end mediator tests.
+// The real stdio transport is exercised in crates/mcp-client/tests/.
+
+use aegis_mcp_client::{Error as McpError, McpClient};
+use serde_json::json;
+
+/// Mock client that records every call_tool invocation and returns a
+/// canned response. The presence in the call log confirms the mediator
+/// dispatched (Allow path); absence + a Violation entry confirms the
+/// mediator denied before reaching the client (Deny path).
+struct MockMcpClient {
+    response: serde_json::Value,
+    calls: std::sync::Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
+}
+
+impl McpClient for MockMcpClient {
+    fn call_tool(
+        &mut self,
+        server_uri: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, McpError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((server_uri.to_string(), tool_name.to_string(), args));
+        Ok(self.response.clone())
+    }
+}
+
+fn mcp_yaml(server_name: &str, server_uri: &str, tools: &[&str]) -> String {
+    let allowed = tools
+        .iter()
+        .map(|t| format!("\"{t}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"schemaVersion: "1"
+agent: {{ name: "m", version: "1.0.0" }}
+identity: {{ spiffeId: "spiffe://mediator.local/agent/research/inst-1" }}
+tools:
+  mcp:
+    - server_name: "{server_name}"
+      server_uri: "{server_uri}"
+      allowed_tools: [{allowed}]
+"#
+    )
+}
+
+#[test]
+fn mcp_allowed_call_dispatches_and_emits_access() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let yaml = mcp_yaml("fs-helper", "stdio:/bin/true", &["echo"]);
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "mcp-allow", &yaml);
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({"echoed": {"hi": 1}}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    let result = s
+        .mediate_mcp_tool_call("fs-helper", "echo", json!({"hi": 1}), Some("rstep-mcp-1"))
+        .unwrap();
+    assert_eq!(result, json!({"echoed": {"hi": 1}}));
+
+    s.shutdown().unwrap();
+
+    let recorded = calls.lock().unwrap();
+    assert_eq!(recorded.len(), 1, "client should have been invoked once");
+    assert_eq!(recorded[0].0, "stdio:/bin/true");
+    assert_eq!(recorded[0].1, "echo");
+
+    let entries = read_lines(&ledger);
+    // start + access + network_attestation + end
+    assert_eq!(entries.len(), 4, "{entries:#?}");
+    assert_eq!(entries[1]["entryType"], "access");
+    assert_eq!(entries[1]["accessType"], "mcp_tool_call");
+    assert_eq!(entries[1]["resourceUri"], "mcp://fs-helper/echo");
+    assert_eq!(entries[1]["reasoningStepId"], "rstep-mcp-1");
+}
+
+#[test]
+fn mcp_disallowed_server_emits_violation_and_denies() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let yaml = mcp_yaml("fs-helper", "stdio:/bin/true", &["echo"]);
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "mcp-deny-server", &yaml);
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    let err = s
+        .mediate_mcp_tool_call("evil", "any", json!({}), None)
+        .unwrap_err();
+    assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
+    s.shutdown().unwrap();
+
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "client must not be invoked"
+    );
+
+    let entries = read_lines(&ledger);
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[1]["entryType"], "violation");
+    assert_eq!(entries[1]["accessType"], "mcp_tool_call");
+    assert_eq!(entries[1]["resourceUri"], "mcp://evil/any");
+}
+
+#[test]
+fn mcp_disallowed_tool_on_allowed_server_emits_violation() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let yaml = mcp_yaml("fs-helper", "stdio:/bin/true", &["echo"]);
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "mcp-deny-tool", &yaml);
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    let err = s
+        .mediate_mcp_tool_call("fs-helper", "delete_everything", json!({}), None)
+        .unwrap_err();
+    assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
+    s.shutdown().unwrap();
+
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "client must not be invoked"
+    );
+
+    let entries = read_lines(&ledger);
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[1]["entryType"], "violation");
+    assert_eq!(entries[1]["accessType"], "mcp_tool_call");
+    assert_eq!(
+        entries[1]["resourceUri"],
+        "mcp://fs-helper/delete_everything"
+    );
+}
