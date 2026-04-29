@@ -1,0 +1,15 @@
+schemaVersion: "1"
+agent:
+  name: "runtime-conformance"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://runtime-conformance.local/agent/conformance/inst-1"
+tools:
+  filesystem:
+    read:
+      - "{{WORKDIR}}/inputs"
+    write:
+      - "{{WORKDIR}}/outputs"
+write_grants:
+  - resource: "{{WORKDIR}}/outputs/scratch.txt"
+    actions: ["delete"]

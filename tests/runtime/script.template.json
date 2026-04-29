@@ -1,0 +1,31 @@
+{
+  "calls": [
+    {
+      "kind": "filesystem_read",
+      "path": "{{WORKDIR}}/inputs/in.txt",
+      "reasoning_step_id": "rstep-001"
+    },
+    {
+      "kind": "filesystem_write",
+      "path": "{{WORKDIR}}/outputs/out.txt",
+      "contents": "out",
+      "reasoning_step_id": "rstep-002"
+    },
+    {
+      "kind": "filesystem_delete",
+      "path": "{{WORKDIR}}/outputs/scratch.txt",
+      "reasoning_step_id": "rstep-003"
+    },
+    {
+      "kind": "filesystem_read",
+      "path": "{{WORKDIR}}/forbidden/secret.txt",
+      "reasoning_step_id": "rstep-004"
+    },
+    {
+      "kind": "filesystem_write",
+      "path": "{{WORKDIR}}/outputs/another.txt",
+      "contents": "ok",
+      "reasoning_step_id": "rstep-005"
+    }
+  ]
+}
