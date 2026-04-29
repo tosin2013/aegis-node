@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
+use aegis_approval_gate::ApprovalChannel;
 use aegis_identity::{verify_digest_binding, Digest, DigestField, DigestTriple, LocalCa, SpiffeId};
 use aegis_ledger_writer::{Entry, EntryType, LedgerWriter};
 use aegis_policy::Policy;
@@ -59,6 +60,10 @@ pub struct Session {
     pub(crate) manifest_path: PathBuf,
     pub(crate) model_path: PathBuf,
     pub(crate) config_path: Option<PathBuf>,
+    /// F3 approval channel — routes `Decision::RequireApproval`. None
+    /// means the legacy halt-on-RequireApproval behavior; set via
+    /// [`Session::with_approval_channel`] after boot.
+    pub(crate) approval_channel: Option<Box<dyn ApprovalChannel>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -142,7 +147,17 @@ impl Session {
             manifest_path: cfg.manifest_path,
             model_path: cfg.model_path,
             config_path: cfg.config_path,
+            approval_channel: None,
         })
+    }
+
+    /// Attach an F3 approval channel. When set, `Decision::RequireApproval`
+    /// is routed through `channel` (TTY prompt, file poll, etc.) before
+    /// the mediator dispatches the operation. Without it, the mediator
+    /// preserves the pre-#27 halt-on-RequireApproval behavior.
+    pub fn with_approval_channel(mut self, channel: Box<dyn ApprovalChannel>) -> Self {
+        self.approval_channel = Some(channel);
+        self
     }
 
     /// Wall-clock anchor for time-bounded write_grants — set once at boot.

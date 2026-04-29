@@ -162,6 +162,17 @@ pub fn execute(args: RunArgs) -> Result<RunOutcome> {
     };
     let mut session = Session::boot(cfg).context("boot")?;
 
+    // F3 file-channel approval (per ADR-005 / issue #27): if the env
+    // var AEGIS_APPROVAL_FILE is set, attach a FileApprovalChannel
+    // pointed at it. Without the env var, RequireApproval keeps the
+    // legacy halt behavior — script continues, halt-on-RequireApproval
+    // surfaces in dispatch() as a Halt::Stop. TTY channel and signed-
+    // API channel are filed as separate issues (#35, #36).
+    if let Ok(approval_path) = std::env::var("AEGIS_APPROVAL_FILE") {
+        let channel = aegis_approval_gate::FileApprovalChannel::new(approval_path);
+        session = session.with_approval_channel(Box::new(channel));
+    }
+
     let mut halted = false;
     let mut halt_reason: Option<String> = None;
     for call in script.calls {

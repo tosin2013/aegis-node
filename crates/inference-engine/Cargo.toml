@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 aegis-access-log = { path = "../access-log" }
+aegis-approval-gate = { path = "../approval-gate" }
 aegis-identity = { path = "../identity" }
 aegis-ledger-writer = { path = "../ledger-writer" }
 aegis-policy = { path = "../policy" }
@@ -23,4 +24,5 @@ thiserror = "1"
 uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]
+aegis-approval-gate = { path = "../approval-gate" }
 tempfile = "3"
