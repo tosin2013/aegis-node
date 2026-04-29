@@ -1,0 +1,72 @@
+name: Validate manifests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Per F10 / ADR-012 / issue #60. Builds the `aegis` Go CLI and runs
+# `aegis validate` against every committed Permission Manifest in the
+# repo: schema examples, conformance fixtures, validate testdata. A
+# rule firing on a shipped manifest fails CI — operators see the
+# linter as authoritative, and we ship clean examples.
+
+jobs:
+  validate:
+    name: aegis validate (every committed manifest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Tidy
+        run: go mod tidy
+
+      - name: Build aegis CLI
+        run: go build -o bin/aegis ./cmd/aegis
+
+      - name: Validate schema examples
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+          for m in schemas/manifest/v1/examples/*.manifest.yaml; do
+            echo "::group::$m"
+            ./bin/aegis validate --format=github "$m"
+            echo "::endgroup::"
+          done
+
+      - name: Validate conformance fixtures (advisory only)
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+          # Conformance manifests under tests/conformance/manifests/ are
+          # engineered to exercise specific Decide() outcomes; some
+          # deliberately trip lint rules (e.g. exec-grant.manifest.yaml
+          # uses a bare basename to test program-matching semantics).
+          # We print findings for visibility but do not fail the job —
+          # use --format=text so we don't pollute PR-check annotations
+          # with intentional findings.
+          for m in tests/conformance/manifests/*.manifest.yaml; do
+            echo "=== $m ==="
+            ./bin/aegis validate --format=text "$m" || true
+          done
+
+      - name: Validate testdata fixtures (expected to trip rules)
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+          # pkg/validate/testdata/aegis*.yaml are *engineered* to trip
+          # exactly one rule each; running --format=text and discarding
+          # the exit code documents the rule firing in CI logs without
+          # failing the workflow. clean.yaml must lint clean.
+          for m in pkg/validate/testdata/aegis*.yaml; do
+            echo "::group::$m (trip-fixture)"
+            ./bin/aegis validate --format=text "$m" || true
+            echo "::endgroup::"
+          done
+          ./bin/aegis validate --format=text pkg/validate/testdata/clean.yaml

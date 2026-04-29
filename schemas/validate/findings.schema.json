@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aegis-node.dev/schemas/validate/findings.schema.json",
+  "title": "Aegis-Node `aegis validate` JSON output (per-record)",
+  "description": "Per F10-B / ADR-012 / issue #60. The JSON output of `aegis validate --format=json` is newline-delimited JSON: one object per line, conforming to this schema. Order is stable across runs (sorted by file, field, rule_id) so consumers can diff outputs.",
+  "type": "object",
+  "required": ["rule_id", "severity", "field", "message"],
+  "additionalProperties": false,
+  "properties": {
+    "file": {
+      "type": "string",
+      "description": "Path to the manifest the finding refers to. Omitted when `aegis validate` reads from stdin."
+    },
+    "rule_id": {
+      "type": "string",
+      "pattern": "^AEGIS[0-9]+$",
+      "description": "Canonical rule identifier (e.g. AEGIS001)."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warn", "error"],
+      "description": "Effective severity after applying any per-rule overrides from .aegis-validate.yaml."
+    },
+    "field": {
+      "type": "string",
+      "description": "JSON-pointer-ish path into the manifest (e.g. `tools.filesystem.read[0]`, `write_grants[2].resource`)."
+    },
+    "message": {
+      "type": "string",
+      "description": "One-line description of the specific instance of the rule violation (includes the offending value)."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Longer explanation of why the rule exists. Stable across instances of the same rule; safe to dedupe in dashboards."
+    }
+  }
+}
