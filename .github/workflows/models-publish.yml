@@ -126,7 +126,14 @@ jobs:
           echo "$ORAS_PASSWORD" | oras login ghcr.io --username "$ORAS_USERNAME" --password-stdin
 
           ref='${{ steps.target.outputs.ref }}'
+          # `oras push` refuses absolute paths by default to keep the
+          # layer-name annotation portable across registries — push
+          # from inside the artifact dir so the layer name is just the
+          # bare filename.
           path='${{ steps.download.outputs.path }}'
+          artifact_dir="$(dirname "$path")"
+          file_name="$(basename "$path")"
+          cd "$artifact_dir"
           oras push "$ref" \
             --artifact-type "application/vnd.aegis-node.model.gguf.v1" \
             --annotation "org.opencontainers.image.source=https://huggingface.co/${{ inputs.hf_repo }}" \
@@ -136,7 +143,7 @@ jobs:
             --annotation "dev.aegis-node.upstream.repo=${{ inputs.hf_repo }}" \
             --annotation "dev.aegis-node.upstream.revision=${{ inputs.hf_revision }}" \
             --annotation "dev.aegis-node.upstream.filename=${{ inputs.gguf_filename }}" \
-            "${path}:application/vnd.aegis-node.model.gguf.v1"
+            "${file_name}:application/vnd.aegis-node.model.gguf.v1"
 
           desc=$(oras manifest fetch --descriptor "$ref")
           manifest_digest=$(echo "$desc" | jq -r '.digest')
