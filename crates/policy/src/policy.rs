@@ -188,9 +188,7 @@ impl Policy {
     ) -> Option<&WriteGrant> {
         let p = path.to_string_lossy();
         self.manifest.write_grants.iter().find(|g| {
-            g.resource == p
-                && g.actions.contains(&want)
-                && grant_time_valid(g, now, session_start)
+            g.resource == p && g.actions.contains(&want) && grant_time_valid(g, now, session_start)
         })
     }
 
@@ -330,11 +328,7 @@ fn proto_compatible(allowed: NetworkProtocol, actual: NetworkProto) -> bool {
 /// Malformed values are treated as invalid → grant is filtered out.
 /// Closed-by-default semantics: an unparseable bound never accidentally
 /// allows the operation.
-fn grant_time_valid(
-    grant: &WriteGrant,
-    now: DateTime<Utc>,
-    session_start: DateTime<Utc>,
-) -> bool {
+fn grant_time_valid(grant: &WriteGrant, now: DateTime<Utc>, session_start: DateTime<Utc>) -> bool {
     if let Some(ref expires) = grant.expires_at {
         match expires.parse::<DateTime<Utc>>() {
             Ok(exp) => {
@@ -414,10 +408,7 @@ mod time_tests {
         assert_eq!(parse_iso8601_duration("PT30M"), Some(Duration::minutes(30)));
         assert_eq!(parse_iso8601_duration("PT45S"), Some(Duration::seconds(45)));
         assert_eq!(parse_iso8601_duration("P1D"), Some(Duration::days(1)));
-        assert_eq!(
-            parse_iso8601_duration("P1DT12H"),
-            Some(Duration::hours(36)),
-        );
+        assert_eq!(parse_iso8601_duration("P1DT12H"), Some(Duration::hours(36)),);
         assert_eq!(
             parse_iso8601_duration("PT1H30M"),
             Some(Duration::minutes(90)),

@@ -96,7 +96,11 @@ fn write_grant_with_approval_returns_approval() {
 fn write_outside_grant_is_denied() {
     let p = single_write_target();
     assert!(p
-        .check_filesystem_write(Path::new("/data/output/other.md"), t_now(), t_session_start())
+        .check_filesystem_write(
+            Path::new("/data/output/other.md"),
+            t_now(),
+            t_session_start()
+        )
         .is_deny());
 }
 

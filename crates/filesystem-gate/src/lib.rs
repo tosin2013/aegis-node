@@ -137,9 +137,10 @@ impl<'p, 'w> GateContext<'p, 'w> {
             AccessKind::Write => self
                 .policy
                 .check_filesystem_write(path, now, self.session_start),
-            AccessKind::Delete => self
-                .policy
-                .check_filesystem_delete(path, now, self.session_start),
+            AccessKind::Delete => {
+                self.policy
+                    .check_filesystem_delete(path, now, self.session_start)
+            }
         };
         match decision {
             Decision::Allow => Ok(()),
