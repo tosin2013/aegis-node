@@ -1,0 +1,26 @@
+# Clean manifest — every rule should pass. Used as a regression baseline:
+# any new rule that fires here is a candidate false-positive.
+schemaVersion: "1"
+agent:
+  name: "researcher"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/researcher/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/data/reports"
+  network:
+    outbound: deny
+  mcp:
+    - server_name: "filesystem"
+      server_uri: "stdio:/usr/local/bin/mcp-server-filesystem"
+      allowed_tools: ["read_text_file", "list_directory"]
+write_grants:
+  - resource: "/data/reports/q1.md"
+    actions: ["write"]
+    duration: "PT1H"
+approval_required_for:
+  - "any_write"
+approval_authorities:
+  - "spiffe://aegis-node.local/operator/security"

@@ -1,0 +1,8 @@
+schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools:
+  mcp:
+    - server_name: "ghost-server"
+      server_uri: "stdio:/usr/local/bin/mcp-noop"
+      allowed_tools: []
