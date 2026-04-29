@@ -157,7 +157,13 @@ impl LocalCa {
 
         let mut ext =
             CustomExtension::from_oid_content(DIGEST_BINDING_OID, digests.encode().to_vec());
-        ext.set_criticality(true);
+        // Non-critical so the SVID can be presented as a server/client
+        // cert through standard TLS libraries (rustls' webpki rejects
+        // any unknown critical extension per RFC 5280). The runtime
+        // validates the binding via `verify_digest_binding` regardless
+        // of the criticality flag, so the security guarantee is
+        // preserved at the application layer.
+        ext.set_criticality(false);
         params.custom_extensions.push(ext);
 
         let leaf_key = KeyPair::generate()?;
