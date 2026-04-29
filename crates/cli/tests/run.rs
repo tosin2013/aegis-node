@@ -250,11 +250,13 @@ tools:
     if outcome.halted {
         let reason = outcome.halt_reason.as_deref().unwrap_or("");
         assert!(reason.contains("rebind"), "halt reason: {reason}");
-        // start + access (call 1) + violation (call 2 rebind) + end
+        // start + access (call 1) + violation (call 2 rebind)
+        // + network_attestation + end
         assert_eq!(outcome.entry_count, 5);
     } else {
         // Race lost; both calls completed.
-        assert_eq!(outcome.entry_count, 5); // start + 2 access + end
+        // start + 2 access + network_attestation + end
+        assert_eq!(outcome.entry_count, 5);
     }
 }
 

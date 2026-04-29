@@ -65,7 +65,8 @@ fn boot_writes_session_start_then_shutdown_writes_session_end() {
     assert_ne!(root, GENESIS_PREV_HASH);
 
     let summary = verify_file(&ledger_path).unwrap();
-    assert_eq!(summary.entry_count, 2);
+    // session_start + network_attestation (zero connections) + session_end
+    assert_eq!(summary.entry_count, 3);
     assert_eq!(summary.session_id.as_deref(), Some("session-happy"));
     assert_eq!(summary.root_hash_hex, hex::encode(root));
 
@@ -73,8 +74,10 @@ fn boot_writes_session_start_then_shutdown_writes_session_end() {
     let lines: Vec<&str> = content.lines().collect();
     let v0: Value = serde_json::from_str(lines[0]).unwrap();
     let v1: Value = serde_json::from_str(lines[1]).unwrap();
+    let v2: Value = serde_json::from_str(lines[2]).unwrap();
     assert_eq!(v0["entryType"], "session_start");
-    assert_eq!(v1["entryType"], "session_end");
+    assert_eq!(v1["entryType"], "network_attestation");
+    assert_eq!(v2["entryType"], "session_end");
     assert_eq!(v0["spiffeId"].as_str().unwrap(), spiffe);
     assert_eq!(
         v0["modelDigestHex"].as_str().unwrap().len(),
