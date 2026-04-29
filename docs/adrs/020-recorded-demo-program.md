@@ -67,6 +67,22 @@ which caps the model size we can use without the recording feeling slow.
    used only for recordings where the per-turn budget allows it; the
    default in `demos/` references 1.5B.
 
+   **Published OCI artifact** (per [ADR-021](021-huggingface-as-upstream-oci-as-trust-boundary.md)):
+
+   - **Reference:** `ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m:latest`
+   - **Digest:** `sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6`
+   - **Blob SHA-256:** `6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e`
+   - **Upstream:** [Qwen/Qwen2.5-1.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) · file `qwen2.5-1.5b-instruct-q4_k_m.gguf` · revision `91cad51170dc346986eccefdc2dd33a9da36ead9`
+   - **Signed by:** `models-publish.yml` workflow ([run 25135210278](https://github.com/tosin2013/aegis-node/actions/runs/25135210278)) via Sigstore keyless.
+
+   Demos pull this artifact at boot via:
+
+   ```bash
+   aegis pull ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6 \
+     --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
+     --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
+   ```
+
 5. **Recording determinism is mandatory, not optional.** Every demo
    manifest sets the LLM-C determinism knobs:
 

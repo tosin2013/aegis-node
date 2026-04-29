@@ -1,38 +1,41 @@
 //! Real-registry round-trip for `aegis pull`.
 //!
-//! Aspirational: once we publish a real model OCI artifact (the Qwen2.5-1.5B
-//! mirror per the ADR-021 plan in /root/.claude/plans/), this test pulls it
-//! through `pull::pull` against the live Sigstore Rekor + Fulcio. That's
-//! the only signed *OCI artifact* we'll have where `oras pull` behaves
-//! correctly — multi-layer container images (like the devbox) don't work
-//! because `oras pull` skips Docker-format layers without explicit flags
-//! that `pull::pull` doesn't pass (and shouldn't — model artifacts are
-//! single-blob by design).
+//! Pulls the project-published Qwen2.5-1.5B-Instruct Q4_K_M OCI artifact
+//! (per ADR-020 / ADR-021) through `pull::pull` against the live Sigstore
+//! Rekor + Fulcio. Catches things the fake-tools tests in `tests/pull.rs`
+//! can't:
 //!
-//! For now this test is `#[ignore]`d. Un-ignore it after `models-publish.yml`
-//! lands its first artifact at
-//! `ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m`,
-//! and update the constants below to point at that ref + workflow identity.
+//! - real `oras` against GHCR (TLS, descriptor parsing, anonymous reads)
+//! - real `cosign verify` against Sigstore's Fulcio cert + Rekor entry
+//! - the actual OCI artifact layout `models-publish.yml` produces
 //!
-//! Run on demand:
+//! The test pins the specific digest from the workflow's first
+//! successful run ([run 25135210278](https://github.com/tosin2013/aegis-node/actions/runs/25135210278))
+//! rather than resolving `:latest` — so the assertion remains valid
+//! regardless of future workflow re-runs that retag the same model
+//! against a different revision.
 //!
-//! ```bash
-//! cargo test -p aegis-cli --test pull_real_image -- --ignored
-//! ```
+//! Skipped quietly when `oras` or `cosign` aren't on `$PATH`. CI's
+//! `rust.yml` installs both before running this so every PR gets the
+//! signal.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::PathBuf;
-use std::process::Command;
 
 use aegis_cli::pull::{self, PullConfig};
 
-const DEVBOX_REPO: &str = "ghcr.io/tosin2013/aegis-node-devbox";
+/// Project-published Qwen2.5-1.5B-Instruct Q4_K_M OCI artifact pinned to
+/// the digest produced by `models-publish.yml` run 25135210278. This is
+/// the same value pinned in ADR-020 §"Pinned model" and the
+/// SUPPLY_CHAIN.md smoke-test recipe.
+const PINNED_REF: &str = "ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6";
+const PINNED_SHA: &str = "240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6";
 
-/// SPIFFE-shaped identity regex matching the devbox publisher workflow.
-/// Same value documented in `docs/SUPPLY_CHAIN.md`.
-const DEVBOX_IDENTITY_REGEXP: &str =
-    r"^https://github\.com/tosin2013/aegis-node/\.github/workflows/devbox\.yml@.*$";
+/// Identity regex matching the `models-publish.yml` workflow that signed
+/// the artifact. Must stay in lockstep with the workflow file.
+const MODELS_PUBLISH_IDENTITY_REGEXP: &str =
+    r"^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$";
 const GH_ACTIONS_OIDC_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
 fn tool_on_path(tool: &str) -> bool {
@@ -44,8 +47,7 @@ fn tool_on_path(tool: &str) -> bool {
 }
 
 #[test]
-#[ignore = "needs a published OCI model artifact (not a container image); see ADR-021 plan"]
-fn pull_devbox_image_round_trips_against_real_registry() {
+fn pull_qwen_model_round_trips_against_real_registry() {
     if !tool_on_path("oras") || !tool_on_path("cosign") {
         eprintln!(
             "[skipped] oras and cosign must both be on $PATH for this test \
@@ -54,62 +56,51 @@ fn pull_devbox_image_round_trips_against_real_registry() {
         return;
     }
 
-    // 1. Resolve the live :latest digest. Pinning by digest is mandatory
-    //    in `pull::pull` (see ADR-013 / OCI-A) — we resolve it via oras,
-    //    not by hardcoding, so the test stays valid as the devbox is
-    //    rebuilt.
-    let descriptor = Command::new("oras")
-        .args(["manifest", "fetch", "--descriptor"])
-        .arg(format!("{DEVBOX_REPO}:latest"))
-        .output()
-        .expect("oras manifest fetch failed to spawn");
-    if !descriptor.status.success() {
-        panic!(
-            "oras manifest fetch exited {:?}: stderr={}",
-            descriptor.status.code(),
-            String::from_utf8_lossy(&descriptor.stderr),
-        );
-    }
-    let descriptor_json: serde_json::Value =
-        serde_json::from_slice(&descriptor.stdout).expect("oras descriptor not valid JSON");
-    let digest_field = descriptor_json
-        .get("digest")
-        .and_then(|v| v.as_str())
-        .expect("descriptor missing digest");
-    let sha_hex = digest_field
-        .strip_prefix("sha256:")
-        .expect("descriptor digest must use the sha256: prefix");
-
-    let pinned_ref = format!("{DEVBOX_REPO}@sha256:{sha_hex}");
-
-    // 2. Pull through the production code path, against the live
-    //    Sigstore identity for the devbox publisher workflow.
+    // Pull through the production code path against the live Sigstore
+    // identity for `models-publish.yml`. Refusal at any gate (oras
+    // failure, cosign mismatch, sha256 mismatch) panics with the
+    // typed error so an operator sees exactly which step rejected.
     let cache = tempfile::tempdir().unwrap();
     let cfg = PullConfig {
         cache_dir: cache.path().to_path_buf(),
         cosign_key: None,
-        keyless_identity: Some(DEVBOX_IDENTITY_REGEXP.to_string()),
+        keyless_identity: Some(MODELS_PUBLISH_IDENTITY_REGEXP.to_string()),
         keyless_oidc_issuer: Some(GH_ACTIONS_OIDC_ISSUER.to_string()),
     };
-    let pulled = pull::pull(&pinned_ref, &cfg)
-        .unwrap_or_else(|e| panic!("pull failed: {e}\nref: {pinned_ref}"));
+    let pulled = pull::pull(PINNED_REF, &cfg)
+        .unwrap_or_else(|e| panic!("pull failed: {e}\nref: {PINNED_REF}"));
 
-    // 3. Sanity: returned sha256 matches the descriptor; cache layout
-    //    is the documented `<cache-dir>/<sha256>/blob.bin`.
+    // sha256 / cache layout / sidecar — same invariants pull::pull
+    // documents publicly.
     assert_eq!(
-        pulled.sha256_hex, sha_hex,
-        "returned sha256 does not match the descriptor"
+        pulled.sha256_hex, PINNED_SHA,
+        "returned sha256 does not match the pinned digest"
     );
     assert!(pulled.blob_path.exists(), "blob not in cache");
     assert_eq!(
         pulled.blob_path,
-        cache_blob_path(cache.path(), sha_hex),
+        cache_blob_path(cache.path(), PINNED_SHA),
         "blob landed at unexpected cache path"
     );
     let ref_txt = pulled.blob_path.parent().unwrap().join("ref.txt");
     assert!(ref_txt.exists(), "ref.txt sidecar missing");
     let recorded = std::fs::read_to_string(&ref_txt).unwrap();
-    assert_eq!(recorded, pinned_ref, "ref.txt should record canonical ref");
+    assert_eq!(recorded, PINNED_REF, "ref.txt should record canonical ref");
+
+    // The blob is a real GGUF — its first 4 bytes are the GGUF magic.
+    // This is the strongest possible cross-check that pull::pull
+    // delivered the file we think it did, end-to-end.
+    let head = std::fs::read(&pulled.blob_path).unwrap();
+    assert!(
+        head.len() >= 4,
+        "blob is impossibly small: {} bytes",
+        head.len()
+    );
+    assert_eq!(
+        &head[..4],
+        b"GGUF",
+        "first 4 bytes are not the GGUF magic — pulled artifact is not a GGUF"
+    );
 }
 
 fn cache_blob_path(cache: &std::path::Path, sha_hex: &str) -> PathBuf {

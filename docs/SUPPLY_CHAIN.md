@@ -8,8 +8,8 @@ The Aegis-Node thesis is that AI agent runtimes can pass zero-trust infrastructu
 
 | Artifact | Registry | Tag pattern | Signature | Status |
 |---|---|---|---|---|
-| Devbox image | `ghcr.io/tosin2013/aegis-node-devbox` | `latest`, `sha-<commit>` | Cosign keyless via [Sigstore](https://sigstore.dev/), tied to GitHub Actions OIDC | ✅ live |
-| Model OCI artifacts | `ghcr.io/tosin2013/aegis-node-models` (planned) | `<model>:<semver>` | Cosign | 🚧 Phase 1c |
+| Devbox image | `ghcr.io/tosin2013/aegis-node-devbox` | `latest`, `sha-<commit>` | Cosign keyless via [Sigstore](https://sigstore.dev/), tied to `devbox.yml` workflow OIDC | ✅ live |
+| Model OCI artifacts | `ghcr.io/tosin2013/aegis-node-models/<model>` | `latest` + content-addressed digest | Cosign keyless via Sigstore, tied to `models-publish.yml` workflow OIDC | ✅ live (Qwen2.5-1.5B-Instruct Q4_K_M shipped) |
 | Aegis-Node release binaries | GitHub Releases | `v<semver>` | Cosign + SLSA provenance | 🚧 Phase 1 GA |
 
 ## Prerequisites
@@ -106,20 +106,41 @@ Refusal cases — every one of these exits non-zero with a typed error:
 | Pulled blob's SHA-256 ≠ pinned digest | `Sha256Mismatch` | refuse, blob discarded |
 | Cached blob corrupted between pulls | `Sha256Mismatch` | refuse, surface tampering |
 
-**Smoke-testing without a model artifact.** Until we publish a Cosign-signed model OCI artifact under `ghcr.io/tosin2013/aegis-node-models`, the only signed thing we publish is the **devbox container image** — and `aegis pull` is intentionally not the right tool for container images (`oras pull` skips Docker-format layers without explicit flags that `pull::pull` deliberately omits, since real model artifacts are single-blob by design).
-
-You can still verify the supply chain is sound — just use `cosign verify` directly against the devbox while we wait on a real model artifact:
+**End-to-end smoke test (Qwen2.5-1.5B-Instruct Q4_K_M).** The `models-publish.yml` workflow has shipped its first artifact — pull it through the full `aegis pull` flow:
 
 ```bash
-DIGEST=$(oras manifest fetch --descriptor \
-  ghcr.io/tosin2013/aegis-node-devbox:latest | jq -r .digest)
-
-cosign verify ghcr.io/tosin2013/aegis-node-devbox@"${DIGEST}" \
-  --certificate-identity-regexp '^https://github\.com/tosin2013/aegis-node/\.github/workflows/devbox\.yml@.*$' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+aegis pull \
+  ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6 \
+  --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
+  --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
-End-to-end `aegis pull` smoke-testing lands once `models-publish.yml` (per the ADR-021 plan) publishes a real model OCI artifact. GGUF + chat-template-bound verification is OCI-B (#67); operator workflow doc is OCI-C (#68).
+Successful output names the cached blob path; the `crates/cli/tests/pull_real_image.rs` integration test exercises the same flow on every PR via the rust workflow.
+
+GGUF + chat-template-bound verification (defends against template-only poisoning per ADR-013) lands in OCI-B ([#67](https://github.com/tosin2013/aegis-node/issues/67)); operator workflow doc is OCI-C ([#68](https://github.com/tosin2013/aegis-node/issues/68)).
+
+## Mirroring an upstream model
+
+Per [ADR-021](adrs/021-huggingface-as-upstream-oci-as-trust-boundary.md), the runtime never reaches HuggingFace. Operators bring an HF model into a trust boundary they control by running the same `HF → scan → sign → push` pipeline the Aegis-Node project ships at [`.github/workflows/models-publish.yml`](../.github/workflows/models-publish.yml).
+
+The published Qwen artifact above was produced by dispatching that workflow:
+
+```bash
+gh workflow run models-publish.yml --ref main \
+  -f hf_repo=Qwen/Qwen2.5-1.5B-Instruct-GGUF \
+  -f gguf_filename=qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  -f hf_revision=91cad51170dc346986eccefdc2dd33a9da36ead9
+```
+
+Operator-side adaptation (in your fork or your org's mirror repo):
+
+1. Copy `models-publish.yml` to your repo. Replace the registry hostname (`ghcr.io/<owner>/aegis-node-models/...`) with your internal registry.
+2. Add an org-specific scanning step before `oras push` (malware AV, prompt-injection corpus check, license review). The default workflow does not scan — your org owns that policy.
+3. Adjust the cosign signing identity. Keyless via Sigstore (recommended) ties signatures to the workflow's GitHub Actions OIDC, exactly as the project does. KMS-backed keys are also supported via cosign's `--key` flag.
+4. License gate: only Apache-2.0 / MIT / similarly-permissive models are appropriate for this no-review pipeline. Llama-licensed and other restrictively-licensed models need legal review per your org's policy.
+5. Pin the resulting `<ref>@sha256:<digest>` in your operator-facing docs the same way ADR-020 §"Pinned model" pins the project's demo artifact.
+
+Air-gapped consumers then pull from the operator's internal registry — no HF dependency at runtime, no Sigstore dependency on the air-gap side once the digest is pinned (per ADR-017's "Option A: verify online once and pin the digest").
 
 ## Reporting integrity issues
 
