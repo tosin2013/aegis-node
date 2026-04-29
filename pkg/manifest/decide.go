@@ -220,34 +220,6 @@ const (
 // interop without changing types.go signatures.
 type WriteAction string
 
-func (m *Manifest) findWriteGrantFor(
-	uri string,
-	action WriteAction,
-	now, sessionStart time.Time,
-) *WriteGrant {
-	for i := range m.WriteGrants {
-		g := &m.WriteGrants[i]
-		if g.Resource != uri {
-			continue
-		}
-		hasAction := false
-		for _, a := range g.Actions {
-			if a == string(action) {
-				hasAction = true
-				break
-			}
-		}
-		if !hasAction {
-			continue
-		}
-		if !grantTimeValid(g, now, sessionStart) {
-			continue
-		}
-		return g
-	}
-	return nil
-}
-
 // grantState distinguishes the three relevant outcomes when looking
 // up an explicit write_grant for a resource: no grant at all (fall
 // through to broader rules), a time-valid grant (decisive), or one
