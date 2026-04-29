@@ -80,10 +80,10 @@ pub fn derive_attestation_key(svid_private_key_pem: &str) -> [u8; 32] {
 }
 
 /// Compute the HMAC-SHA-256 signature over the canonical-JSON
-/// representation of a summary object (with `signatureHex` REMOVED if
-/// present — verifier strips it before hashing). Returns `None` only
-/// if HMAC initialization fails, which is unreachable for a fixed
-/// 32-byte key but clippy::expect_used demands the explicit fallback.
+/// representation of a summary object containing exactly the fields
+/// listed in `SIGNED_FIELDS`. Returns `None` only if HMAC
+/// initialization fails, which is unreachable for a fixed 32-byte
+/// key but clippy::expect_used demands the explicit fallback.
 pub fn compute_signature(key: &[u8; 32], summary_without_signature: &Value) -> Option<[u8; 32]> {
     let canonical = serde_json::to_vec(summary_without_signature).ok()?;
     let mut mac = HmacSha256::new_from_slice(key).ok()?;
@@ -93,11 +93,25 @@ pub fn compute_signature(key: &[u8; 32], summary_without_signature: &Value) -> O
     Some(out)
 }
 
-/// Verify an attestation entry's signature. Returns true iff the
-/// signatureHex in `payload` matches an HMAC computed from the
-/// remaining fields. Used by the offline replay viewer (and by tests).
-pub fn verify_signature(svid_private_key_pem: &str, payload: &Value) -> bool {
-    let Some(obj) = payload.as_object() else {
+/// The exact set of fields the signer HMACs over. Listed explicitly so
+/// that `verify_signature` can recompute the canonical view from a full
+/// ledger entry (which carries entry-level fields like `entryId` /
+/// `prevHash` and the unsigned `networkConnectionsObserved` array
+/// alongside the signed summary).
+const SIGNED_FIELDS: &[&str] = &[
+    "totalConnections",
+    "allowedCount",
+    "approvedCount",
+    "deniedCount",
+    "connectionsDigestHex",
+];
+
+/// Verify an attestation entry's signature. Accepts either the bare
+/// summary payload or the full ledger entry — the function selects
+/// only the fields in `SIGNED_FIELDS` before recomputing the HMAC, so
+/// callers don't have to strip writer-injected metadata themselves.
+pub fn verify_signature(svid_private_key_pem: &str, entry: &Value) -> bool {
+    let Some(obj) = entry.as_object() else {
         return false;
     };
     let Some(sig_hex) = obj.get("signatureHex").and_then(|v| v.as_str()) else {
@@ -106,10 +120,15 @@ pub fn verify_signature(svid_private_key_pem: &str, payload: &Value) -> bool {
     let Ok(expected) = hex::decode(sig_hex) else {
         return false;
     };
-    let mut without_sig = obj.clone();
-    without_sig.remove("signatureHex");
+    let mut signed_view = Map::new();
+    for field in SIGNED_FIELDS {
+        let Some(v) = obj.get(*field) else {
+            return false;
+        };
+        signed_view.insert((*field).to_string(), v.clone());
+    }
     let key = derive_attestation_key(svid_private_key_pem);
-    let Some(actual) = compute_signature(&key, &Value::Object(without_sig)) else {
+    let Some(actual) = compute_signature(&key, &Value::Object(signed_view)) else {
         return false;
     };
     expected.as_slice() == actual.as_slice()
