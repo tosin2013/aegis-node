@@ -246,3 +246,49 @@ fn emit_violation_appends_violation_entry() {
 
     let _ = EntryType::Violation; // sanity
 }
+
+/// Per ADR-018 / issue #43. Parses a valid `tools.mcp[]` example.
+#[test]
+fn mcp_server_grant_parses() {
+    let yaml = br#"
+schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools:
+  mcp:
+    - server_name: "fs-helper"
+      server_uri: "stdio:/usr/local/bin/mcp-fs"
+      allowed_tools: ["read_file", "list_dir"]
+    - server_name: "web-search"
+      server_uri: "https://mcp.example.com:8443"
+      allowed_tools: []
+"#;
+    let p = Policy::from_yaml_bytes(yaml).unwrap();
+    let mcp = &p.manifest().tools.mcp;
+    assert_eq!(mcp.len(), 2);
+    assert_eq!(mcp[0].server_name, "fs-helper");
+    assert_eq!(mcp[0].server_uri, "stdio:/usr/local/bin/mcp-fs");
+    assert_eq!(mcp[0].allowed_tools, vec!["read_file", "list_dir"]);
+    assert_eq!(mcp[1].server_name, "web-search");
+    assert!(mcp[1].allowed_tools.is_empty());
+}
+
+/// Per ADR-018 / issue #43. Malformed entry (missing `server_uri`) is rejected.
+#[test]
+fn mcp_server_grant_rejects_missing_uri() {
+    let yaml = br#"
+schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools:
+  mcp:
+    - server_name: "fs-helper"
+      allowed_tools: ["read_file"]
+"#;
+    let err = Policy::from_yaml_bytes(yaml).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("server_uri") || msg.contains("missing"),
+        "error should mention the missing field: {msg}",
+    );
+}

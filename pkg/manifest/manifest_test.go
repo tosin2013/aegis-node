@@ -150,6 +150,62 @@ tools:
 	}
 }
 
+// Per ADR-018 / issue #43. Parses a valid `tools.mcp[]` example.
+func TestMCPServerGrantParses(t *testing.T) {
+	yaml := `schemaVersion: "1"
+agent:
+  name: "x"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://td/agent/x/1"
+tools:
+  mcp:
+    - server_name: "fs-helper"
+      server_uri: "stdio:/usr/local/bin/mcp-fs"
+      allowed_tools: ["read_file", "list_dir"]
+    - server_name: "web-search"
+      server_uri: "https://mcp.example.com:8443"
+      allowed_tools: []
+`
+	m, err := Parse("m.yaml", []byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(m.Tools.MCP) != 2 {
+		t.Fatalf("mcp: got %d entries, want 2", len(m.Tools.MCP))
+	}
+	if m.Tools.MCP[0].ServerName != "fs-helper" ||
+		m.Tools.MCP[0].ServerURI != "stdio:/usr/local/bin/mcp-fs" ||
+		len(m.Tools.MCP[0].AllowedTools) != 2 ||
+		m.Tools.MCP[0].AllowedTools[0] != "read_file" {
+		t.Errorf("mcp[0]: %+v", m.Tools.MCP[0])
+	}
+	if m.Tools.MCP[1].ServerName != "web-search" ||
+		len(m.Tools.MCP[1].AllowedTools) != 0 {
+		t.Errorf("mcp[1]: %+v", m.Tools.MCP[1])
+	}
+}
+
+// Per ADR-018 / issue #43. A malformed entry (missing required server_uri)
+// must be rejected by the schema.
+func TestMCPServerGrantRejectsMissingURI(t *testing.T) {
+	yaml := `schemaVersion: "1"
+agent:
+  name: "x"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://td/agent/x/1"
+tools:
+  mcp:
+    - server_name: "fs-helper"
+      allowed_tools: ["read_file"]
+`
+	_, err := Parse("m.yaml", []byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for missing server_uri")
+	}
+}
+
 func TestExtendsNarrowingAccepted(t *testing.T) {
 	dir := t.TempDir()
 	parent := filepath.Join(dir, "parent.yaml")
