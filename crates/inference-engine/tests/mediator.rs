@@ -498,7 +498,7 @@ fn approval_rejected_via_file_channel_skips_violation_and_returns_denied() {
         .unwrap()
         .contains("scope is too broad"));
     // Critically: NO violation entry — rejection is a flow, not a security failure.
-    assert!(!kinds.iter().any(|k| *k == "violation"));
+    assert!(!kinds.contains(&"violation"));
     assert!(!target.exists(), "rejected operation must NOT have run");
 }
 
@@ -540,7 +540,7 @@ fn approval_timeout_emits_timed_out_entry_no_violation() {
         .collect();
     assert_eq!(kinds.first(), Some(&"session_start"));
     assert!(kinds.contains(&"approval_request"));
-    assert!(!kinds.iter().any(|k| *k == "violation"));
+    assert!(!kinds.contains(&"violation"));
 }
 
 #[test]
