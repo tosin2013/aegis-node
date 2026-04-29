@@ -421,9 +421,14 @@ fn approval_granted_via_file_channel_proceeds_with_full_entry_sequence() {
     let mut s = s.with_approval_channel(Box::new(FileApprovalChannel::new(&approval_path)));
 
     // Pre-write the granted decision so the channel returns immediately.
-    std::fs::write(&approval_path, br#"{"decision":"granted","approver":"alice"}"#).unwrap();
+    std::fs::write(
+        &approval_path,
+        br#"{"decision":"granted","approver":"alice"}"#,
+    )
+    .unwrap();
 
-    s.mediate_filesystem_write(&target, b"out", Some("rstep-7")).unwrap();
+    s.mediate_filesystem_write(&target, b"out", Some("rstep-7"))
+        .unwrap();
     s.shutdown().unwrap();
 
     let entries = read_lines(&ledger);
@@ -549,9 +554,7 @@ fn no_channel_preserves_legacy_halt_on_require_approval() {
     let (mut s, ledger) = boot(dir.path(), ca_dir.path(), "session-approval-legacy", &yaml);
     // No channel attached — pre-#27 behavior: halt with Error::RequireApproval.
 
-    let err = s
-        .mediate_filesystem_write(&target, b"x", None)
-        .unwrap_err();
+    let err = s.mediate_filesystem_write(&target, b"x", None).unwrap_err();
     assert!(matches!(err, Error::RequireApproval { .. }), "got {err:?}");
     s.shutdown().unwrap();
 

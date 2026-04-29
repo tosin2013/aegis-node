@@ -331,10 +331,7 @@ impl Session {
                 self.emit_approval_granted(&req, &approver_identity, decided_at)?;
                 Ok(Decision::Allow)
             }
-            ApprovalOutcome::Rejected {
-                reason,
-                decided_at,
-            } => {
+            ApprovalOutcome::Rejected { reason, decided_at } => {
                 self.emit_approval_rejected(&req, &reason, decided_at)?;
                 Err(Error::Denied {
                     reason: format!("approval rejected: {reason}"),
@@ -425,7 +422,10 @@ impl Session {
         let agent_hash = self.agent_identity_hash();
         let session_id = self.session_id().to_string();
         let mut payload = Map::new();
-        payload.insert("decision".to_string(), Value::String("rejected".to_string()));
+        payload.insert(
+            "decision".to_string(),
+            Value::String("rejected".to_string()),
+        );
         payload.insert(
             "decidedAt".to_string(),
             Value::String(decided_at.to_rfc3339()),

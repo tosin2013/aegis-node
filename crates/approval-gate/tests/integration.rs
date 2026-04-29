@@ -9,9 +9,7 @@
 
 use std::time::Duration;
 
-use aegis_approval_gate::{
-    ApprovalChannel, ApprovalOutcome, ApprovalRequest, FileApprovalChannel,
-};
+use aegis_approval_gate::{ApprovalChannel, ApprovalOutcome, ApprovalRequest, FileApprovalChannel};
 
 fn req(timeout_ms: u64) -> ApprovalRequest {
     ApprovalRequest {
