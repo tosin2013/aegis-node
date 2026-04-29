@@ -196,6 +196,34 @@ impl Policy {
         )
     }
 
+    /// MCP tool call: closed-by-default per ADR-018 / F2-MCP-B. Allowed iff
+    /// `tools.mcp[]` contains an entry whose `server_name` equals
+    /// `server_name` AND whose `allowed_tools` contains `tool_name`.
+    /// An empty `allowed_tools` array on a server entry means "no tools
+    /// allowed" — the closed-by-default default for a listed server.
+    pub fn check_mcp_tool(&self, server_name: &str, tool_name: &str) -> Decision {
+        let server = self
+            .manifest
+            .tools
+            .mcp
+            .iter()
+            .find(|s| s.server_name == server_name);
+        let server = match server {
+            Some(s) => s,
+            None => {
+                return Decision::deny(format!(
+                    "mcp tool call to server {server_name:?} not granted: server not in tools.mcp[]",
+                ));
+            }
+        };
+        if !server.allowed_tools.iter().any(|t| t == tool_name) {
+            return Decision::deny(format!(
+                "mcp tool call {server_name:?}/{tool_name:?} not granted: tool not in allowed_tools",
+            ));
+        }
+        Decision::Allow
+    }
+
     /// Classify whether the manifest has an explicit `write_grant` for
     /// `(path, action)` — and if so, whether any matching grant is
     /// currently in its time window. Used by `check_filesystem_write`

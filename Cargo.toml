@@ -10,6 +10,7 @@ members = [
     "crates/policy",
     "crates/filesystem-gate",
     "crates/approval-gate",
+    "crates/mcp-client",
 ]
 
 [workspace.package]

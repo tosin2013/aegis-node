@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use aegis_approval_gate::ApprovalChannel;
 use aegis_identity::{verify_digest_binding, Digest, DigestField, DigestTriple, LocalCa, SpiffeId};
 use aegis_ledger_writer::{Entry, EntryType, LedgerWriter};
+use aegis_mcp_client::McpClient;
 use aegis_policy::Policy;
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -69,6 +70,11 @@ pub struct Session {
     /// of outcome. `shutdown` summarizes + signs + emits a
     /// `NetworkAttestation` ledger entry before `SessionEnd`.
     pub(crate) network_log: Vec<NetworkConnectionMeta>,
+    /// MCP client used by `mediate_mcp_tool_call` (per ADR-018 / F2-MCP-B
+    /// / issue #44). None means MCP tool calls are unsupported in this
+    /// session — the mediator returns `Error::Denied` rather than panic.
+    /// Set via [`Session::with_mcp_client`] after boot.
+    pub(crate) mcp_client: Option<Box<dyn McpClient>>,
 }
 
 /// One observed network-connection attempt + the gate's decision.
@@ -176,6 +182,7 @@ impl Session {
             config_path: cfg.config_path,
             approval_channel: None,
             network_log: Vec::new(),
+            mcp_client: None,
         })
     }
 
@@ -185,6 +192,14 @@ impl Session {
     /// preserves the pre-#27 halt-on-RequireApproval behavior.
     pub fn with_approval_channel(mut self, channel: Box<dyn ApprovalChannel>) -> Self {
         self.approval_channel = Some(channel);
+        self
+    }
+
+    /// Attach an MCP client. Required to invoke `mediate_mcp_tool_call`;
+    /// without it MCP tool calls are denied (the mediator emits a
+    /// Violation citing "no MCP client configured").
+    pub fn with_mcp_client(mut self, client: Box<dyn McpClient>) -> Self {
+        self.mcp_client = Some(client);
         self
     }
 

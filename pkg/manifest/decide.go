@@ -42,6 +42,10 @@ const (
 	QueryNetworkOutbound  QueryKind = "network_outbound"
 	QueryNetworkInbound   QueryKind = "network_inbound"
 	QueryExec             QueryKind = "exec"
+	// QueryMCPToolCall consults tools.mcp[] (per ADR-018 / F2-MCP-B).
+	// The Query's MCPServer + MCPTool fields carry the (server, tool)
+	// pair to look up.
+	QueryMCPToolCall QueryKind = "mcp_tool_call"
 )
 
 // Query is one I/O attempt described abstractly so both Go and Rust
@@ -60,6 +64,9 @@ type Query struct {
 	Protocol     string    `json:"protocol,omitempty"`
 	Now          time.Time `json:"now,omitempty"`
 	SessionStart time.Time `json:"session_start,omitempty"`
+	// MCPServer + MCPTool are consulted only for QueryMCPToolCall.
+	MCPServer string `json:"mcp_server,omitempty"`
+	MCPTool   string `json:"mcp_tool,omitempty"`
 }
 
 // Decide answers a Query against `m`. Closed-by-default: silence is
@@ -81,6 +88,8 @@ func (m *Manifest) Decide(q Query) Decision {
 		return m.decideNetwork(false, q.Host, q.Port, q.Protocol)
 	case QueryExec:
 		return m.decideExec(q.ResourceURI)
+	case QueryMCPToolCall:
+		return m.decideMCPTool(q.MCPServer, q.MCPTool)
 	default:
 		return denyDecision(fmt.Sprintf("unknown query kind %q", q.Kind))
 	}
@@ -127,6 +136,29 @@ func (m *Manifest) decideFsDelete(uri string, now, sessionStart time.Time) Decis
 		return denyDecision(fmt.Sprintf("filesystem delete of %s blocked by expired write_grant", uri))
 	}
 	return denyDecision(fmt.Sprintf("filesystem delete of %s not granted by any write_grant", uri))
+}
+
+// decideMCPTool mirrors aegis_policy::Policy::check_mcp_tool. Closed-by-
+// default per ADR-018 / F2-MCP-B: allowed iff tools.mcp[] has an entry
+// whose server_name matches AND whose allowed_tools contains tool_name.
+func (m *Manifest) decideMCPTool(server, tool string) Decision {
+	for i := range m.Tools.MCP {
+		s := &m.Tools.MCP[i]
+		if s.ServerName != server {
+			continue
+		}
+		for _, t := range s.AllowedTools {
+			if t == tool {
+				return allowDecision()
+			}
+		}
+		return denyDecision(fmt.Sprintf(
+			"mcp tool call %q/%q not granted: tool not in allowed_tools", server, tool,
+		))
+	}
+	return denyDecision(fmt.Sprintf(
+		"mcp tool call to server %q not granted: server not in tools.mcp[]", server,
+	))
 }
 
 func (m *Manifest) decideExec(program string) Decision {

@@ -15,6 +15,7 @@ aegis-access-log = { path = "../access-log" }
 aegis-approval-gate = { path = "../approval-gate" }
 aegis-identity = { path = "../identity" }
 aegis-ledger-writer = { path = "../ledger-writer" }
+aegis-mcp-client = { path = "../mcp-client" }
 aegis-policy = { path = "../policy" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 serde_json = "1"
