@@ -1,0 +1,7 @@
+schemaVersion: "1"
+agent:
+  name: "agent-foo"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://td/agent/agent-bar/inst-001"
+tools: {}

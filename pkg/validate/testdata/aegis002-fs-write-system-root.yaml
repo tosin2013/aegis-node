@@ -1,0 +1,7 @@
+schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools:
+  filesystem:
+    write:
+      - "/usr"
