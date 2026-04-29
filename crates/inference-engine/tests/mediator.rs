@@ -329,3 +329,57 @@ write_grants:
     let summary = verify_file(&ledger).unwrap();
     assert_eq!(summary.entry_count as usize, kinds.len());
 }
+
+#[test]
+fn record_reasoning_step_threads_id_into_subsequent_access() {
+    // F5 audit invariant: every Access entry's reasoningStepId resolves
+    // to a preceding ReasoningStep entry whose stepId matches.
+    // Demonstrates the canonical runtime call pattern: record reasoning
+    // → use the returned step_id in mediate_*.
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let target = dir.path().join("data.txt");
+    std::fs::write(&target, b"contents").unwrap();
+    let yaml = format!(
+        r#"schemaVersion: "1"
+agent: {{ name: "m", version: "1.0.0" }}
+identity: {{ spiffeId: "spiffe://mediator.local/agent/research/inst-1" }}
+tools:
+  filesystem:
+    read: ["{p}"]
+"#,
+        p = dir.path().to_str().unwrap()
+    );
+    let (mut s, ledger) = boot(dir.path(), ca_dir.path(), "session-f5", &yaml);
+
+    let step_id = s
+        .record_reasoning_step(
+            "user: please read data.txt",
+            "I need to invoke filesystem.read on the target.",
+            vec!["filesystem.read".to_string()],
+            Some("filesystem.read".to_string()),
+        )
+        .unwrap();
+    let step_id_str = step_id.to_string();
+
+    s.mediate_filesystem_read(&target, Some(&step_id_str)).unwrap();
+    s.shutdown().unwrap();
+
+    let entries = read_lines(&ledger);
+    // session_start, reasoning_step, access, session_end
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[0]["entryType"], "session_start");
+    assert_eq!(entries[1]["entryType"], "reasoning_step");
+    assert_eq!(entries[2]["entryType"], "access");
+    assert_eq!(entries[3]["entryType"], "session_end");
+
+    // Correlation invariant.
+    assert_eq!(
+        entries[1]["reasoningStepId"], entries[2]["reasoningStepId"],
+        "Access reasoningStepId must match preceding ReasoningStep stepId"
+    );
+    assert_eq!(entries[1]["reasoningStepId"].as_str().unwrap(), step_id_str);
+    assert_eq!(entries[1]["toolSelected"], "filesystem.read");
+}

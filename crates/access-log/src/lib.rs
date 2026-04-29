@@ -17,6 +17,7 @@ use aegis_ledger_writer::{Entry, EntryRecord, EntryType, LedgerWriter};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use uuid::Uuid;
 
 pub mod error;
 pub use error::{Error, Result};
@@ -51,6 +52,90 @@ pub struct AccessEvent {
     /// `Utc::now()` is fine for the runtime, fixture timestamps are fine
     /// for tests/replay.
     pub timestamp: DateTime<Utc>,
+}
+
+/// One reasoning step emitted before a tool call (F5 per ADR-007). The
+/// step ID is what later access entries' `reasoning_step_id` field points
+/// at, giving auditors a reverse lookup from "what happened" to "why".
+///
+/// Phase 1a accepts pre-computed text — the LLM-driven runtime that
+/// generates `input` / `reasoning` / `tools_considered` / `tool_selected`
+/// arrives in Phase 2 (ADR-014's llama.cpp Backend). Until then, callers
+/// supply these fields directly (e.g., test fixtures, external graders).
+#[derive(Debug, Clone)]
+pub struct ReasoningStepEvent {
+    /// Step identifier embedded into downstream `EntryType::Access`
+    /// entries. Default-construct via [`ReasoningStepEvent::new_v7_id`]
+    /// for the typical caller.
+    pub step_id: Uuid,
+    /// What the agent received (user prompt, system input, prior tool
+    /// result that led to this reasoning).
+    pub input: String,
+    /// The agent's free-text rationale for choosing the next tool.
+    pub reasoning: String,
+    /// Tools the agent considered, in the order it considered them.
+    pub tools_considered: Vec<String>,
+    /// The tool the agent selected. None if the agent decided not to
+    /// invoke any tool (the reasoning is still recorded for audit).
+    pub tool_selected: Option<String>,
+    pub timestamp: DateTime<Utc>,
+}
+
+impl ReasoningStepEvent {
+    /// Convenience: generate a UUIDv7 for `step_id`.
+    pub fn new_v7_id() -> Uuid {
+        Uuid::now_v7()
+    }
+}
+
+/// Append exactly one `EntryType::ReasoningStep` ledger entry. Returns
+/// the writer's record; callers thread `event.step_id` into the
+/// `reasoning_step_id` field of the next [`emit_access`] call so an
+/// auditor can correlate "agent did X" back to "agent reasoned Y".
+///
+/// Per the F5 contract (ADR-007): every Access entry SHOULD have a
+/// preceding ReasoningStep entry whose `reasoningStepId` matches.
+/// Enforcing the SHOULD is a runtime concern (the mediator's caller);
+/// this function is the typed event surface.
+pub fn emit_reasoning_step(
+    writer: &mut LedgerWriter,
+    agent_identity_hash: [u8; 32],
+    event: ReasoningStepEvent,
+) -> Result<EntryRecord> {
+    if event.input.is_empty() {
+        return Err(Error::EmptyReasoningInput);
+    }
+
+    let mut payload = Map::new();
+    payload.insert(
+        "reasoningStepId".to_string(),
+        Value::String(event.step_id.to_string()),
+    );
+    payload.insert("input".to_string(), Value::String(event.input));
+    payload.insert("reasoning".to_string(), Value::String(event.reasoning));
+    payload.insert(
+        "toolsConsidered".to_string(),
+        Value::Array(
+            event
+                .tools_considered
+                .into_iter()
+                .map(Value::String)
+                .collect(),
+        ),
+    );
+    if let Some(tool) = event.tool_selected {
+        payload.insert("toolSelected".to_string(), Value::String(tool));
+    }
+
+    let session_id = writer.session_id().to_string();
+    let record = writer.append(Entry {
+        session_id,
+        entry_type: EntryType::ReasoningStep,
+        agent_identity_hash,
+        timestamp: event.timestamp,
+        payload,
+    })?;
+    Ok(record)
 }
 
 /// Append exactly one `EntryType::Access` ledger entry for `event`.
