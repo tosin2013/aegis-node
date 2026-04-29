@@ -14,19 +14,28 @@
 //!    pulling a moving target invalidates the F1 digest binding.
 //! 2. **Stage the pull in a temp dir.** No partial state ever touches
 //!    the cache.
-//! 3. **Run `oras pull`** to fetch the descriptor + blob.
+//! 3. **Run `oras pull`** to fetch the descriptor + blob. `oras`
+//!    verifies each pulled blob against the manifest's layer
+//!    descriptor — that's where blob-bytes-vs-manifest integrity
+//!    happens.
 //! 4. **Run `cosign verify`** against the configured key (or keyless
 //!    via Sigstore's public Fulcio + Rekor — keyless is the default
-//!    when `--cosign-key` is omitted, matching ADR-017).
-//! 5. **Recompute SHA-256 of the blob** and compare to the ref's
-//!    pinned digest. A successful `cosign verify` on the descriptor
-//!    is necessary; matching the pinned digest is what closes the
-//!    end-to-end chain (the pinned digest is what F1 binds into the
-//!    SVID extension at boot).
-//! 6. **Move into the content-addressed cache** at
-//!    `<cache-dir>/<sha256-hex>/blob.bin`. The atomic rename keeps
-//!    the cache consistent — either the artifact is fully verified
-//!    and present, or it isn't.
+//!    when `--cosign-key` is omitted, matching ADR-017). cosign
+//!    verifies the manifest's signature, which transitively covers
+//!    the layer descriptors.
+//! 5. **Compute the blob's SHA-256** and persist it as a sidecar
+//!    (`sha256.txt`) for the F1 boot path's SVID-binding use and
+//!    for cache-hit re-verification on subsequent pulls. We do NOT
+//!    compare this against the ref's `@sha256:` — that's the
+//!    *manifest* digest (per OCI spec), a different value from the
+//!    blob's content hash. cosign + oras together provide the
+//!    integrity guarantee; we surface the blob's hash for callers.
+//! 6. **Move into the cache** at `<cache-dir>/<manifest-sha>/blob.bin`.
+//!    The atomic rename keeps the cache consistent — either the
+//!    artifact is fully verified and present, or it isn't.
+//!
+//! On cache hits, we recompute the blob's SHA-256 and compare to the
+//! sidecar — catches local-disk tampering between pulls.
 //!
 //! Each step has an explicit error variant so the F1 boot path can
 //! refuse with a clear violation reason if the artifact a session
@@ -228,32 +237,54 @@ pub struct PullConfig {
 
 /// Pull + verify + cache. Returns the path of the verified blob.
 ///
+/// Integrity model: cosign + oras already provide end-to-end integrity
+/// together — cosign verifies the manifest's signature (including its
+/// layer descriptors), and oras verifies each pulled blob against the
+/// matching layer descriptor. We do NOT re-verify the blob's SHA-256
+/// against the reference, because the reference's `@sha256:` carries
+/// the **manifest digest** (per OCI spec), not the blob digest. They
+/// are different values and comparing them was a category error.
+///
+/// We do still compute and surface the blob's SHA-256 — the F1 boot
+/// path needs that digest for the SVID extension binding — and we
+/// persist it alongside the blob so subsequent cache hits can detect
+/// local-disk tampering.
+///
 /// Side-effects: spawns `oras` and `cosign` as subprocesses, writes
 /// to `cache_dir`. Atomic from the cache's perspective — the move
-/// into `<cache-dir>/<sha256>/blob.bin` happens only after every
-/// verification step succeeds.
+/// into `<cache-dir>/<manifest-sha>/blob.bin` happens only after
+/// every verification step succeeds.
 pub fn pull(reference: &str, cfg: &PullConfig) -> Result<PulledArtifact> {
     require_tool("oras")?;
     require_tool("cosign")?;
     let parsed = ParsedRef::parse(reference)?;
 
+    // Cache key is the manifest digest from the reference. That's
+    // what callers pin and what's stable across pulls. The blob's
+    // own SHA-256 is captured in a sidecar (`sha256.txt`) for
+    // tamper-detection on cache hits.
     let target_dir = cfg.cache_dir.join(&parsed.sha256_hex);
     let target_blob = target_dir.join("blob.bin");
-    if target_blob.exists() {
-        // Already cached + verified at some point. We re-verify the
-        // sha256 so a corrupted local cache fails fast rather than
-        // booting against a tampered file.
+    let sidecar = target_dir.join("sha256.txt");
+    if target_blob.exists() && sidecar.exists() {
+        // Cache hit: re-verify the blob's SHA-256 against the sidecar
+        // recorded at original-pull time. Catches local-disk tampering
+        // (someone overwriting blob.bin with different bytes after
+        // the original pull). The sidecar is the source of truth
+        // here — it was written under the same cosign-verified pull
+        // that produced the blob.
+        let recorded = std::fs::read_to_string(&sidecar)?.trim().to_string();
         let got = sha256_file(&target_blob)?;
-        if got != parsed.sha256_hex {
+        if got != recorded {
             return Err(PullError::Sha256Mismatch {
-                expected: parsed.sha256_hex.clone(),
+                expected: recorded,
                 got,
             });
         }
         return Ok(PulledArtifact {
             reference: parsed.clone(),
             blob_path: target_blob,
-            sha256_hex: parsed.sha256_hex,
+            sha256_hex: recorded,
         });
     }
 
@@ -269,23 +300,21 @@ pub fn pull(reference: &str, cfg: &PullConfig) -> Result<PulledArtifact> {
     // model artifacts) that's the model. Multi-blob artifacts are out
     // of scope for OCI-A.
     let blob = pick_largest_file(staging.path())?;
-    let computed = sha256_file(&blob)?;
-    if computed != parsed.sha256_hex {
-        return Err(PullError::Sha256Mismatch {
-            expected: parsed.sha256_hex.clone(),
-            got: computed,
-        });
-    }
+    let blob_sha256_hex = sha256_file(&blob)?;
 
     std::fs::create_dir_all(&target_dir)?;
-    // Persist a small metadata file alongside the blob for traceability.
+    // Persist sidecars alongside the blob:
+    //   ref.txt     — canonical reference, for traceability
+    //   sha256.txt  — blob's actual SHA-256, used by the F1 boot path
+    //                 and by future cache-hit re-verification
     std::fs::write(target_dir.join("ref.txt"), parsed.canonical().as_bytes())?;
+    std::fs::write(&sidecar, blob_sha256_hex.as_bytes())?;
     std::fs::rename(&blob, &target_blob)?;
 
     Ok(PulledArtifact {
         reference: parsed.clone(),
         blob_path: target_blob,
-        sha256_hex: parsed.sha256_hex,
+        sha256_hex: blob_sha256_hex,
     })
 }
 
