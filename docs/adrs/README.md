@@ -25,6 +25,7 @@ The decisions are anchored in the Architecture Principles (PRD §7) and the ten-
 | [015](015-three-phase-deployment-roadmap.md) | Three-Phase Deployment Roadmap | §5 |
 | [016](016-open-core-licensing-model.md) | Open-Core Licensing Model | §9.1 |
 | [017](017-local-development-environment-devcontainer-mise.md) | Local Development Environment: Devcontainer + mise | §7 (#3, #4), §6.1 |
+| [018](018-adopt-mcp-protocol-for-agent-tool-boundary.md) | Adopt the Model Context Protocol (MCP) as the Agent-to-Tool Boundary | §4 F2, §4 F5 |
 
 ## Decision Coverage Matrix
 
