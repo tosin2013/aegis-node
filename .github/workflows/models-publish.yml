@@ -94,7 +94,9 @@ jobs:
           set -euo pipefail
           mkdir -p artifact
           cd artifact
-          huggingface-cli download \
+          # `hf` is the post-rename successor to the deprecated
+          # `huggingface-cli`; same semantics, different binary name.
+          hf download \
             --revision '${{ inputs.hf_revision }}' \
             --local-dir . \
             '${{ inputs.hf_repo }}' \
