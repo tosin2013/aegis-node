@@ -26,6 +26,8 @@ The decisions are anchored in the Architecture Principles (PRD §7) and the ten-
 | [016](016-open-core-licensing-model.md) | Open-Core Licensing Model | §9.1 |
 | [017](017-local-development-environment-devcontainer-mise.md) | Local Development Environment: Devcontainer + mise | §7 (#3, #4), §6.1 |
 | [018](018-adopt-mcp-protocol-for-agent-tool-boundary.md) | Adopt the Model Context Protocol (MCP) as the Agent-to-Tool Boundary | §4 F2, §4 F5 |
+| [019](019-explicit-write-grant-takes-precedence.md) | Explicit Write Grant Takes Precedence Over Broad Path Coverage | §4 F7 |
+| [020](020-recorded-demo-program.md) | Recorded Demo Program — VHS Tapes Driven by Real CPU-Bound Models | §1, §5 Phase 1 |
 
 ## Decision Coverage Matrix
 

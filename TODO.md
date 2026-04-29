@@ -72,7 +72,7 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 - [ ] **P0** [ADR-013] Verification covers GGUF file *and* chat-template metadata (defends against template-only poisoning).
 - [ ] **P0** [ADR-014] Build Rust FFI binding to `llama.cpp` with strict safety wrapper (no unwrap on FFI returns; defined panic behavior). Pin a known-good upstream revision.
 - [ ] **P0** [ADR-014] Define `Backend` trait abstraction and implement `LlamaCppBackend` against it.
-- [ ] **P1** [ADR-014] Define determinism config knobs (seed, temperature, top-p) exposed through manifest.
+- [ ] **P0** [ADR-014, ADR-020] Define determinism config knobs (seed, temperature, top-p) exposed through manifest. Promoted from P1 → P0 because [ADR-020](docs/adrs/020-recorded-demo-program.md) makes the demo program depend on reproducible inference. — issue #72.
 - [ ] **P1** [ADR-013] Document operator workflow: download upstream, scan, sign with org Cosign key, push to internal registry.
 - [ ] **P2** [ADR-010, F8] CI test: fixed ledger fixture renders to fixed DOM snapshot.
 
