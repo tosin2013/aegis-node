@@ -48,9 +48,17 @@ enum Query {
     },
     FilesystemWrite {
         resource_uri: String,
+        #[serde(default)]
+        now: Option<DateTime<Utc>>,
+        #[serde(default)]
+        session_start: Option<DateTime<Utc>>,
     },
     FilesystemDelete {
         resource_uri: String,
+        #[serde(default)]
+        now: Option<DateTime<Utc>>,
+        #[serde(default)]
+        session_start: Option<DateTime<Utc>>,
     },
     NetworkOutbound {
         host: String,
