@@ -93,6 +93,21 @@
       color: var(--text-dim);
       border: 1px solid var(--border);
     }
+    .integrity-banner.verified {
+      background: rgba(63, 185, 80, 0.15);
+      color: var(--green);
+      border: 1px solid rgba(63, 185, 80, 0.4);
+    }
+    .integrity-banner.indeterminate {
+      background: rgba(210, 153, 34, 0.15);
+      color: var(--yellow);
+      border: 1px solid rgba(210, 153, 34, 0.4);
+    }
+    .integrity-banner.broken {
+      background: rgba(248, 81, 73, 0.15);
+      color: var(--red);
+      border: 1px solid rgba(248, 81, 73, 0.4);
+    }
     main {
       padding: 20px;
       max-width: 1200px;
@@ -231,8 +246,8 @@
     </div>
     <div class="timeline" id="timeline"></div>
     <div class="footnote">
-      F8 Trajectory Replay (ADR-010). Hash-chain verification lands in F8-B (issue #63);
-      this build shows entries as recorded — integrity status reads "unknown".
+      F8 Trajectory Replay (ADR-010). Hash-chain verification (F8-B / issue #63)
+      runs in your browser via the Web Crypto API — no network calls.
     </div>
   </main>
 
@@ -266,10 +281,15 @@
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = (ev) => {
+      reader.onload = async (ev) => {
+        const raw = ev.target.result;
         try {
-          const entries = parseJsonl(ev.target.result);
-          render(entries, file.name);
+          const entries = parseJsonl(raw);
+          // Verify the hash chain against the *raw* line bytes (must
+          // match LedgerWriter::append: SHA-256(line) where line is
+          // the JSON content as written to disk, no trailing LF).
+          const integrity = await verifyChain(raw);
+          render(entries, file.name, integrity);
         } catch (err) {
           renderError(err);
         }
@@ -293,10 +313,92 @@
     }
 
     // ---------------------------------------------------------------
+    // F9 hash-chain verification (F8-B / issue #63).
+    //
+    // Mirrors the Rust verifier in crates/ledger-writer/src/verify.rs:
+    //
+    //   prev_hash[0]   = 0x00 * 32             (genesis)
+    //   prev_hash[N+1] = SHA-256(line[N])      (LF excluded)
+    //   line[N+1].prevHash MUST equal prev_hash[N+1]
+    //
+    // States returned:
+    //   verified       — every link checks; chain ends with session_end.
+    //   indeterminate  — chain checks but there's no session_end (truncated capture).
+    //   broken         — first link that doesn't validate; reports the line.
+    // ---------------------------------------------------------------
+
+    const GENESIS_PREV_HASH = "0".repeat(64);
+
+    async function verifyChain(rawText) {
+      // Strip a single trailing newline if present so it doesn't show
+      // up as a phantom empty line. Lines are split on either CRLF or
+      // LF — the writer emits LF, but operators editing on Windows
+      // could introduce CRLF. The hashing logic always uses the line
+      // body (no terminator) which matches the Rust verifier.
+      const text = rawText.replace(/\r?\n$/, "");
+      if (text === "") {
+        return { state: "indeterminate", count: 0, reason: "empty file" };
+      }
+      const lines = text.split(/\r?\n/);
+      let prevHash = GENESIS_PREV_HASH;
+      let count = 0;
+      let endsWithSessionEnd = false;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line === "") continue;
+        let parsed;
+        try {
+          parsed = JSON.parse(line);
+        } catch (err) {
+          return {
+            state: "broken",
+            count,
+            brokenLine: i + 1,
+            reason: "line " + (i + 1) + ": parse error: " + err.message,
+          };
+        }
+        if (parsed.prevHash !== prevHash) {
+          return {
+            state: "broken",
+            count,
+            brokenLine: i + 1,
+            reason:
+              "line " + (i + 1) + ": prevHash mismatch (expected " +
+              prevHash.slice(0, 16) + "…, got " +
+              String(parsed.prevHash).slice(0, 16) + "…)",
+          };
+        }
+        prevHash = await sha256Hex(line);
+        count++;
+        endsWithSessionEnd = parsed.entryType === "session_end";
+      }
+      if (!endsWithSessionEnd) {
+        return {
+          state: "indeterminate",
+          count,
+          rootHash: prevHash,
+          reason: "no session_end entry — capture may be truncated",
+        };
+      }
+      return { state: "verified", count, rootHash: prevHash };
+    }
+
+    async function sha256Hex(text) {
+      const enc = new TextEncoder();
+      const buf = await crypto.subtle.digest("SHA-256", enc.encode(text));
+      const arr = new Uint8Array(buf);
+      let hex = "";
+      for (let i = 0; i < arr.length; i++) {
+        hex += arr[i].toString(16).padStart(2, "0");
+      }
+      return hex;
+    }
+
+    // ---------------------------------------------------------------
     // Rendering
     // ---------------------------------------------------------------
 
-    function render(entries, filename) {
+    function render(entries, filename, integrity) {
       document.getElementById("empty").style.display = "none";
       const timeline = document.getElementById("timeline");
       timeline.replaceChildren();
@@ -313,15 +415,19 @@
         }
       }
 
-      // Summary bar.
+      // Summary bar — includes the integrity verdict from verifyChain().
       const sessionId = entries.length ? entries[0].sessionId : "(empty)";
-      const lastHash = entries.length ? (entries[entries.length - 1].hash || "(no hash field)") : "—";
+      const rootHash = integrity && integrity.rootHash
+        ? integrity.rootHash
+        : "—";
       summary.appendChild(chip("file", filename));
       summary.appendChild(chip("session", sessionId));
-      summary.appendChild(chip("entries", String(entries.length)));
-      summary.appendChild(chip("root hash", lastHash));
-      summary.appendChild(integrityBanner("unknown",
-        "F8-B (#63) will run the SHA-256 chain check here."));
+      summary.appendChild(chip("entries", String(integrity ? integrity.count : entries.length)));
+      summary.appendChild(chip("root hash", rootHash));
+      summary.appendChild(integrityBanner(
+        integrity ? integrity.state : "unknown",
+        integrity && integrity.reason ? integrity.reason : null,
+      ));
 
       // Render every entry.
       for (const e of entries) {
@@ -522,10 +628,14 @@
     function integrityBanner(state, hint) {
       const span = document.createElement("span");
       span.className = "integrity-banner " + state;
-      const label = state === "unknown" ? "integrity: unknown" :
-                    state === "verified" ? "integrity: verified" :
-                    "integrity: BROKEN";
-      span.textContent = label + (hint ? " (" + hint + ")" : "");
+      let label;
+      switch (state) {
+        case "verified":      label = "integrity: VERIFIED"; break;
+        case "indeterminate": label = "integrity: indeterminate"; break;
+        case "broken":        label = "integrity: BROKEN"; break;
+        default:              label = "integrity: unknown";
+      }
+      span.textContent = label + (hint ? " — " + hint : "");
       return span;
     }
   </script>
