@@ -81,14 +81,16 @@ pub fn derive_attestation_key(svid_private_key_pem: &str) -> [u8; 32] {
 
 /// Compute the HMAC-SHA-256 signature over the canonical-JSON
 /// representation of a summary object (with `signatureHex` REMOVED if
-/// present — verifier strips it before hashing).
-pub fn compute_signature(key: &[u8; 32], summary_without_signature: &Value) -> [u8; 32] {
-    let canonical = serde_json::to_vec(summary_without_signature).unwrap_or_default();
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts 32-byte key");
+/// present — verifier strips it before hashing). Returns `None` only
+/// if HMAC initialization fails, which is unreachable for a fixed
+/// 32-byte key but clippy::expect_used demands the explicit fallback.
+pub fn compute_signature(key: &[u8; 32], summary_without_signature: &Value) -> Option<[u8; 32]> {
+    let canonical = serde_json::to_vec(summary_without_signature).ok()?;
+    let mut mac = HmacSha256::new_from_slice(key).ok()?;
     mac.update(&canonical);
     let mut out = [0u8; 32];
     out.copy_from_slice(&mac.finalize().into_bytes());
-    out
+    Some(out)
 }
 
 /// Verify an attestation entry's signature. Returns true iff the
@@ -107,7 +109,9 @@ pub fn verify_signature(svid_private_key_pem: &str, payload: &Value) -> bool {
     let mut without_sig = obj.clone();
     without_sig.remove("signatureHex");
     let key = derive_attestation_key(svid_private_key_pem);
-    let actual = compute_signature(&key, &Value::Object(without_sig));
+    let Some(actual) = compute_signature(&key, &Value::Object(without_sig)) else {
+        return false;
+    };
     expected.as_slice() == actual.as_slice()
 }
 
@@ -163,7 +167,11 @@ pub(crate) fn emit_network_attestation(session: &mut Session) -> Result<()> {
     );
 
     let key = derive_attestation_key(session.key_pem());
-    let sig = compute_signature(&key, &Value::Object(summary.clone()));
+    let sig = compute_signature(&key, &Value::Object(summary.clone())).ok_or_else(|| {
+        Error::SvidSelfCheck {
+            field: "attestation_hmac".to_string(),
+        }
+    })?;
     summary.insert("signatureHex".to_string(), Value::String(hex::encode(sig)));
 
     // Network connections observed list — kept on a separate field so
