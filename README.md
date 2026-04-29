@@ -4,7 +4,7 @@
 
 Every enterprise wants AI agents. Every enterprise security team blocks them. Aegis-Node is the agent runtime built to survive the security review — so organizations can finally say yes.
 
-**Status:** Phase 1b complete — [**v0.8.0** *Reasoning + Approval*](https://github.com/tosin2013/aegis-node/releases/tag/v0.8.0) (pre-release, 2026-04-29). Builds on [v0.5.0](https://github.com/tosin2013/aegis-node/releases/tag/v0.5.0) with the F3 human approval gate (TTY / file / [localhost web UI](https://github.com/tosin2013/aegis-node/issues/35) / [mTLS+SPIFFE signed-API](https://github.com/tosin2013/aegis-node/issues/36)), F5 [pre-execution reasoning trajectory](https://github.com/tosin2013/aegis-node/issues/26), F6 [end-of-session signed network attestation](https://github.com/tosin2013/aegis-node/issues/37), F7 [time-bounded write_grants](https://github.com/tosin2013/aegis-node/issues/38) with [explicit-takes-precedence](docs/adrs/019-explicit-write-grant-takes-precedence.md). Replay viewer + policy validator + model-pull tooling in v0.9.0; v1.0.0 GA targets the [CMMC 2.0 deadline 2026-11-02](RELEASE_PLAN.md).
+**Status:** Phase 1b complete — [**v0.8.0** *Reasoning + Approval*](https://github.com/tosin2013/aegis-node/releases/tag/v0.8.0) (pre-release, 2026-04-29). Builds on [v0.5.0](https://github.com/tosin2013/aegis-node/releases/tag/v0.5.0) with the F3 human approval gate (TTY / file / [localhost web UI](https://github.com/tosin2013/aegis-node/issues/35) / [mTLS+SPIFFE signed-API](https://github.com/tosin2013/aegis-node/issues/36)), F5 [pre-execution reasoning trajectory](https://github.com/tosin2013/aegis-node/issues/26), F6 [end-of-session signed network attestation](https://github.com/tosin2013/aegis-node/issues/37), F7 [time-bounded write_grants](https://github.com/tosin2013/aegis-node/issues/38) with [explicit-takes-precedence](docs/adrs/019-explicit-write-grant-takes-precedence.md). Phase 1c (v0.9.0) in progress — [MCP client adoption](docs/adrs/018-adopt-mcp-protocol-for-agent-tool-boundary.md) landed (closed-by-default `tools.mcp[]` + stdio transport + cross-language conformance + filesystem-server example); replay viewer, `aegis validate`, llama.cpp FFI, and OCI model pull still ahead. v1.0.0 GA targets the [CMMC 2.0 deadline 2026-11-02](RELEASE_PLAN.md).
 
 ## What it is
 
@@ -44,7 +44,7 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 
 ## Documentation
 
-- **[Architectural Decision Records](docs/adrs/)** — 17 ADRs covering the security primitives, runtime architecture, supply chain, and dev environment.
+- **[Architectural Decision Records](docs/adrs/)** — 19 ADRs covering the security primitives, runtime architecture, supply chain, dev environment, agent ↔ tool protocol (MCP), and write-grant precedence rules.
 - **[Compatibility Charter](docs/COMPATIBILITY_CHARTER.md)** — what the project promises not to break across versions (manifest, ledger, IPC).
 - **[Supply Chain Verification](docs/SUPPLY_CHAIN.md)** — `cosign verify` / `oras pull` flow for the signed devbox image and (later) model artifacts.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — DCO sign-off, dev workflow, ADR process.
@@ -66,6 +66,8 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 │   ├── policy/             # F2: closed-by-default decision engine + violation emit
 │   ├── network-gate/       # F6: AegisTcpStream::connect (policy-checked std::net wrapper)
 │   ├── filesystem-gate/    # F2: AegisFile-style policy-checked std::fs wrappers
+│   ├── approval-gate/      # F3: ApprovalChannel trait + TTY/file/web/mTLS channels
+│   ├── mcp-client/         # F2-MCP: McpClient trait + stdio JSON-RPC transport (ADR-018)
 │   ├── inference-engine/   # F0: Session boot/shutdown + per-tool-call mediator
 │   └── cli/                # `aegis` binary: identity / verify / run subcommands
 ├── pkg/
@@ -78,7 +80,7 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 │   └── runtime/            # End-to-end golden-ledger fixture (manifest + script + golden)
 ├── .devcontainer/          # Canonical dev environment (per ADR-017)
 ├── .github/workflows/      # CI: rust, go, schemas, conformance, devbox
-├── docs/adrs/              # 17 Architectural Decision Records
+├── docs/adrs/              # 19 Architectural Decision Records
 ├── Cargo.toml              # Rust workspace
 ├── go.mod                  # Go module
 ├── mise.toml               # Native-install tool versions (devcontainer fallback)
