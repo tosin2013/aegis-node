@@ -74,6 +74,12 @@ enum Query {
         #[serde(default)]
         resource_uri: String,
     },
+    /// Per ADR-018 / F2-MCP-C (#45). Closed-by-default lookup against
+    /// `tools.mcp[]`: allowed iff (server_name, tool_name) is listed.
+    McpToolCall {
+        mcp_server: String,
+        mcp_tool: String,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone, Copy)]
@@ -161,6 +167,10 @@ fn conformance_rust_side() {
                 protocol,
             } => policy.check_network_inbound(host, *port, (*protocol).into()),
             Query::Exec { resource_uri } => policy.check_exec(Path::new(resource_uri)),
+            Query::McpToolCall {
+                mcp_server,
+                mcp_tool,
+            } => policy.check_mcp_tool(mcp_server, mcp_tool),
         };
 
         let actual = decision_kind(&decision);
