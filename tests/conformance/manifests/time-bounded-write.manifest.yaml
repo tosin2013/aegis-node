@@ -1,6 +1,14 @@
 # Conformance fixture: time-bounded write_grants exercising both
 # `duration` (relative to session_start) and `expires_at` (absolute).
 # Per F7 / issue #38.
+#
+# NOTE: deliberately no `tools.filesystem.write` blanket coverage —
+# the only path-write coverage comes from the write_grants below, so
+# an expired grant correctly falls through to the closed-by-default
+# Deny rather than being undermined by a broader rule. The interaction
+# of expired write_grants with broader path coverage is a separate
+# semantic question (closed-by-default vs fallback) that deserves its
+# own issue once #38 lands.
 
 schemaVersion: "1"
 agent:
@@ -8,9 +16,7 @@ agent:
   version: "1.0.0"
 identity:
   spiffeId: "spiffe://aegis-node.local/agent/time-bounded/inst-001"
-tools:
-  filesystem:
-    write: ["/tmp"]
+tools: {}
 write_grants:
   # Valid for the first hour of the session.
   - resource: "/tmp/short-lived.txt"
