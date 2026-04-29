@@ -98,8 +98,15 @@ func (m *Manifest) decideFsRead(uri string) Decision {
 }
 
 func (m *Manifest) decideFsWrite(uri string, now, sessionStart time.Time) Decision {
-	if g := m.findWriteGrantFor(uri, ActionWrite, now, sessionStart); g != nil {
+	// Explicit-takes-precedence (ADR-019, issue #40): if any write_grant
+	// names this resource for this action, that grant's time window is
+	// decisive — broader tools.filesystem.write does NOT paper over an
+	// expired explicit grant.
+	switch state, g := m.classifyWriteGrant(uri, ActionWrite, now, sessionStart); state {
+	case grantValid:
 		return m.writeGrantDecision(uri, g, ActionWrite)
+	case grantExpired:
+		return denyDecision(fmt.Sprintf("filesystem write of %s blocked by expired write_grant", uri))
 	}
 	var paths []string
 	if m.Tools.Filesystem != nil {
@@ -113,8 +120,11 @@ func (m *Manifest) decideFsWrite(uri string, now, sessionStart time.Time) Decisi
 }
 
 func (m *Manifest) decideFsDelete(uri string, now, sessionStart time.Time) Decision {
-	if g := m.findWriteGrantFor(uri, ActionDelete, now, sessionStart); g != nil {
+	switch state, g := m.classifyWriteGrant(uri, ActionDelete, now, sessionStart); state {
+	case grantValid:
 		return m.writeGrantDecision(uri, g, ActionDelete)
+	case grantExpired:
+		return denyDecision(fmt.Sprintf("filesystem delete of %s blocked by expired write_grant", uri))
 	}
 	return denyDecision(fmt.Sprintf("filesystem delete of %s not granted by any write_grant", uri))
 }
@@ -210,11 +220,28 @@ const (
 // interop without changing types.go signatures.
 type WriteAction string
 
-func (m *Manifest) findWriteGrantFor(
+// grantState distinguishes the three relevant outcomes when looking
+// up an explicit write_grant for a resource: no grant at all (fall
+// through to broader rules), a time-valid grant (decisive), or one
+// that exists but has expired (decisive Deny per ADR-019).
+type grantState int
+
+const (
+	grantNone grantState = iota
+	grantValid
+	grantExpired
+)
+
+// classifyWriteGrant mirrors Rust's `Policy::classify_write_grant`. It
+// scans `m.WriteGrants` for any entry naming `uri` for `action` and
+// returns the strongest outcome — Valid wins over Expired wins over
+// None. Drives the explicit-takes-precedence rule.
+func (m *Manifest) classifyWriteGrant(
 	uri string,
 	action WriteAction,
 	now, sessionStart time.Time,
-) *WriteGrant {
+) (grantState, *WriteGrant) {
+	state := grantNone
 	for i := range m.WriteGrants {
 		g := &m.WriteGrants[i]
 		if g.Resource != uri {
@@ -230,12 +257,12 @@ func (m *Manifest) findWriteGrantFor(
 		if !hasAction {
 			continue
 		}
-		if !grantTimeValid(g, now, sessionStart) {
-			continue
+		if grantTimeValid(g, now, sessionStart) {
+			return grantValid, g
 		}
-		return g
+		state = grantExpired
 	}
-	return nil
+	return state, nil
 }
 
 // grantTimeValid mirrors aegis_policy::policy::grant_time_valid in Rust:
