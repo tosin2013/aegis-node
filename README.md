@@ -4,24 +4,43 @@
 
 Every enterprise wants AI agents. Every enterprise security team blocks them. Aegis-Node is the agent runtime built to survive the security review — so organizations can finally say yes.
 
-**Status:** Phase 0 — Foundations. Substrate scaffolded; schemas, IPC contract, and security primitives in flight. Not yet usable.
+**Status:** Phase 1a complete — [**v0.5.0** *Core Security Primitives*](https://github.com/tosin2013/aegis-node/releases/tag/v0.5.0) (pre-release, 2026-04-29). Working zero-trust runtime end-to-end: identity ([F1](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF1)), manifest enforcement ([F2](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF2)), access log ([F4](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF4)), hash-chained ledger ([F9](https://github.com/tosin2013/aegis-node/issues?q=is%3Aclosed+label%3AF9)), plus an `aegis run` CLI that exercises them. Approval gate (F3) and reasoning trajectory (F5) ship in v0.8.0; replay viewer + policy validator + model-pull tooling in v0.9.0; v1.0.0 GA targets the [CMMC 2.0 deadline 2026-11-02](RELEASE_PLAN.md).
 
 ## What it is
 
 Aegis-Node is structured around the ten questions a zero-trust security team asks before approving an AI agent for production. Each question maps to a non-negotiable feature (F1–F10):
 
-| Security Review Question | Feature |
-|---|---|
-| What identity is the agent running as? | F1 Workload Identity |
-| What tools can it access? | F2 Permission Manifest |
-| Who approved the tool action? | F3 Human Approval Gate |
-| What data did it touch? | F4 Access Log |
-| Why did it act? | F5 Reasoning Trajectory |
-| Can it exfiltrate data? | F6 Network-Deny-by-Default |
-| Can it mutate production? | F7 Read-Only + Explicit Write Grants |
-| Can we replay what happened? | F8 Trajectory Replay |
-| Can logs be altered? | F9 Hash-Chained Ledger |
-| Can policies be reviewed before runtime? | F10 Policy-as-Code Validation |
+| Security Review Question | Feature | Shipping in |
+|---|---|---|
+| What identity is the agent running as? | F1 Workload Identity | ✅ v0.5.0 |
+| What tools can it access? | F2 Permission Manifest | ✅ v0.5.0 |
+| Who approved the tool action? | F3 Human Approval Gate | v0.8.0 |
+| What data did it touch? | F4 Access Log | ✅ v0.5.0 |
+| Why did it act? | F5 Reasoning Trajectory | v0.8.0 |
+| Can it exfiltrate data? | F6 Network-Deny-by-Default | ✅ v0.5.0 (network gate) |
+| Can it mutate production? | F7 Read-Only + Explicit Write Grants | ✅ v0.5.0 |
+| Can we replay what happened? | F8 Trajectory Replay | v0.9.0 |
+| Can logs be altered? | F9 Hash-Chained Ledger | ✅ v0.5.0 |
+| Can policies be reviewed before runtime? | F10 Policy-as-Code Validation | v0.9.0 |
+
+## What works today
+
+```bash
+# One-time CA setup
+aegis identity init --trust-domain aegis-node.local
+
+# Run a fixed tool-call script under enforcement (manifest gates every I/O)
+aegis run \
+  --manifest schemas/manifest/v1/examples/read-only-research.manifest.yaml \
+  --model /path/to/model.gguf \
+  --workload research --instance inst-001 \
+  --script my-script.json
+
+# Verify the produced ledger end-to-end (chain integrity + summary)
+aegis verify ledger-session-*.jsonl
+```
+
+Every tool call routes through: **identity rebind → policy decision → gate dispatch → access entry / violation entry**. Tampering the model file mid-session triggers an `IdentityRebind` violation and a halt. The Go validator (`pkg/manifest`) and Rust enforcer (`aegis_policy::Policy`) agree on every example manifest's allowed/denied operations — guarded by the [Conformance workflow](.github/workflows/conformance.yml) on every PR.
 
 ## Documentation
 
@@ -36,16 +55,30 @@ Aegis-Node is structured around the ten questions a zero-trust security team ask
 
 ```
 .
-├── proto/                  # aegis.proto (gRPC IPC contract — Phase 0 schema task)
+├── proto/                  # aegis.proto — gRPC IPC contract (frozen at aegis.v1)
 ├── schemas/
-│   ├── manifest/           # Permission Manifest JSON Schema
-│   └── ledger/             # Trajectory Ledger + Access Log JSON-LD @context
-├── crates/                 # Rust workspace (inference engine, network gate, ledger, identity)
-├── cmd/                    # Go binaries (aegis CLI, operator)
-├── pkg/                    # Go libraries
+│   ├── manifest/           # Permission Manifest JSON Schema (schemaVersion: "1")
+│   └── ledger/             # Trajectory Ledger + Access Log JSON-LD @context (v1)
+├── crates/                 # Rust workspace
+│   ├── identity/           # F1: SPIFFE local CA + X.509-SVID issuance + cdylib FFI
+│   ├── ledger-writer/      # F9: append-only hash-chained writer + verifier
+│   ├── access-log/         # F4: typed event emitter
+│   ├── policy/             # F2: closed-by-default decision engine + violation emit
+│   ├── network-gate/       # F6: AegisTcpStream::connect (policy-checked std::net wrapper)
+│   ├── filesystem-gate/    # F2: AegisFile-style policy-checked std::fs wrappers
+│   ├── inference-engine/   # F0: Session boot/shutdown + per-tool-call mediator
+│   └── cli/                # `aegis` binary: identity / verify / run subcommands
+├── pkg/
+│   ├── manifest/           # F2 Go validator + Decide engine (mirrors Rust semantics)
+│   ├── identity/ffi/       # cgo wrapper for crates/identity
+│   └── version/            # version stamping
+├── cmd/                    # Go binaries (aegis CLI alt-entry, operator scaffold)
+├── tests/
+│   ├── conformance/        # Cross-language Go ↔ Rust agreement battery (cases.json)
+│   └── runtime/            # End-to-end golden-ledger fixture (manifest + script + golden)
 ├── .devcontainer/          # Canonical dev environment (per ADR-017)
 ├── .github/workflows/      # CI: rust, go, schemas, conformance, devbox
-├── docs/adrs/              # Architectural Decision Records
+├── docs/adrs/              # 17 Architectural Decision Records
 ├── Cargo.toml              # Rust workspace
 ├── go.mod                  # Go module
 ├── mise.toml               # Native-install tool versions (devcontainer fallback)
