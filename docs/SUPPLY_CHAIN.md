@@ -74,16 +74,52 @@ Cosign verification on the air-gapped side normally fetches from the Sigstore tr
 
 Either approach is acceptable for compliance evidence; document which one your environment uses in your security-review package.
 
-## Why this is the same pattern the runtime uses for models
+## `aegis pull` (OCI-A, ADR-013)
 
-When `aegis pull <ref>` lands in Phase 1c, it will follow this exact verification flow before loading model weights into memory:
+The `aegis pull <ref>` subcommand wraps the same flow this doc describes — `oras pull` + `cosign verify` + SHA-256 recompute — and refuses to cache an artifact unless every gate passes. Output goes to a content-addressed cache the F1 boot path can find by digest.
 
-1. Pull the model artifact from the configured registry (internal in air-gap, public for development).
-2. Run `cosign verify` against the configured trust root.
-3. Recompute the SHA-256 digest of the GGUF file *and* the chat-template metadata (defends against template-only poisoning per ADR-013).
-4. Refuse to boot if any check fails.
+```bash
+# Reference must be digest-pinned (@sha256:<64 hex>). Tags-only refs
+# are refused so the SVID's bound model digest can't be invalidated
+# by a moving tag.
+aegis pull ghcr.io/tosin2013/aegis-node-devbox@sha256:<digest> \
+  --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/devbox\.yml@.*$' \
+  --keyless-oidc-issuer 'https://token\.actions\.githubusercontent\.com'
+```
 
-The devbox image is a small live demo of that pattern: a signed OCI artifact, verifiable today, in a registry the reviewer's enterprise infrastructure already supports.
+Successful pull prints:
+
+```text
+# verified
+reference: ghcr.io/tosin2013/aegis-node-devbox@sha256:<digest>
+sha256:    <digest>
+blob_path: ~/.cache/aegis/models/<digest>/blob.bin
+```
+
+Refusal cases — every one of these exits non-zero with a typed error:
+
+| Case | Error | Effect |
+|---|---|---|
+| Reference uses a tag instead of `@sha256:` | `UnpinnedRef` | refuse before any network call |
+| `oras` or `cosign` not on `$PATH` | `MissingTool` | refuse before any network call |
+| Cosign signature missing or fails | `CosignVerifyFailed` | refuse, blob not cached |
+| Pulled blob's SHA-256 ≠ pinned digest | `Sha256Mismatch` | refuse, blob discarded |
+| Cached blob corrupted between pulls | `Sha256Mismatch` | refuse, surface tampering |
+
+**Smoke-testing without a model artifact.** Until we publish a Cosign-signed model OCI artifact under `ghcr.io/tosin2013/aegis-node-models`, the only signed thing we publish is the **devbox container image** — and `aegis pull` is intentionally not the right tool for container images (`oras pull` skips Docker-format layers without explicit flags that `pull::pull` deliberately omits, since real model artifacts are single-blob by design).
+
+You can still verify the supply chain is sound — just use `cosign verify` directly against the devbox while we wait on a real model artifact:
+
+```bash
+DIGEST=$(oras manifest fetch --descriptor \
+  ghcr.io/tosin2013/aegis-node-devbox:latest | jq -r .digest)
+
+cosign verify ghcr.io/tosin2013/aegis-node-devbox@"${DIGEST}" \
+  --certificate-identity-regexp '^https://github\.com/tosin2013/aegis-node/\.github/workflows/devbox\.yml@.*$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+```
+
+End-to-end `aegis pull` smoke-testing lands once `models-publish.yml` (per the ADR-021 plan) publishes a real model OCI artifact. GGUF + chat-template-bound verification is OCI-B (#67); operator workflow doc is OCI-C (#68).
 
 ## Reporting integrity issues
 

@@ -21,6 +21,7 @@ use aegis_ledger_writer::{verify_file, VerifyError};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+pub mod pull;
 pub mod run;
 
 #[derive(Debug, Parser)]
@@ -41,6 +42,36 @@ enum Command {
     Verify(VerifyArgs),
     /// Boot a session and run a fixed tool-call script (F0-E).
     Run(run::RunArgs),
+    /// Fetch + verify a model artifact from an OCI registry (ADR-013, F1).
+    Pull(PullArgs),
+}
+
+#[derive(Debug, Args)]
+struct PullArgs {
+    /// Reference to pull. Must include an `@sha256:<64 hex>` pin —
+    /// tags alone are refused so the F1 SVID binding has a stable
+    /// digest to commit to.
+    reference: String,
+
+    /// Override the default cache dir (default:
+    /// `$XDG_CACHE_HOME/aegis/models` or platform equivalent).
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
+
+    /// Path to a cosign public key (PEM). When omitted, keyless
+    /// verification via Sigstore is used.
+    #[arg(long)]
+    cosign_key: Option<PathBuf>,
+
+    /// Expected subject identity on the keyless certificate (regex).
+    /// Strongly recommended in production; defaults to `.*`.
+    #[arg(long)]
+    keyless_identity: Option<String>,
+
+    /// Expected OIDC issuer on the keyless certificate (regex).
+    /// Strongly recommended in production; defaults to `.*`.
+    #[arg(long)]
+    keyless_oidc_issuer: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -113,6 +144,7 @@ pub fn run() -> Result<()> {
         },
         Command::Verify(args) => cmd_verify(args),
         Command::Run(args) => cmd_run(args),
+        Command::Pull(args) => cmd_pull(args),
     }
 }
 
@@ -217,5 +249,25 @@ fn cmd_run(args: run::RunArgs) -> Result<()> {
     if outcome.halted {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+fn cmd_pull(args: PullArgs) -> Result<()> {
+    let cache_dir = match args.cache_dir {
+        Some(d) => d,
+        None => pull::default_cache_dir().context("resolving default cache dir")?,
+    };
+    let cfg = pull::PullConfig {
+        cache_dir,
+        cosign_key: args.cosign_key,
+        keyless_identity: args.keyless_identity,
+        keyless_oidc_issuer: args.keyless_oidc_issuer,
+    };
+    let pulled = pull::pull(&args.reference, &cfg)
+        .with_context(|| format!("pulling and verifying {}", args.reference))?;
+    println!("# verified");
+    println!("reference: {}", pulled.reference.canonical());
+    println!("sha256: {}", pulled.sha256_hex);
+    println!("blob_path: {}", pulled.blob_path.display());
     Ok(())
 }

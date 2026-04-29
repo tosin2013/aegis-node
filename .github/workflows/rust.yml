@@ -20,6 +20,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # oras + cosign are needed by crates/cli/tests/pull_real_image.rs
+      # which pulls the devbox image through the same `pull::pull` code
+      # path operators use (per ADR-013 / OCI-A). Without them, the test
+      # skips quietly with a [skipped] line — installing here is what
+      # turns it into a load-bearing CI signal.
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
       - name: Format check
         run: cargo fmt --all --check
 
