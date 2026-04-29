@@ -22,10 +22,12 @@ use thiserror::Error;
 pub mod file;
 pub mod mtls;
 pub mod tty;
+pub mod web;
 
 pub use file::FileApprovalChannel;
 pub use mtls::MtlsApprovalChannel;
 pub use tty::TtyApprovalChannel;
+pub use web::WebApprovalChannel;
 
 /// One approval request the runtime hands to a channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
