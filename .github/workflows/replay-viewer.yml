@@ -1,0 +1,28 @@
+name: Replay viewer (air-gap guard)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/replay-viewer/**'
+      - '.github/workflows/replay-viewer.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/replay-viewer/**'
+      - '.github/workflows/replay-viewer.yml'
+
+# Per F8 / ADR-010 / issue #62. Enforces the rule that the viewer
+# never reaches the network: no <script src=>, no fetch(), no
+# XMLHttpRequest, no remote <img src>, etc. A regression that violates
+# this fails the workflow on every PR — air-gapped reviewers depend on
+# the property holding.
+
+jobs:
+  airgap:
+    name: ADR-010 air-gap rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run check-airgap.sh
+        run: ./tools/replay-viewer/check-airgap.sh
