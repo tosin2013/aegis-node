@@ -1,23 +1,24 @@
 //! Real-registry round-trip for `aegis pull`.
 //!
-//! Pulls the Aegis-Node devbox image from `ghcr.io/tosin2013/aegis-node-devbox`
-//! (the one signed artifact we publish today, per ADR-017) through the same
-//! `pull::pull` code path operators use. Catches things the fake-tools test
-//! in `tests/pull.rs` can't:
+//! Aspirational: once we publish a real model OCI artifact (the Qwen2.5-1.5B
+//! mirror per the ADR-021 plan in /root/.claude/plans/), this test pulls it
+//! through `pull::pull` against the live Sigstore Rekor + Fulcio. That's
+//! the only signed *OCI artifact* we'll have where `oras pull` behaves
+//! correctly — multi-layer container images (like the devbox) don't work
+//! because `oras pull` skips Docker-format layers without explicit flags
+//! that `pull::pull` doesn't pass (and shouldn't — model artifacts are
+//! single-blob by design).
 //!
-//! - real `oras` against a real registry (TLS, descriptor parsing, auth-anonymous)
-//! - real `cosign verify` against the live Sigstore Rekor + Fulcio
-//! - GHCR's actual response shapes
+//! For now this test is `#[ignore]`d. Un-ignore it after `models-publish.yml`
+//! lands its first artifact at
+//! `ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m`,
+//! and update the constants below to point at that ref + workflow identity.
 //!
-//! Skipped quietly when `oras` or `cosign` aren't on `$PATH`. The CI job in
-//! `.github/workflows/rust.yml` installs both before running this so PRs see
-//! signal; local developers without them get the fake-tools test as their
-//! inner-loop coverage and the `[skipped]` line as a hint to install.
+//! Run on demand:
 //!
-//! Once we publish the demo-program model artifact (ADR-021 / Qwen2.5-1.5B
-//! mirror), we can add a sibling test that pulls *that* and assert the
-//! resulting blob starts with the GGUF magic. For now the devbox image is
-//! the only signed artifact available.
+//! ```bash
+//! cargo test -p aegis-cli --test pull_real_image -- --ignored
+//! ```
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -43,6 +44,7 @@ fn tool_on_path(tool: &str) -> bool {
 }
 
 #[test]
+#[ignore = "needs a published OCI model artifact (not a container image); see ADR-021 plan"]
 fn pull_devbox_image_round_trips_against_real_registry() {
     if !tool_on_path("oras") || !tool_on_path("cosign") {
         eprintln!(

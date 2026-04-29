@@ -106,19 +106,20 @@ Refusal cases — every one of these exits non-zero with a typed error:
 | Pulled blob's SHA-256 ≠ pinned digest | `Sha256Mismatch` | refuse, blob discarded |
 | Cached blob corrupted between pulls | `Sha256Mismatch` | refuse, surface tampering |
 
-**Smoke-testing without a model artifact.** Until we publish a Cosign-signed model artifact under `ghcr.io/tosin2013/aegis-node-models`, the devbox image is the only signed Aegis-Node OCI artifact you can practice the flow against. It's a container image, not a GGUF, but `aegis pull` doesn't care about the bytes — it cares that every gate fires:
+**Smoke-testing without a model artifact.** Until we publish a Cosign-signed model OCI artifact under `ghcr.io/tosin2013/aegis-node-models`, the only signed thing we publish is the **devbox container image** — and `aegis pull` is intentionally not the right tool for container images (`oras pull` skips Docker-format layers without explicit flags that `pull::pull` deliberately omits, since real model artifacts are single-blob by design).
+
+You can still verify the supply chain is sound — just use `cosign verify` directly against the devbox while we wait on a real model artifact:
 
 ```bash
-# Resolve the digest of the latest devbox image:
 DIGEST=$(oras manifest fetch --descriptor \
   ghcr.io/tosin2013/aegis-node-devbox:latest | jq -r .digest)
 
-aegis pull ghcr.io/tosin2013/aegis-node-devbox@"${DIGEST}" \
-  --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/devbox\.yml@.*$' \
-  --keyless-oidc-issuer 'https://token\.actions\.githubusercontent\.com'
+cosign verify ghcr.io/tosin2013/aegis-node-devbox@"${DIGEST}" \
+  --certificate-identity-regexp '^https://github\.com/tosin2013/aegis-node/\.github/workflows/devbox\.yml@.*$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
-GGUF + chat-template-bound verification (defends against template-only poisoning per ADR-013) lands in OCI-B (#67). The model-artifact publishing pipeline + operator workflow doc lands in OCI-C (#68).
+End-to-end `aegis pull` smoke-testing lands once `models-publish.yml` (per the ADR-021 plan) publishes a real model OCI artifact. GGUF + chat-template-bound verification is OCI-B (#67); operator workflow doc is OCI-C (#68).
 
 ## Reporting integrity issues
 
