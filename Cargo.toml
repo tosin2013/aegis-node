@@ -9,6 +9,7 @@ members = [
     "crates/access-log",
     "crates/policy",
     "crates/filesystem-gate",
+    "crates/approval-gate",
 ]
 
 [workspace.package]

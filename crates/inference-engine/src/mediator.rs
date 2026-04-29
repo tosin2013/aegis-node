@@ -28,8 +28,11 @@ use std::process::{Command, Output};
 use aegis_access_log::{
     emit_access, emit_reasoning_step, AccessEvent, AccessType, ReasoningStepEvent,
 };
+use aegis_approval_gate::{ApprovalOutcome, ApprovalRequest, DEFAULT_TIMEOUT};
+use aegis_ledger_writer::{Entry, EntryType};
 use aegis_policy::{check_identity_binding, Decision, NetworkProto};
 use chrono::Utc;
+use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -75,6 +78,8 @@ impl Session {
         self.rebind()?;
         let decision = self.policy().check_filesystem_read(path);
         let resource_uri = file_uri(path);
+        let decision =
+            self.route_through_approval(decision, &resource_uri, "read", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
                 let bytes = fs::read(path)?;
@@ -108,6 +113,8 @@ impl Session {
             .policy()
             .check_filesystem_write(path, now, session_start);
         let resource_uri = file_uri(path);
+        let decision =
+            self.route_through_approval(decision, &resource_uri, "write", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
                 fs::write(path, contents)?;
@@ -140,6 +147,8 @@ impl Session {
             .policy()
             .check_filesystem_delete(path, now, session_start);
         let resource_uri = file_uri(path);
+        let decision =
+            self.route_through_approval(decision, &resource_uri, "delete", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
                 fs::remove_file(path)?;
@@ -165,6 +174,12 @@ impl Session {
         self.rebind()?;
         let decision = self.policy().check_network_outbound(host, port, proto);
         let resource_uri = network_uri(host, port, proto);
+        let decision = self.route_through_approval(
+            decision,
+            &resource_uri,
+            "network_outbound",
+            reasoning_step_id,
+        )?;
         match decision {
             Decision::Allow => {
                 let stream = TcpStream::connect((host, port))?;
@@ -194,6 +209,8 @@ impl Session {
         self.rebind()?;
         let decision = self.policy().check_exec(program);
         let resource_uri = format!("exec://{}", program.display());
+        let decision =
+            self.route_through_approval(decision, &resource_uri, "exec", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
                 let output = Command::new(program).args(args).output()?;
@@ -256,6 +273,206 @@ impl Session {
                 timestamp: Utc::now(),
             },
         )?;
+        Ok(())
+    }
+
+    /// Route a `Decision::RequireApproval` through the configured F3
+    /// channel (TTY / file / future web UI). Emits the
+    /// ApprovalRequest → Granted/Rejected/TimedOut entry pair, returns:
+    ///
+    /// - `Ok(Decision::Allow)` if granted (caller proceeds; will emit Access).
+    /// - `Err(Error::Denied)` if rejected or timed out — already-emitted
+    ///   ApprovalRejected/ApprovalTimedOut entry takes the place of a
+    ///   Violation, since approval-rejection is a legitimate flow per
+    ///   ADR-005, not a security violation.
+    /// - `Ok(decision)` unchanged when the input isn't `RequireApproval`
+    ///   or when no channel is configured (legacy halt-on-RequireApproval
+    ///   behavior preserved for callers that opt out).
+    fn route_through_approval(
+        &mut self,
+        decision: Decision,
+        resource_uri: &str,
+        access_kind: &str,
+        reasoning_step_id: Option<&str>,
+    ) -> Result<Decision> {
+        let summary = match &decision {
+            Decision::RequireApproval { reason } => reason.clone(),
+            _ => return Ok(decision),
+        };
+        if self.approval_channel.is_none() {
+            return Ok(decision);
+        }
+
+        let req = ApprovalRequest {
+            action_summary: summary,
+            resource_uri: resource_uri.to_string(),
+            access_type: access_kind.to_string(),
+            session_id: self.session_id().to_string(),
+            reasoning_step_id: reasoning_step_id.map(str::to_string),
+            timeout: DEFAULT_TIMEOUT,
+        };
+        self.emit_approval_request(&req)?;
+
+        // Take the channel to release the &mut self borrow on
+        // approval_channel for the duration of the call; put it back
+        // after (the channel is reusable across requests).
+        let mut channel = self.approval_channel.take().expect("checked above");
+        let outcome = channel.request_approval(&req);
+        self.approval_channel = Some(channel);
+        let outcome = outcome.map_err(|e| Error::Denied {
+            reason: format!("approval channel: {e}"),
+        })?;
+
+        match outcome {
+            ApprovalOutcome::Granted {
+                approver_identity,
+                decided_at,
+            } => {
+                self.emit_approval_granted(&req, &approver_identity, decided_at)?;
+                Ok(Decision::Allow)
+            }
+            ApprovalOutcome::Rejected {
+                reason,
+                decided_at,
+            } => {
+                self.emit_approval_rejected(&req, &reason, decided_at)?;
+                Err(Error::Denied {
+                    reason: format!("approval rejected: {reason}"),
+                })
+            }
+            ApprovalOutcome::TimedOut { expired_at } => {
+                self.emit_approval_timed_out(&req, expired_at)?;
+                Err(Error::Denied {
+                    reason: "approval timed out".to_string(),
+                })
+            }
+        }
+    }
+
+    fn emit_approval_request(&mut self, req: &ApprovalRequest) -> Result<()> {
+        let agent_hash = self.agent_identity_hash();
+        let session_id = self.session_id().to_string();
+        let mut payload = Map::new();
+        payload.insert(
+            "actionSummary".to_string(),
+            Value::String(req.action_summary.clone()),
+        );
+        payload.insert(
+            "resourceUri".to_string(),
+            Value::String(req.resource_uri.clone()),
+        );
+        payload.insert(
+            "accessType".to_string(),
+            Value::String(req.access_type.clone()),
+        );
+        if let Some(rsid) = &req.reasoning_step_id {
+            payload.insert("reasoningStepId".to_string(), Value::String(rsid.clone()));
+        }
+        payload.insert(
+            "expiresAt".to_string(),
+            Value::String(
+                (Utc::now() + chrono::Duration::from_std(req.timeout).unwrap_or_default())
+                    .to_rfc3339(),
+            ),
+        );
+        self.ledger_writer_mut().append(Entry {
+            session_id,
+            entry_type: EntryType::ApprovalRequest,
+            agent_identity_hash: agent_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    fn emit_approval_granted(
+        &mut self,
+        req: &ApprovalRequest,
+        approver_identity: &str,
+        decided_at: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let agent_hash = self.agent_identity_hash();
+        let session_id = self.session_id().to_string();
+        let mut payload = Map::new();
+        payload.insert(
+            "approverId".to_string(),
+            Value::String(approver_identity.to_string()),
+        );
+        payload.insert("decision".to_string(), Value::String("granted".to_string()));
+        payload.insert(
+            "decidedAt".to_string(),
+            Value::String(decided_at.to_rfc3339()),
+        );
+        if let Some(rsid) = &req.reasoning_step_id {
+            payload.insert("reasoningStepId".to_string(), Value::String(rsid.clone()));
+        }
+        self.ledger_writer_mut().append(Entry {
+            session_id,
+            entry_type: EntryType::ApprovalGranted,
+            agent_identity_hash: agent_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    fn emit_approval_rejected(
+        &mut self,
+        req: &ApprovalRequest,
+        reason: &str,
+        decided_at: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let agent_hash = self.agent_identity_hash();
+        let session_id = self.session_id().to_string();
+        let mut payload = Map::new();
+        payload.insert("decision".to_string(), Value::String("rejected".to_string()));
+        payload.insert(
+            "decidedAt".to_string(),
+            Value::String(decided_at.to_rfc3339()),
+        );
+        payload.insert(
+            "violationReason".to_string(),
+            Value::String(reason.to_string()),
+        );
+        if let Some(rsid) = &req.reasoning_step_id {
+            payload.insert("reasoningStepId".to_string(), Value::String(rsid.clone()));
+        }
+        self.ledger_writer_mut().append(Entry {
+            session_id,
+            entry_type: EntryType::ApprovalRejected,
+            agent_identity_hash: agent_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    fn emit_approval_timed_out(
+        &mut self,
+        req: &ApprovalRequest,
+        expired_at: chrono::DateTime<Utc>,
+    ) -> Result<()> {
+        let agent_hash = self.agent_identity_hash();
+        let session_id = self.session_id().to_string();
+        let mut payload = Map::new();
+        payload.insert(
+            "decision".to_string(),
+            Value::String("timed_out".to_string()),
+        );
+        payload.insert(
+            "decidedAt".to_string(),
+            Value::String(expired_at.to_rfc3339()),
+        );
+        if let Some(rsid) = &req.reasoning_step_id {
+            payload.insert("reasoningStepId".to_string(), Value::String(rsid.clone()));
+        }
+        self.ledger_writer_mut().append(Entry {
+            session_id,
+            entry_type: EntryType::ApprovalTimedOut,
+            agent_identity_hash: agent_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
         Ok(())
     }
 }
