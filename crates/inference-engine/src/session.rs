@@ -41,7 +41,8 @@ pub struct BootConfig {
 
 /// Live agent session: compiled policy, open ledger, issued SVID, the
 /// digest triple bound at boot, and the agent identity hash that flows
-/// into every ledger entry.
+/// into every ledger entry. Paths are retained so the F0-B mediator
+/// can re-hash live bytes on every per-tool-call rebind check.
 pub struct Session {
     policy: Policy,
     ledger: LedgerWriter,
@@ -51,6 +52,9 @@ pub struct Session {
     spiffe_id: SpiffeId,
     agent_identity_hash: [u8; 32],
     session_id: String,
+    pub(crate) manifest_path: PathBuf,
+    pub(crate) model_path: PathBuf,
+    pub(crate) config_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Session {
@@ -129,6 +133,9 @@ impl Session {
             spiffe_id: svid.spiffe_id,
             agent_identity_hash,
             session_id: cfg.session_id,
+            manifest_path: cfg.manifest_path,
+            model_path: cfg.model_path,
+            config_path: cfg.config_path,
         })
     }
 
@@ -179,6 +186,24 @@ impl Session {
     /// need to append entries.
     pub fn ledger_writer_mut(&mut self) -> &mut LedgerWriter {
         &mut self.ledger
+    }
+
+    /// Re-hash the manifest + model + (optional) config files from disk
+    /// and return the live digest triple. Used by the F0-B mediator's
+    /// per-tool-call rebind step. Naive implementation re-reads on
+    /// every call; Phase 2 will cache + invalidate via mtime.
+    pub(crate) fn compute_live_digests(&self) -> Result<DigestTriple> {
+        let model = sha256_file(&self.model_path)?;
+        let manifest = sha256_file(&self.manifest_path)?;
+        let config = match &self.config_path {
+            Some(p) => sha256_file(p)?,
+            None => sha256_bytes(&[]),
+        };
+        Ok(DigestTriple {
+            model: Digest(model),
+            manifest: Digest(manifest),
+            config: Digest(config),
+        })
     }
 }
 

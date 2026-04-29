@@ -24,4 +24,13 @@ pub enum Error {
          likely an aegis-identity bug"
     )]
     SvidSelfCheck { field: String },
+
+    #[error("access-log: {0}")]
+    AccessLog(#[from] aegis_access_log::Error),
+
+    #[error("denied: {reason}")]
+    Denied { reason: String },
+
+    #[error("requires approval: {reason}")]
+    RequireApproval { reason: String },
 }

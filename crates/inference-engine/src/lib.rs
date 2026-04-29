@@ -11,6 +11,7 @@
 //! that point.
 
 pub mod error;
+mod mediator;
 mod session;
 
 pub use error::{Error, Result};

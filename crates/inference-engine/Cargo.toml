@@ -11,6 +11,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+aegis-access-log = { path = "../access-log" }
 aegis-identity = { path = "../identity" }
 aegis-ledger-writer = { path = "../ledger-writer" }
 aegis-policy = { path = "../policy" }
