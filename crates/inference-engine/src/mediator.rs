@@ -315,8 +315,13 @@ impl Session {
 
         // Take the channel to release the &mut self borrow on
         // approval_channel for the duration of the call; put it back
-        // after (the channel is reusable across requests).
-        let mut channel = self.approval_channel.take().expect("checked above");
+        // after (the channel is reusable across requests). The is_none
+        // check above guarantees this branch matches; using a match
+        // instead of expect() keeps clippy::expect_used happy.
+        let mut channel = match self.approval_channel.take() {
+            Some(c) => c,
+            None => return Ok(decision),
+        };
         let outcome = channel.request_approval(&req);
         self.approval_channel = Some(channel);
         let outcome = outcome.map_err(|e| Error::Denied {
