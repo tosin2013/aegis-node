@@ -45,17 +45,17 @@ pub fn canonical_connection_json(meta: &NetworkConnectionMeta) -> Value {
         "port".to_string(),
         Value::Number(serde_json::Number::from(meta.port)),
     );
-    obj.insert(
-        "protocol".to_string(),
-        Value::String(meta.protocol.clone()),
-    );
+    obj.insert("protocol".to_string(), Value::String(meta.protocol.clone()));
     obj.insert(
         "decision".to_string(),
         Value::String(decision_str(meta.decision).to_string()),
     );
     obj.insert(
         "timestamp".to_string(),
-        Value::String(meta.timestamp.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)),
+        Value::String(
+            meta.timestamp
+                .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+        ),
     );
     Value::Object(obj)
 }
@@ -131,7 +131,8 @@ pub(crate) fn emit_network_attestation(session: &mut Session) -> Result<()> {
         .filter(|m| m.decision == NetworkConnectionDecision::Denied)
         .count() as u64;
 
-    let connections_array: Value = Value::Array(log.iter().map(canonical_connection_json).collect());
+    let connections_array: Value =
+        Value::Array(log.iter().map(canonical_connection_json).collect());
     let connections_canonical = serde_json::to_vec(&connections_array).map_err(Error::Serde)?;
     let mut digest_hasher = Sha256::new();
     digest_hasher.update(&connections_canonical);
@@ -168,10 +169,7 @@ pub(crate) fn emit_network_attestation(session: &mut Session) -> Result<()> {
     // Network connections observed list — kept on a separate field so
     // verifiers can independently recompute connectionsDigestHex from
     // the access entries that preceded.
-    summary.insert(
-        "networkConnectionsObserved".to_string(),
-        connections_array,
-    );
+    summary.insert("networkConnectionsObserved".to_string(), connections_array);
 
     let agent_hash = session.agent_identity_hash();
     let session_id = session.session_id().to_string();
