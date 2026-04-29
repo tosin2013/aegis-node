@@ -12,9 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aegis_approval_gate::{
-    ApprovalChannel, ApprovalOutcome, ApprovalRequest, MtlsApprovalChannel,
-};
+use aegis_approval_gate::{ApprovalChannel, ApprovalOutcome, ApprovalRequest, MtlsApprovalChannel};
 use aegis_identity::{Digest, DigestTriple, LocalCa};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
@@ -51,7 +49,9 @@ struct ApprovalParty {
 }
 
 fn issue(ca: &LocalCa, workload: &str, instance: &str) -> ApprovalParty {
-    let svid = ca.issue_svid(workload, instance, ephemeral_digests()).unwrap();
+    let svid = ca
+        .issue_svid(workload, instance, ephemeral_digests())
+        .unwrap();
     let spiffe_uri = svid.spiffe_id.uri();
     ApprovalParty {
         cert_pem: svid.cert_pem,
@@ -135,7 +135,10 @@ fn build_client_config(
         .unwrap()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AcceptAnyServerCert))
-        .with_client_auth_cert(parse_certs(client_cert_pem), parse_private_key(client_key_pem))
+        .with_client_auth_cert(
+            parse_certs(client_cert_pem),
+            parse_private_key(client_key_pem),
+        )
         .unwrap()
 }
 
@@ -183,7 +186,8 @@ fn granted_decision_returns_approver_spiffe_id() {
     .unwrap();
     let addr = channel.local_addr();
 
-    let client_cfg = build_client_config(&ca.root_cert_pem(), &approver.cert_pem, &approver.key_pem);
+    let client_cfg =
+        build_client_config(&ca.root_cert_pem(), &approver.cert_pem, &approver.key_pem);
     let driver = std::thread::spawn(move || {
         rt().block_on(drive_decision(
             addr,
@@ -222,7 +226,8 @@ fn rejected_decision_carries_reason() {
     .unwrap();
     let addr = channel.local_addr();
 
-    let client_cfg = build_client_config(&ca.root_cert_pem(), &approver.cert_pem, &approver.key_pem);
+    let client_cfg =
+        build_client_config(&ca.root_cert_pem(), &approver.cert_pem, &approver.key_pem);
     let driver = std::thread::spawn(move || {
         rt().block_on(drive_decision(
             addr,
@@ -258,7 +263,8 @@ fn unauthorized_spiffe_id_is_ignored_until_timeout() {
     .unwrap();
     let addr = channel.local_addr();
 
-    let intruder_cfg = build_client_config(&ca.root_cert_pem(), &intruder.cert_pem, &intruder.key_pem);
+    let intruder_cfg =
+        build_client_config(&ca.root_cert_pem(), &intruder.cert_pem, &intruder.key_pem);
     let driver = std::thread::spawn(move || {
         // The intruder's mTLS handshake succeeds (cert chains to the CA)
         // but the server should close before sending the request body.

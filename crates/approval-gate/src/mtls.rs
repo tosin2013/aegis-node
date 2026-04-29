@@ -83,9 +83,10 @@ impl MtlsApprovalChannel {
                 .map_err(|e| Error::Channel(format!("add CA cert: {e}")))?;
         }
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
-            .build()
-            .map_err(|e| Error::Channel(format!("client verifier: {e}")))?;
+        let verifier =
+            WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+                .build()
+                .map_err(|e| Error::Channel(format!("client verifier: {e}")))?;
 
         let cfg = ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
@@ -139,7 +140,11 @@ impl ApprovalChannel for MtlsApprovalChannel {
 
         self.runtime.block_on(async move {
             let deadline = req.timeout;
-            match timeout(deadline, accept_loop(listener, acceptor, allowlist, &req_payload)).await
+            match timeout(
+                deadline,
+                accept_loop(listener, acceptor, allowlist, &req_payload),
+            )
+            .await
             {
                 Ok(result) => result,
                 Err(_) => Ok(ApprovalOutcome::TimedOut {
