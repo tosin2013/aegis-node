@@ -44,7 +44,7 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 
 ## Documentation
 
-- **[Architectural Decision Records](docs/adrs/)** — 20 ADRs covering the security primitives, runtime architecture, supply chain, dev environment, agent ↔ tool protocol (MCP), write-grant precedence, and the recorded demo program.
+- **[Architectural Decision Records](docs/adrs/)** — 21 ADRs covering the security primitives, runtime architecture, supply chain, dev environment, agent ↔ tool protocol (MCP), write-grant precedence, the recorded demo program, and HuggingFace-as-upstream model distribution.
 - **[Compatibility Charter](docs/COMPATIBILITY_CHARTER.md)** — what the project promises not to break across versions (manifest, ledger, IPC).
 - **[Supply Chain Verification](docs/SUPPLY_CHAIN.md)** — `cosign verify` / `oras pull` flow for the signed devbox image and (later) model artifacts.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — DCO sign-off, dev workflow, ADR process.
@@ -80,7 +80,7 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 │   └── runtime/            # End-to-end golden-ledger fixture (manifest + script + golden)
 ├── .devcontainer/          # Canonical dev environment (per ADR-017)
 ├── .github/workflows/      # CI: rust, go, schemas, conformance, devbox
-├── docs/adrs/              # 20 Architectural Decision Records
+├── docs/adrs/              # 21 Architectural Decision Records
 ├── Cargo.toml              # Rust workspace
 ├── go.mod                  # Go module
 ├── mise.toml               # Native-install tool versions (devcontainer fallback)

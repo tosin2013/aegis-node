@@ -1,0 +1,173 @@
+name: Publish model OCI artifact
+
+# Per ADR-021 (HuggingFace as canonical upstream; OCI + cosign as trust
+# boundary). Manual-dispatch only: no scheduled runs, no implicit
+# fetches. Each invocation downloads a single GGUF from HuggingFace
+# (commit-pinned), verifies the LFS SHA-256, repackages as a single-
+# blob OCI artifact, pushes to GHCR, and signs via Sigstore keyless
+# tied to this workflow's identity.
+#
+# License gate: only Apache-2.0 / MIT / similarly-permissive models.
+# The workflow itself doesn't enforce this — humans dispatching it
+# review the upstream license first per ADR-021 §"License scope".
+
+on:
+  workflow_dispatch:
+    inputs:
+      hf_repo:
+        description: "HuggingFace repo id (e.g. Qwen/Qwen2.5-1.5B-Instruct-GGUF)"
+        required: true
+        type: string
+      gguf_filename:
+        description: "GGUF filename inside the HF repo (e.g. qwen2.5-1.5b-instruct-q4_k_m.gguf)"
+        required: true
+        type: string
+      hf_revision:
+        description: "HF commit SHA — full 40-char hex, NOT a branch/tag (commit pinning is mandatory for reproducibility)"
+        required: true
+        type: string
+      target_repo:
+        description: "GHCR repo path (defaults to ghcr.io/<owner>/aegis-node-models/<derived-from-filename>)"
+        required: false
+        type: string
+      target_tag:
+        description: "OCI tag for human discoverability (the digest is the load-bearing pin)"
+        required: false
+        default: "latest"
+        type: string
+
+permissions:
+  contents: read
+  packages: write     # GHCR push
+  id-token: write     # cosign keyless via Sigstore Fulcio
+
+jobs:
+  publish:
+    name: HF → OCI → cosign
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate hf_revision is a 40-char commit SHA
+        run: |
+          rev='${{ inputs.hf_revision }}'
+          if [[ ! "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::hf_revision must be a 40-char lowercase hex commit SHA (got '$rev'). Branch/tag refs are refused — they can move." >&2
+            exit 2
+          fi
+
+      - name: Set up Python (for huggingface_hub CLI)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install huggingface_hub CLI
+        run: pip install --no-cache-dir 'huggingface_hub[cli]>=0.32.0'
+
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Compute target ref
+        id: target
+        run: |
+          set -euo pipefail
+          owner="${{ github.repository_owner }}"
+          target_repo='${{ inputs.target_repo }}'
+          if [[ -z "$target_repo" ]]; then
+            base="${{ inputs.gguf_filename }}"
+            base="${base%.gguf}"
+            base="${base,,}"
+            base="${base// /-}"
+            target_repo="ghcr.io/${owner}/aegis-node-models/${base}"
+          fi
+          target_tag='${{ inputs.target_tag }}'
+          echo "ref=${target_repo}:${target_tag}" >> "$GITHUB_OUTPUT"
+          echo "repo=${target_repo}" >> "$GITHUB_OUTPUT"
+          echo "Target: ${target_repo}:${target_tag}"
+
+      - name: Download GGUF from HuggingFace (commit-pinned)
+        id: download
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          cd artifact
+          huggingface-cli download \
+            --revision '${{ inputs.hf_revision }}' \
+            --local-dir . \
+            '${{ inputs.hf_repo }}' \
+            '${{ inputs.gguf_filename }}'
+          echo "path=$(pwd)/${{ inputs.gguf_filename }}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute and record SHA-256 of the downloaded GGUF
+        id: sha
+        run: |
+          set -euo pipefail
+          path='${{ steps.download.outputs.path }}'
+          if [[ ! -f "$path" ]]; then
+            echo "::error::expected file not present at $path" >&2
+            exit 2
+          fi
+          digest=$(sha256sum "$path" | awk '{print $1}')
+          echo "hex=${digest}" >> "$GITHUB_OUTPUT"
+          echo "Computed sha256: ${digest}"
+
+      - name: Push as single-blob OCI artifact
+        id: push
+        env:
+          ORAS_USERNAME: ${{ github.actor }}
+          ORAS_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$ORAS_PASSWORD" | oras login ghcr.io --username "$ORAS_USERNAME" --password-stdin
+
+          ref='${{ steps.target.outputs.ref }}'
+          path='${{ steps.download.outputs.path }}'
+          oras push "$ref" \
+            --artifact-type "application/vnd.aegis-node.model.gguf.v1" \
+            --annotation "org.opencontainers.image.source=https://huggingface.co/${{ inputs.hf_repo }}" \
+            --annotation "org.opencontainers.image.revision=${{ inputs.hf_revision }}" \
+            --annotation "org.opencontainers.image.title=${{ inputs.gguf_filename }}" \
+            --annotation "dev.aegis-node.upstream=huggingface" \
+            --annotation "dev.aegis-node.upstream.repo=${{ inputs.hf_repo }}" \
+            --annotation "dev.aegis-node.upstream.revision=${{ inputs.hf_revision }}" \
+            --annotation "dev.aegis-node.upstream.filename=${{ inputs.gguf_filename }}" \
+            "${path}:application/vnd.aegis-node.model.gguf.v1"
+
+          desc=$(oras manifest fetch --descriptor "$ref")
+          manifest_digest=$(echo "$desc" | jq -r '.digest')
+          echo "manifest_digest=${manifest_digest}" >> "$GITHUB_OUTPUT"
+          echo "Pushed: ${ref}@${manifest_digest}"
+
+      - name: Sign with cosign (Sigstore keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          ref='${{ steps.target.outputs.ref }}'
+          digest='${{ steps.push.outputs.manifest_digest }}'
+          cosign sign "${ref}@${digest}"
+
+      - name: Verify the signature we just produced
+        run: |
+          set -euo pipefail
+          ref='${{ steps.target.outputs.ref }}'
+          digest='${{ steps.push.outputs.manifest_digest }}'
+          cosign verify "${ref}@${digest}" \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/models-publish\.yml@.*$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+      - name: Print pinning info for ADR-020 / SUPPLY_CHAIN.md
+        run: |
+          echo "::notice title=Published OCI artifact::"
+          echo "ref:                ${{ steps.target.outputs.ref }}"
+          echo "manifest_digest:    ${{ steps.push.outputs.manifest_digest }}"
+          echo "blob_sha256:        ${{ steps.sha.outputs.hex }}"
+          echo "hf_repo:            ${{ inputs.hf_repo }}"
+          echo "hf_revision:        ${{ inputs.hf_revision }}"
+          echo "filename:           ${{ inputs.gguf_filename }}"
+          echo
+          echo "Pin in ADR-020 + SUPPLY_CHAIN.md:"
+          echo "  ${{ steps.target.outputs.ref }}@${{ steps.push.outputs.manifest_digest }}"

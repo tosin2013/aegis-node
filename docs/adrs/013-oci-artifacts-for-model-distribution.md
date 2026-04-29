@@ -39,12 +39,27 @@ Aegis-Node packages and distributes models as OCI (Open Container Initiative) ar
 
 The decision aligns with the broader supply-chain security story: SBOMs, Cosign, in-toto attestations, SLSA levels. A reviewer steeped in software supply chain security recognizes the pattern instantly.
 
+## Upstream Sources
+
+This ADR specifies that distribution from Aegis-Node uses OCI + cosign,
+but it took no position on where models *come from* upstream of the
+signed OCI artifact. [ADR-021](021-huggingface-as-upstream-oci-as-trust-boundary.md)
+fills in that gap:
+
+- **HuggingFace is the canonical upstream** for community models.
+  Vendor-direct (e.g. Microsoft for Phi) and self-trained are also
+  acceptable upstreams.
+- **The trust boundary stays here** (signed OCI artifact), not at the
+  upstream. The runtime never reaches HuggingFace; a mirror pipeline
+  (`.github/workflows/models-publish.yml`) bridges HF → OCI outside
+  the runtime.
+
 ## Implementation Plan
 
 1. Define the OCI artifact layout for GGUF models: manifest, layer media types, annotations.
-2. Implement `aegis pull <ref>` using an embedded OCI client (preferred) or a shell-out to `oras` (fallback for first iteration).
-3. Implement Cosign signature verification at load time; refuse to boot unsigned or invalid-signature models.
-4. Document the operator workflow: download upstream model, scan, sign with org Cosign key, push to internal registry.
+2. Implement `aegis pull <ref>` using an embedded OCI client (preferred) or a shell-out to `oras` (fallback for first iteration). — shipped under [OCI-A / PR #79 / issue #66](https://github.com/tosin2013/aegis-node/issues/66).
+3. Implement Cosign signature verification at load time; refuse to boot unsigned or invalid-signature models. — shipped with OCI-A.
+4. Document the operator workflow: download upstream model, scan, sign with org Cosign key, push to internal registry. — see [ADR-021](021-huggingface-as-upstream-oci-as-trust-boundary.md) and OCI-C ([#68](https://github.com/tosin2013/aegis-node/issues/68)).
 5. CI test: a tampered GGUF must fail boot with a clear error pointing to the signature mismatch.
 
 ## Related PRD Sections
