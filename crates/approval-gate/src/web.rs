@@ -28,7 +28,6 @@
 //! Anything else returns 404. Any unauthenticated request returns 401.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -337,5 +336,3 @@ fn generate_token() -> String {
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
-
-use std::io::Read;
