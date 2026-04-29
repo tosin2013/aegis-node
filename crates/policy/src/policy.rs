@@ -378,7 +378,7 @@ fn parse_iso8601_duration(s: &str) -> Option<Duration> {
 
     let mut t = time_part;
     while !t.is_empty() {
-        let unit_pos = t.find(|c: char| matches!(c, 'H' | 'M' | 'S'))?;
+        let unit_pos = t.find(['H', 'M', 'S'])?;
         let n: i64 = t[..unit_pos].parse().ok()?;
         if n < 0 {
             return None;
