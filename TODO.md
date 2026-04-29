@@ -24,18 +24,26 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 - [ ] **P2** [ADR-015] Document phase exit criteria publicly so the design-partner review milestone is unambiguous.
 - [ ] **P2** [ADR-016] Wire DCO sign-off check into CI (currently maintainer-verified at PR review).
 
-## Phase 1a — Core Security Primitives (target: v0.5.0, 2026-07-20)
+## Phase 1a — Core Security Primitives (✅ shipped: [v0.5.0](https://github.com/tosin2013/aegis-node/releases/tag/v0.5.0), 2026-04-29 — 12 weeks ahead of 2026-07-19 due date)
 
-- [ ] **P0** [ADR-003, F1] Implement built-in lightweight CA for local CLI (file-backed, single-tenant). SPIFFE ID format `spiffe://<trust-domain>/agent/<workload-name>/<instance>`.
-- [ ] **P0** [ADR-003, F1] Bind identity to `(model digest, manifest digest, configuration digest)` triple; halt execution on any digest change.
-- [ ] **P0** [ADR-004, F2] Implement strict YAML manifest parser with line/column errors; reject any tool call not covered by the manifest.
-- [ ] **P0** [ADR-004, F2] Wire enforcement at every Rust syscall boundary (file open, network connect, exec). Conformance test against Go-side validator.
-- [ ] **P0** [ADR-011, F9] Implement append-only ledger writer in Rust (no delete/update API surface); SHA-256 chain with genesis-zero start.
-- [ ] **P0** [ADR-011, F9] Implement `aegis verify <ledger-file>` walk-and-verify CLI with non-zero exit on integrity failure.
-- [ ] **P0** [ADR-006, F4] Emit structured access log entries at every I/O syscall: agent identity, resource URI, type, bytes, ns timestamp, session ID, F5 reasoning-step ID. Atomic writes only.
-- [ ] **P1** [ADR-004, F2] Ship official manifest templates: `read-only-research`, `single-write-target`, `network-egress-allowlist`, `air-gapped`.
-- [ ] **P1** [ADR-011, F9] Add RFC 3161 TSA notarization integration (optional, at session close).
-- [ ] **P2** [ADR-006] Ship reference Splunk + Elastic dashboards for ingestion.
+- [x] **P0** [ADR-003, F1] Implement built-in lightweight CA for local CLI (file-backed, single-tenant). SPIFFE ID format `spiffe://<trust-domain>/agent/<workload-name>/<instance>`. — PR #8 (issue #2)
+- [x] **P0** [ADR-003, F1] Bind identity to `(model digest, manifest digest, configuration digest)` triple; halt execution on any digest change. — PR #18 (issue #4)
+- [x] **P0** [ADR-004, F2] Implement strict YAML manifest parser with line/column errors; reject any tool call not covered by the manifest. — PR #12 (issue #6)
+- [x] **P0** [ADR-004, F2] Wire enforcement at every Rust syscall boundary (file open, network connect, exec). Conformance test against Go-side validator. — PRs #13 (decision engine + network gate), #19 (filesystem gate), #21 (exec_grants schema), #20 (cross-language conformance harness), #31 (runtime mediator) — issues #7, #14, #15, #16
+- [x] **P0** [ADR-011, F9] Implement append-only ledger writer in Rust (no delete/update API surface); SHA-256 chain with genesis-zero start. — PR #9 (issue #1) + golden-pinned root in PR #11
+- [x] **P0** [ADR-011, F9] Implement `aegis verify <ledger-file>` walk-and-verify CLI with non-zero exit on integrity failure. — PR #11 (issue #5)
+- [x] **P0** [ADR-006, F4] Emit structured access log entries at every I/O syscall: agent identity, resource URI, type, bytes, ns timestamp, session ID, F5 reasoning-step ID. Atomic writes only. — PR #10 (typed emitter, issue #3) + PR #31 (mediator wires the emitter at every tool call)
+- [ ] **P1** [ADR-004, F2] Ship official manifest templates: `read-only-research`, `single-write-target`, `network-egress-allowlist`, `air-gapped`. — *partial*: read-only-research, single-write-target, agent-with-exec landed in `schemas/manifest/v1/examples/`; allowlist + air-gapped variants pending.
+- [ ] **P1** [ADR-011, F9] Add RFC 3161 TSA notarization integration (optional, at session close). — deferred.
+- [ ] **P2** [ADR-006] Ship reference Splunk + Elastic dashboards for ingestion. — deferred.
+
+### Bonus shipped under v0.5.0 (not in original Phase 1a plan)
+
+- [x] **P0** F0 runtime — Session boot/shutdown lifecycle (PR #30, issue #24).
+- [x] **P0** F0 runtime — Per-tool-call mediator (PR #31, issue #25). Closes #3 + #7 by transitivity.
+- [x] **P0** F0 runtime — `aegis run` CLI subcommand (PR #32, issue #28).
+- [x] **P0** F0 runtime — End-to-end golden-ledger conformance (PR #33, issue #29).
+- [x] **P1** F1 — Go-callable FFI surface for in-process SVID issuance (PR #22, issue #17).
 
 ## Phase 1b — Reasoning + Approval (target: v0.8.0, 2026-08-31)
 
@@ -54,7 +62,7 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 ## Phase 1c — Tooling and Replay (target: v0.9.0, 2026-10-05)
 
 - [ ] **P0** [ADR-012, F10] Implement `aegis validate` schema validator + linter (start with ~10 high-value rules: overly broad paths, wildcard tools, missing approval gates on writes, unjustified network grants, etc.).
-- [ ] **P0** [ADR-012, F10] Implement composition + inheritance: `extends:` links with parent-permission enforcement (child cannot exceed parent).
+- [x] **P0** [ADR-012, F10] Implement composition + inheritance: `extends:` links with parent-permission enforcement (child cannot exceed parent). — landed early under v0.5.0: PR #12 (issue #6) implements the resolver in `pkg/manifest/extends.go` with narrowing checks for fs paths, network policies, apis, write_grants, exec_grants, and approval classes.
 - [ ] **P0** [ADR-012, F10] Output formats: GitHub Actions annotations, JUnit XML, plain text, JSON. Generate human-readable policy summary report.
 - [ ] **P0** [ADR-010, F8] Build offline single-file HTML replay viewer (no `fetch()`/CDN/external calls). Synchronized timeline of F5 reasoning + F4 access + F3 approval events.
 - [ ] **P0** [ADR-010, F8] Add F9 chain verification on viewer load; broken chain → prominent integrity warning.
