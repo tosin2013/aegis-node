@@ -85,7 +85,8 @@ tools:
     let outcome = execute(args).unwrap();
 
     assert!(!outcome.halted, "halt_reason: {:?}", outcome.halt_reason);
-    assert_eq!(outcome.entry_count, 4); // start + 2 access + end
+    // start + 2 access + network_attestation + end
+    assert_eq!(outcome.entry_count, 5);
     assert_eq!(outcome.session_id, "session-clean");
     assert!(outcome.ledger_path.exists());
 }
