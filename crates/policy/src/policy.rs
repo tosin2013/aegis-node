@@ -362,7 +362,15 @@ fn grant_time_valid(grant: &WriteGrant, now: DateTime<Utc>, session_start: DateT
 fn parse_iso8601_duration(s: &str) -> Option<Duration> {
     let s = s.strip_prefix('P')?;
     let (date_part, time_part) = match s.find('T') {
-        Some(idx) => (&s[..idx], &s[idx + 1..]),
+        // ISO-8601 requires at least one component after the `T`
+        // designator — "P1DT" without time components is malformed.
+        Some(idx) => {
+            let time = &s[idx + 1..];
+            if time.is_empty() {
+                return None;
+            }
+            (&s[..idx], time)
+        }
         None => (s, ""),
     };
 
