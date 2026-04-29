@@ -252,10 +252,7 @@ fn reasoning_step_carries_all_jsonld_terms() {
             step_id: fixed_step_id(),
             input: "user asked: summarize Q1 results".to_string(),
             reasoning: "I need to read the source CSV before summarizing.".to_string(),
-            tools_considered: vec![
-                "filesystem.read".to_string(),
-                "search_index".to_string(),
-            ],
+            tools_considered: vec!["filesystem.read".to_string(), "search_index".to_string()],
             tool_selected: Some("filesystem.read".to_string()),
             timestamp: ts(),
         },
@@ -272,7 +269,10 @@ fn reasoning_step_carries_all_jsonld_terms() {
     assert_eq!(v["entryType"], "reasoning_step");
     assert_eq!(v["reasoningStepId"], fixed_step_id().to_string());
     assert_eq!(v["input"], "user asked: summarize Q1 results");
-    assert_eq!(v["reasoning"], "I need to read the source CSV before summarizing.");
+    assert_eq!(
+        v["reasoning"],
+        "I need to read the source CSV before summarizing."
+    );
     assert_eq!(v["toolsConsidered"][0], "filesystem.read");
     assert_eq!(v["toolsConsidered"][1], "search_index");
     assert_eq!(v["toolSelected"], "filesystem.read");

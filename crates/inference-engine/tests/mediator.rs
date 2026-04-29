@@ -364,7 +364,8 @@ tools:
         .unwrap();
     let step_id_str = step_id.to_string();
 
-    s.mediate_filesystem_read(&target, Some(&step_id_str)).unwrap();
+    s.mediate_filesystem_read(&target, Some(&step_id_str))
+        .unwrap();
     s.shutdown().unwrap();
 
     let entries = read_lines(&ledger);
