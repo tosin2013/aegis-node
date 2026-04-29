@@ -37,9 +37,10 @@ type Identity struct {
 }
 
 type Tools struct {
-	Filesystem *Filesystem `yaml:"filesystem,omitempty" json:"filesystem,omitempty"`
-	Network    *Network    `yaml:"network,omitempty" json:"network,omitempty"`
-	APIs       []APIGrant  `yaml:"apis,omitempty" json:"apis,omitempty"`
+	Filesystem *Filesystem      `yaml:"filesystem,omitempty" json:"filesystem,omitempty"`
+	Network    *Network         `yaml:"network,omitempty" json:"network,omitempty"`
+	APIs       []APIGrant       `yaml:"apis,omitempty" json:"apis,omitempty"`
+	MCP        []MCPServerGrant `yaml:"mcp,omitempty" json:"mcp,omitempty"`
 }
 
 type Filesystem struct {
@@ -78,6 +79,16 @@ type NetworkAllowEntry struct {
 type APIGrant struct {
 	Name    string   `yaml:"name" json:"name"`
 	Methods []string `yaml:"methods,omitempty" json:"methods,omitempty"`
+}
+
+// MCPServerGrant is one entry in `tools.mcp` (per ADR-018). The agent may
+// connect to `ServerURI` and invoke any tool name listed in `AllowedTools`.
+// Closed-by-default: an MCP tool call against a server not listed here is
+// denied + emits a Violation per F2.
+type MCPServerGrant struct {
+	ServerName   string   `yaml:"server_name" json:"server_name"`
+	ServerURI    string   `yaml:"server_uri" json:"server_uri"`
+	AllowedTools []string `yaml:"allowed_tools" json:"allowed_tools"`
 }
 
 type WriteGrant struct {

@@ -58,6 +58,8 @@ pub struct Tools {
     pub network: Option<Network>,
     #[serde(default)]
     pub apis: Vec<ApiGrant>,
+    #[serde(default)]
+    pub mcp: Vec<McpServerGrant>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -118,6 +120,17 @@ pub struct ApiGrant {
     pub name: String,
     #[serde(default)]
     pub methods: Vec<String>,
+}
+
+/// One entry in `tools.mcp` (per ADR-018). The agent may connect to
+/// `server_uri` and invoke any tool name in `allowed_tools`. Closed by
+/// default — an MCP tool call against a server not listed here is denied.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpServerGrant {
+    pub server_name: String,
+    pub server_uri: String,
+    pub allowed_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

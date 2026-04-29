@@ -69,6 +69,12 @@
           "type": "array",
           "items": { "$ref": "#/definitions/apiGrant" },
           "uniqueItems": true
+        },
+        "mcp": {
+          "type": "array",
+          "description": "MCP servers the agent may connect to (per ADR-018). Closed-by-default — without an entry, MCP tool calls are denied.",
+          "items": { "$ref": "#/definitions/mcpServerGrant" },
+          "uniqueItems": true
         }
       }
     },
@@ -165,6 +171,25 @@
             "type": "string",
             "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
           },
+          "uniqueItems": true
+        }
+      }
+    },
+    "mcpServerGrant": {
+      "type": "object",
+      "required": ["server_name", "server_uri", "allowed_tools"],
+      "additionalProperties": false,
+      "properties": {
+        "server_name": { "type": "string", "minLength": 1 },
+        "server_uri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where the MCP server lives. Examples: stdio:/path/to/binary, https://host:port, spiffe://td/agent/..."
+        },
+        "allowed_tools": {
+          "type": "array",
+          "description": "Names of MCP tools from this server the agent may invoke. Closed-by-default; empty array means none.",
+          "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         }
       }
