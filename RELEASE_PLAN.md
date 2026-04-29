@@ -19,7 +19,7 @@
 | **v0.1.0** | Foundations: schemas frozen, IPC contract committed, monorepo + CI scaffolded | 2026-05-25 | ADR-002, ADR-004, ADR-011, ADR-015 / Phase 0 |
 | **v0.5.0** | Core Security Primitives: F1 identity, F2 manifest enforcement, F9 ledger writer + verify, F4 access log emitter | 2026-07-20 | ADR-003, ADR-004, ADR-006, ADR-011 / Phase 1a |
 | **v0.8.0** | Reasoning + Approval: F5 trajectory, F3 approval gate, F6 network deny, F7 read-only default | 2026-08-31 | ADR-005, ADR-007, ADR-008, ADR-009 / Phase 1b |
-| **v0.9.0** | Tooling + Replay: F10 validator, F8 replay viewer, OCI pull + Cosign, llama.cpp FFI | 2026-10-05 | ADR-010, ADR-012, ADR-013, ADR-014 / Phase 1c |
+| **v0.9.0** | Tooling + Replay: F10 validator, F8 replay viewer, OCI pull + Cosign, llama.cpp FFI, MCP client | 2026-10-05 | ADR-010, ADR-012, ADR-013, ADR-014, ADR-018 / Phase 1c |
 | **v1.0.0** | **Phase 1 GA — Security Review Milestone:** end-to-end conformance suite, auditor evidence package, design-partner review passed, Apache 2.0 community release | **2026-11-02** | ADR-001, ADR-016 / Phase 1 GA |
 | **v2.0.0** | Kubernetes Runtime: Operator + CRDs, SPIRE attestation, GPU backends (vLLM/TGI/KServe), persistent ledger | 2027-01-25 | ADR-002, ADR-015 / Phase 2 |
 | **v3.0.0** | OpenShift Enterprise Runtime: SCCs, disconnected install, GitOps, automated CMMC/FedRAMP exports | 2027-04-19 | ADR-015 / Phase 3 |
@@ -73,7 +73,7 @@ Phase 1b: F5 pre-execution trajectory recorder, F3 human approval gate (CLI + lo
 - **Status:** pushed (#4)
 - **Due:** 2026-10-05
 
-Phase 1c: F10 policy-as-code validator (aegis validate) with composition + linter, F8 deterministic offline single-file HTML replay viewer, OCI artifact pull + Cosign verification (aegis pull), llama.cpp Rust FFI binding integrated with Backend trait. Maps to ADRs 010, 012, 013, 014.
+Phase 1c: F10 policy-as-code validator (aegis validate) with composition + linter, F8 deterministic offline single-file HTML replay viewer, OCI artifact pull + Cosign verification (aegis pull), llama.cpp Rust FFI binding integrated with Backend trait, MCP client adoption per ADR-018 (manifest gains optional `tools.mcp[]`; F5 reasoning entries carry MCP tool names). Maps to ADRs 010, 012, 013, 014, 018.
 
 ### v1.0.0 — Phase 1 GA / Security Review Milestone
 <!-- milestone-id: v1-0-0-phase-1-ga-security-review-milestone -->

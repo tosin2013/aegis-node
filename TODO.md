@@ -61,6 +61,7 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 
 ## Phase 1c — Tooling and Replay (target: v0.9.0, 2026-10-05)
 
+- [ ] **P0** [ADR-018, F2/F5] Adopt MCP as the agent-to-tool protocol per ADR-018. Manifest gains optional `tools.mcp[]` (closed-by-default allowlist of `{server_name, server_uri, allowed_tools}`); mediator gains `mediate_mcp_tool_call` that routes side-effects through existing `mediate_*` methods; F5 reasoning entries' `toolsConsidered`/`toolSelected` carry MCP tool names; cross-language conformance battery extended.
 - [ ] **P0** [ADR-012, F10] Implement `aegis validate` schema validator + linter (start with ~10 high-value rules: overly broad paths, wildcard tools, missing approval gates on writes, unjustified network grants, etc.).
 - [x] **P0** [ADR-012, F10] Implement composition + inheritance: `extends:` links with parent-permission enforcement (child cannot exceed parent). — landed early under v0.5.0: PR #12 (issue #6) implements the resolver in `pkg/manifest/extends.go` with narrowing checks for fs paths, network policies, apis, write_grants, exec_grants, and approval classes.
 - [ ] **P0** [ADR-012, F10] Output formats: GitHub Actions annotations, JUnit XML, plain text, JSON. Generate human-readable policy summary report.
