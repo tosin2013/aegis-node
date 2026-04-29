@@ -53,6 +53,18 @@ pub struct Session {
     session_id: String,
 }
 
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // LedgerWriter holds a BufWriter<File> that isn't Debug; surface
+        // only the operator-meaningful fields.
+        f.debug_struct("Session")
+            .field("session_id", &self.session_id)
+            .field("spiffe_id", &self.spiffe_id)
+            .field("bound_digests", &self.bound_digests)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Session {
     /// Run the boot sequence end-to-end. On any failure the partial
     /// ledger is dropped (LedgerWriter cleans up via close-on-drop).
