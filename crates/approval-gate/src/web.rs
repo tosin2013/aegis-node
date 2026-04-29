@@ -111,8 +111,8 @@ impl WebApprovalChannel {
             )));
         }
 
-        let server = Server::http(parsed)
-            .map_err(|e| Error::Channel(format!("bind {parsed}: {e}")))?;
+        let server =
+            Server::http(parsed).map_err(|e| Error::Channel(format!("bind {parsed}: {e}")))?;
         let bound = match server.server_addr() {
             tiny_http::ListenAddr::IP(addr) => addr,
             _ => return Err(Error::Channel("non-IP listener".to_string())),
@@ -191,10 +191,9 @@ impl ApprovalChannel for WebApprovalChannel {
                             approver_identity: approver,
                             decided_at,
                         },
-                        RecordedDecision::Rejected {
-                            reason,
-                            decided_at,
-                        } => ApprovalOutcome::Rejected { reason, decided_at },
+                        RecordedDecision::Rejected { reason, decided_at } => {
+                            ApprovalOutcome::Rejected { reason, decided_at }
+                        }
                     });
                 }
             }
