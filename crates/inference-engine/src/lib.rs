@@ -10,9 +10,10 @@
 //! lands in F0-B (issue #25); this crate gains a `Mediator` type at
 //! that point.
 
+pub mod attestation;
 pub mod error;
 mod mediator;
 mod session;
 
 pub use error::{Error, Result};
-pub use session::{BootConfig, Session};
+pub use session::{BootConfig, NetworkConnectionDecision, NetworkConnectionMeta, Session};

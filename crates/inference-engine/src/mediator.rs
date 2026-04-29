@@ -164,6 +164,10 @@ impl Session {
     }
 
     /// Outbound TCP connect with full mediation. Returns the open stream.
+    /// Every call appends one entry to the F6 attestation accumulator
+    /// (issue #37) so `shutdown` can summarize the session's network
+    /// activity, regardless of whether the connection was allowed,
+    /// denied, or routed through approval.
     pub fn mediate_network_connect(
         &mut self,
         host: &str,
@@ -172,15 +176,39 @@ impl Session {
         reasoning_step_id: Option<&str>,
     ) -> Result<TcpStream> {
         self.rebind()?;
-        let decision = self.policy().check_network_outbound(host, port, proto);
+        let initial = self.policy().check_network_outbound(host, port, proto);
+        let was_approval_required = matches!(initial, Decision::RequireApproval { .. });
         let resource_uri = network_uri(host, port, proto);
-        let decision = self.route_through_approval(
-            decision,
+        let routed = self.route_through_approval(
+            initial,
             &resource_uri,
             "network_outbound",
             reasoning_step_id,
-        )?;
-        match decision {
+        );
+        let proto_str = match proto {
+            NetworkProto::Http => "http",
+            NetworkProto::Https => "https",
+            NetworkProto::Udp => "udp",
+            NetworkProto::Tcp | NetworkProto::Any => "tcp",
+        };
+
+        let routed = match routed {
+            Ok(d) => d,
+            Err(e) => {
+                // Approval rejected/timed out — record as denied.
+                self.network_log
+                    .push(crate::session::NetworkConnectionMeta {
+                        host: host.to_string(),
+                        port,
+                        protocol: proto_str.to_string(),
+                        decision: crate::session::NetworkConnectionDecision::Denied,
+                        timestamp: Utc::now(),
+                    });
+                return Err(e);
+            }
+        };
+
+        match routed {
             Decision::Allow => {
                 let stream = TcpStream::connect((host, port))?;
                 self.emit_success(
@@ -189,13 +217,45 @@ impl Session {
                     0,
                     reasoning_step_id,
                 )?;
+                let kind = if was_approval_required {
+                    crate::session::NetworkConnectionDecision::Approved
+                } else {
+                    crate::session::NetworkConnectionDecision::Allowed
+                };
+                self.network_log
+                    .push(crate::session::NetworkConnectionMeta {
+                        host: host.to_string(),
+                        port,
+                        protocol: proto_str.to_string(),
+                        decision: kind,
+                        timestamp: Utc::now(),
+                    });
                 Ok(stream)
             }
             Decision::Deny { reason } => {
                 self.emit_deny(&resource_uri, "network_outbound", &reason)?;
+                self.network_log
+                    .push(crate::session::NetworkConnectionMeta {
+                        host: host.to_string(),
+                        port,
+                        protocol: proto_str.to_string(),
+                        decision: crate::session::NetworkConnectionDecision::Denied,
+                        timestamp: Utc::now(),
+                    });
                 Err(Error::Denied { reason })
             }
-            Decision::RequireApproval { reason } => Err(Error::RequireApproval { reason }),
+            Decision::RequireApproval { reason } => {
+                // Legacy halt path — channel not configured.
+                self.network_log
+                    .push(crate::session::NetworkConnectionMeta {
+                        host: host.to_string(),
+                        port,
+                        protocol: proto_str.to_string(),
+                        decision: crate::session::NetworkConnectionDecision::Denied,
+                        timestamp: Utc::now(),
+                    });
+                Err(Error::RequireApproval { reason })
+            }
         }
     }
 

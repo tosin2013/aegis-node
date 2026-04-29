@@ -76,7 +76,8 @@ tools:
 
     let root = s.shutdown().unwrap();
     let summary = verify_file(&ledger).unwrap();
-    assert_eq!(summary.entry_count, 3);
+    // start + access + network_attestation (always emitted, F6) + session_end
+    assert_eq!(summary.entry_count, 4);
     assert_eq!(summary.root_hash_hex, hex::encode(root));
 
     let entries = read_lines(&ledger);
@@ -85,7 +86,8 @@ tools:
     assert_eq!(entries[1]["accessType"], "read");
     assert_eq!(entries[1]["bytesAccessed"], 8);
     assert_eq!(entries[1]["reasoningStepId"], "rstep-001");
-    assert_eq!(entries[2]["entryType"], "session_end");
+    assert_eq!(entries[2]["entryType"], "network_attestation");
+    assert_eq!(entries[3]["entryType"], "session_end");
 }
 
 #[test]
@@ -110,11 +112,12 @@ tools:
     s.shutdown().unwrap();
 
     let entries = read_lines(&ledger);
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 4);
     assert_eq!(entries[0]["entryType"], "session_start");
     assert_eq!(entries[1]["entryType"], "violation");
     assert_eq!(entries[1]["accessType"], "read");
-    assert_eq!(entries[2]["entryType"], "session_end");
+    assert_eq!(entries[2]["entryType"], "network_attestation");
+    assert_eq!(entries[3]["entryType"], "session_end");
 }
 
 #[test]
@@ -146,9 +149,13 @@ write_grants:
     s.shutdown().unwrap();
 
     let entries = read_lines(&ledger);
-    assert_eq!(entries.len(), 2, "no violation, no access");
+    // start + network_attestation (zero connections) + end. No violation,
+    // no access — RequireApproval halted before any operation ran.
+    assert_eq!(entries.len(), 3);
     assert_eq!(entries[0]["entryType"], "session_start");
-    assert_eq!(entries[1]["entryType"], "session_end");
+    assert_eq!(entries[1]["entryType"], "network_attestation");
+    assert_eq!(entries[1]["totalConnections"], 0);
+    assert_eq!(entries[2]["entryType"], "session_end");
 }
 
 #[test]
@@ -192,13 +199,18 @@ tools:
 
     s.shutdown().unwrap();
     let entries = read_lines(&ledger);
-    assert_eq!(entries.len(), 3);
+    // start + access + network_attestation + end
+    assert_eq!(entries.len(), 4);
     assert_eq!(entries[1]["entryType"], "access");
     assert_eq!(entries[1]["accessType"], "network_outbound");
     assert_eq!(
         entries[1]["resourceUri"].as_str().unwrap(),
         format!("tcp://127.0.0.1:{port}")
     );
+    assert_eq!(entries[2]["entryType"], "network_attestation");
+    assert_eq!(entries[2]["totalConnections"], 1);
+    assert_eq!(entries[2]["allowedCount"], 1);
+    assert_eq!(entries[3]["entryType"], "session_end");
 }
 
 #[test]
@@ -221,9 +233,11 @@ tools: {}
     s.shutdown().unwrap();
 
     let entries = read_lines(&ledger);
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 4);
     assert_eq!(entries[1]["entryType"], "violation");
     assert_eq!(entries[1]["accessType"], "exec");
+    assert_eq!(entries[2]["entryType"], "network_attestation");
+    assert_eq!(entries[3]["entryType"], "session_end");
 }
 
 #[test]
@@ -254,14 +268,16 @@ tools:
     assert!(matches!(err, Error::Policy(_)), "got {err:?}");
     s.shutdown().unwrap();
 
-    // session_start, then the rebind violation, then session_end.
+    // session_start, rebind violation, network_attestation, session_end.
     let entries = read_lines(&ledger);
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 4);
     assert_eq!(entries[1]["entryType"], "violation");
     assert!(entries[1]["violationReason"]
         .as_str()
         .unwrap()
         .contains("model"));
+    assert_eq!(entries[2]["entryType"], "network_attestation");
+    assert_eq!(entries[3]["entryType"], "session_end");
 }
 
 #[test]
@@ -318,11 +334,12 @@ write_grants:
         kinds,
         vec![
             "session_start",
-            "access",    // r1: read
-            "access",    // r2: write
-            "access",    // r3: delete
-            "violation", // r4: denied read
-            "access",    // r5: second write
+            "access",              // r1: read
+            "access",              // r2: write
+            "access",              // r3: delete
+            "violation",           // r4: denied read
+            "access",              // r5: second write
+            "network_attestation", // F6 — always emitted before session_end
             "session_end",
         ]
     );
@@ -369,12 +386,13 @@ tools:
     s.shutdown().unwrap();
 
     let entries = read_lines(&ledger);
-    // session_start, reasoning_step, access, session_end
-    assert_eq!(entries.len(), 4);
+    // session_start, reasoning_step, access, network_attestation, session_end
+    assert_eq!(entries.len(), 5);
     assert_eq!(entries[0]["entryType"], "session_start");
     assert_eq!(entries[1]["entryType"], "reasoning_step");
     assert_eq!(entries[2]["entryType"], "access");
-    assert_eq!(entries[3]["entryType"], "session_end");
+    assert_eq!(entries[3]["entryType"], "network_attestation");
+    assert_eq!(entries[4]["entryType"], "session_end");
 
     // Correlation invariant.
     assert_eq!(
@@ -443,6 +461,7 @@ fn approval_granted_via_file_channel_proceeds_with_full_entry_sequence() {
             "approval_request",
             "approval_granted",
             "access",
+            "network_attestation",
             "session_end"
         ]
     );
@@ -489,6 +508,7 @@ fn approval_rejected_via_file_channel_skips_violation_and_returns_denied() {
             "session_start",
             "approval_request",
             "approval_rejected",
+            "network_attestation",
             "session_end"
         ]
     );
@@ -564,5 +584,141 @@ fn no_channel_preserves_legacy_halt_on_require_approval() {
         .map(|e| e["entryType"].as_str().unwrap())
         .collect();
     // Legacy: nothing approval-related in the ledger; no violation either.
-    assert_eq!(kinds, vec!["session_start", "session_end"]);
+    // F6 attestation always lands before session_end.
+    assert_eq!(
+        kinds,
+        vec!["session_start", "network_attestation", "session_end"]
+    );
+}
+
+// ---------- F6 end-of-session network attestation (issue #37) ----------
+
+#[test]
+fn three_connection_session_attests_with_correct_counts() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        // Accept two short connections, drop the third before reply.
+        for _ in 0..2 {
+            if let Ok((mut s, _)) = listener.accept() {
+                let mut buf = [0u8; 4];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(b"ok\n");
+            }
+        }
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+    let yaml = format!(
+        r#"schemaVersion: "1"
+agent: {{ name: "m", version: "1.0.0" }}
+identity: {{ spiffeId: "spiffe://mediator.local/agent/research/inst-1" }}
+tools:
+  network:
+    outbound:
+      allowlist:
+        - host: "127.0.0.1"
+          port: {port}
+          protocol: "tcp"
+"#
+    );
+    let (mut s, ledger) = boot(dir.path(), ca_dir.path(), "session-3conn", &yaml);
+
+    // Two allowed connects + one denied (wrong port).
+    let _ = s
+        .mediate_network_connect("127.0.0.1", port, NetworkProto::Tcp, None)
+        .unwrap();
+    let _ = s
+        .mediate_network_connect("127.0.0.1", port, NetworkProto::Tcp, None)
+        .unwrap();
+    let denied = s
+        .mediate_network_connect("127.0.0.1", port + 1, NetworkProto::Tcp, None)
+        .unwrap_err();
+    assert!(matches!(denied, Error::Denied { .. }));
+
+    let _ = server.join();
+    s.shutdown().unwrap();
+
+    let entries = read_lines(&ledger);
+    let attestation = entries
+        .iter()
+        .find(|e| e["entryType"] == "network_attestation")
+        .expect("attestation entry present");
+    assert_eq!(attestation["totalConnections"], 3);
+    assert_eq!(attestation["allowedCount"], 2);
+    assert_eq!(attestation["approvedCount"], 0);
+    assert_eq!(attestation["deniedCount"], 1);
+    assert_eq!(
+        attestation["networkConnectionsObserved"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert!(attestation["signatureHex"].as_str().unwrap().len() == 64);
+    assert!(attestation["connectionsDigestHex"].as_str().unwrap().len() == 64);
+}
+
+#[test]
+fn zero_connection_session_still_emits_attestation() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+    let yaml = r#"schemaVersion: "1"
+agent: { name: "m", version: "1.0.0" }
+identity: { spiffeId: "spiffe://mediator.local/agent/research/inst-1" }
+tools: {}
+"#;
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "session-0conn", yaml);
+    s.shutdown().unwrap();
+
+    let entries = read_lines(&ledger);
+    let attestation = entries
+        .iter()
+        .find(|e| e["entryType"] == "network_attestation")
+        .expect("attestation entry MUST be present even on zero-connection runs");
+    assert_eq!(attestation["totalConnections"], 0);
+    assert_eq!(attestation["allowedCount"], 0);
+    assert_eq!(attestation["approvedCount"], 0);
+    assert_eq!(attestation["deniedCount"], 0);
+}
+
+#[test]
+fn attestation_signature_verifies_and_breaks_on_tamper() {
+    use aegis_inference_engine::attestation::verify_signature;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+    let yaml = r#"schemaVersion: "1"
+agent: { name: "m", version: "1.0.0" }
+identity: { spiffeId: "spiffe://mediator.local/agent/research/inst-1" }
+tools: {}
+"#;
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "session-attest-sig", yaml);
+    let key_pem = s.key_pem().to_string();
+    s.shutdown().unwrap();
+
+    let entries = read_lines(&ledger);
+    let attestation = entries
+        .iter()
+        .find(|e| e["entryType"] == "network_attestation")
+        .unwrap()
+        .clone();
+
+    // Native: signature verifies against the SVID PEM the session held.
+    assert!(
+        verify_signature(&key_pem, &attestation),
+        "attestation signature must verify against the SVID's private key"
+    );
+
+    // Tampered: flip a count, signature must fail.
+    let mut tampered = attestation.clone();
+    tampered["totalConnections"] = serde_json::json!(99);
+    assert!(
+        !verify_signature(&key_pem, &tampered),
+        "tampered attestation must fail signature verification"
+    );
 }
