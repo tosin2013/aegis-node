@@ -11,7 +11,18 @@
 use std::path::{Path, PathBuf};
 
 use aegis_policy::{Decision, NetworkProto, Policy};
+use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
+
+/// Default clock for cases that don't pin one. Sessions started one
+/// minute before "now" — far inside any reasonable duration window so
+/// pre-#38 fixtures keep behaving as if grants were unbounded.
+fn default_now() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 4, 29, 10, 1, 0).unwrap()
+}
+fn default_session_start() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap()
+}
 
 const CASES_PATH: &str = "../../tests/conformance/cases.json";
 
@@ -37,9 +48,17 @@ enum Query {
     },
     FilesystemWrite {
         resource_uri: String,
+        #[serde(default)]
+        now: Option<DateTime<Utc>>,
+        #[serde(default)]
+        session_start: Option<DateTime<Utc>>,
     },
     FilesystemDelete {
         resource_uri: String,
+        #[serde(default)]
+        now: Option<DateTime<Utc>>,
+        #[serde(default)]
+        session_start: Option<DateTime<Utc>>,
     },
     NetworkOutbound {
         host: String,
@@ -113,12 +132,24 @@ fn conformance_rust_side() {
             Query::FilesystemRead { resource_uri } => {
                 policy.check_filesystem_read(Path::new(resource_uri))
             }
-            Query::FilesystemWrite { resource_uri } => {
-                policy.check_filesystem_write(Path::new(resource_uri))
-            }
-            Query::FilesystemDelete { resource_uri } => {
-                policy.check_filesystem_delete(Path::new(resource_uri))
-            }
+            Query::FilesystemWrite {
+                resource_uri,
+                now,
+                session_start,
+            } => policy.check_filesystem_write(
+                Path::new(resource_uri),
+                now.unwrap_or_else(default_now),
+                session_start.unwrap_or_else(default_session_start),
+            ),
+            Query::FilesystemDelete {
+                resource_uri,
+                now,
+                session_start,
+            } => policy.check_filesystem_delete(
+                Path::new(resource_uri),
+                now.unwrap_or_else(default_now),
+                session_start.unwrap_or_else(default_session_start),
+            ),
             Query::NetworkOutbound {
                 host,
                 port,

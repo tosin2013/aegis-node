@@ -7,6 +7,7 @@ use std::io::Read;
 use aegis_filesystem_gate::{Error, GateContext};
 use aegis_ledger_writer::LedgerWriter;
 use aegis_policy::Policy;
+use chrono::Utc;
 use serde_json::Value;
 
 const AGENT_HASH: [u8; 32] = [0xEEu8; 32];
@@ -61,7 +62,7 @@ fn read_inside_grant_succeeds() {
 
     let p = policy_for(&[dir.path().to_str().unwrap()], &[], &[]);
     let (mut writer, _ledger) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
 
     let bytes = gate.read(&target).unwrap();
     assert_eq!(bytes, b"hello");
@@ -77,7 +78,7 @@ fn read_outside_grant_denies_and_writes_violation() {
     let p = policy_for(&["/granted-but-empty"], &[], &[]);
     let (mut writer, ledger_path) = fresh_writer(dir.path());
     {
-        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
         let err = gate.read(&outside).unwrap_err();
         assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
     }
@@ -97,7 +98,7 @@ fn write_inside_grant_succeeds() {
 
     let p = policy_for(&[], &[dir.path().to_str().unwrap()], &[]);
     let (mut writer, _) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
 
     gate.write(&target, b"payload").unwrap();
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "payload");
@@ -110,7 +111,7 @@ fn write_outside_grant_denies_and_writes_violation() {
     let (mut writer, ledger_path) = fresh_writer(dir.path());
     let outside = dir.path().join("nope.txt");
     {
-        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
         let err = gate.write(&outside, b"x").unwrap_err();
         assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
     }
@@ -128,7 +129,7 @@ fn delete_via_write_grant_succeeds() {
 
     let p = policy_for(&[], &[], &[target.to_str().unwrap()]);
     let (mut writer, _) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
 
     gate.remove_file(&target).unwrap();
     assert!(!target.exists());
@@ -148,7 +149,7 @@ fn delete_without_grant_denies_and_writes_violation() {
     );
     let (mut writer, ledger_path) = fresh_writer(dir.path());
     {
-        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
         let err = gate.remove_file(&target).unwrap_err();
         assert!(matches!(err, Error::Denied { .. }));
         assert!(target.exists(), "file must not be deleted on Deny");
@@ -171,7 +172,7 @@ fn rename_requires_delete_on_src_and_write_on_dst() {
     let p = policy_for(&[], &[dir.path().to_str().unwrap()], &[]);
     let (mut writer, ledger_path) = fresh_writer(dir.path());
     {
-        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+        let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
         let err = gate.rename(&src, &dst).unwrap_err();
         assert!(matches!(err, Error::Denied { .. }));
         assert!(src.exists());
@@ -196,7 +197,7 @@ fn rename_succeeds_when_both_endpoints_granted() {
         &[src.to_str().unwrap()],
     );
     let (mut writer, _) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
 
     gate.rename(&src, &dst).unwrap();
     assert!(!src.exists());
@@ -229,7 +230,7 @@ write_grants:
     let policy = Policy::from_yaml_bytes(yaml.as_bytes()).unwrap();
     let (mut writer, ledger_path) = fresh_writer(dir.path());
     {
-        let mut gate = GateContext::new(&policy, &mut writer, AGENT_HASH);
+        let mut gate = GateContext::new(&policy, &mut writer, AGENT_HASH, Utc::now());
         let err = gate.write(&target, b"x").unwrap_err();
         assert!(matches!(err, Error::RequireApproval { .. }), "got {err:?}");
     }
@@ -247,7 +248,7 @@ fn open_read_returns_a_real_file_handle() {
 
     let p = policy_for(&[dir.path().to_str().unwrap()], &[], &[]);
     let (mut writer, _) = fresh_writer(dir.path());
-    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH);
+    let mut gate = GateContext::new(&p, &mut writer, AGENT_HASH, Utc::now());
 
     let mut f = gate.open_read(&target).unwrap();
     let mut buf = String::new();

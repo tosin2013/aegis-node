@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use aegis_ledger_writer::LedgerWriter;
 use aegis_policy::{emit_violation, Decision, Policy, ViolationEvent};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -40,13 +40,15 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Bundles the things every filesystem operation needs: the compiled
-/// policy, the ledger writer (for violation entries on Deny), and the
-/// agent identity hash that authored the operation. Hold one per
-/// session; pass `&mut self` into each call.
+/// policy, the ledger writer (for violation entries on Deny), the
+/// agent identity hash, and the session start anchor for time-bounded
+/// write_grants (per F7 / issue #38). Hold one per session; pass
+/// `&mut self` into each call.
 pub struct GateContext<'p, 'w> {
     policy: &'p Policy,
     writer: &'w mut LedgerWriter,
     agent_identity_hash: [u8; 32],
+    session_start: DateTime<Utc>,
 }
 
 impl<'p, 'w> GateContext<'p, 'w> {
@@ -54,11 +56,13 @@ impl<'p, 'w> GateContext<'p, 'w> {
         policy: &'p Policy,
         writer: &'w mut LedgerWriter,
         agent_identity_hash: [u8; 32],
+        session_start: DateTime<Utc>,
     ) -> Self {
         Self {
             policy,
             writer,
             agent_identity_hash,
+            session_start,
         }
     }
 
@@ -127,10 +131,16 @@ impl<'p, 'w> GateContext<'p, 'w> {
     }
 
     fn gate(&mut self, path: &Path, kind: AccessKind) -> Result<()> {
+        let now = Utc::now();
         let decision = match kind {
             AccessKind::Read => self.policy.check_filesystem_read(path),
-            AccessKind::Write => self.policy.check_filesystem_write(path),
-            AccessKind::Delete => self.policy.check_filesystem_delete(path),
+            AccessKind::Write => self
+                .policy
+                .check_filesystem_write(path, now, self.session_start),
+            AccessKind::Delete => {
+                self.policy
+                    .check_filesystem_delete(path, now, self.session_start)
+            }
         };
         match decision {
             Decision::Allow => Ok(()),

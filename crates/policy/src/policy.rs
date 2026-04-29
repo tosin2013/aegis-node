@@ -3,6 +3,8 @@
 
 use std::path::Path;
 
+use chrono::{DateTime, Duration, Utc};
+
 use crate::decision::{Decision, NetworkProto};
 use crate::error::{Error, Result};
 use crate::manifest::{
@@ -66,8 +68,20 @@ impl Policy {
     /// grant exists OR `tools.filesystem.write` covers the path. If the
     /// grant requires approval, returns `RequireApproval`; if the manifest
     /// also lists `any_write` in `approval_required_for`, same result.
-    pub fn check_filesystem_write(&self, path: &Path) -> Decision {
-        if let Some(g) = self.find_write_grant(path, WriteAction::Write) {
+    ///
+    /// `now` and `session_start` are consulted against `write_grant.duration`
+    /// and `expires_at` (per F7 / ADR-009): a grant is valid only if both
+    /// time bounds (where present) are still in window. Grants with no
+    /// time fields are treated as eternal (current behavior pre-#38).
+    /// NTP skew during a session can cause early/late expiry — short
+    /// sessions are the documented mitigation.
+    pub fn check_filesystem_write(
+        &self,
+        path: &Path,
+        now: DateTime<Utc>,
+        session_start: DateTime<Utc>,
+    ) -> Decision {
+        if let Some(g) = self.find_write_grant(path, WriteAction::Write, now, session_start) {
             return self.write_decision(path, g, WriteAction::Write);
         }
         let covered = self
@@ -92,8 +106,14 @@ impl Policy {
 
     /// Filesystem delete: only allowed via a write grant whose `actions`
     /// includes `delete`. `approval_required_for: [any_delete]` upgrades.
-    pub fn check_filesystem_delete(&self, path: &Path) -> Decision {
-        if let Some(g) = self.find_write_grant(path, WriteAction::Delete) {
+    /// Time-bounded enforcement matches `check_filesystem_write`.
+    pub fn check_filesystem_delete(
+        &self,
+        path: &Path,
+        now: DateTime<Utc>,
+        session_start: DateTime<Utc>,
+    ) -> Decision {
+        if let Some(g) = self.find_write_grant(path, WriteAction::Delete, now, session_start) {
             return self.write_decision(path, g, WriteAction::Delete);
         }
         Decision::deny(format!(
@@ -159,12 +179,17 @@ impl Policy {
         )
     }
 
-    fn find_write_grant(&self, path: &Path, want: WriteAction) -> Option<&WriteGrant> {
+    fn find_write_grant(
+        &self,
+        path: &Path,
+        want: WriteAction,
+        now: DateTime<Utc>,
+        session_start: DateTime<Utc>,
+    ) -> Option<&WriteGrant> {
         let p = path.to_string_lossy();
-        self.manifest
-            .write_grants
-            .iter()
-            .find(|g| g.resource == p && g.actions.contains(&want))
+        self.manifest.write_grants.iter().find(|g| {
+            g.resource == p && g.actions.contains(&want) && grant_time_valid(g, now, session_start)
+        })
     }
 
     fn write_decision(&self, path: &Path, g: &WriteGrant, action: WriteAction) -> Decision {
@@ -292,5 +317,115 @@ fn proto_compatible(allowed: NetworkProtocol, actual: NetworkProto) -> bool {
         // "https" should not match a callsite that says "tcp" because the
         // semantic intent differs.
         _ => false,
+    }
+}
+
+/// Returns true iff the grant's time bounds (if any) are still in window.
+/// `expires_at` is an absolute wall-clock cut-off (RFC 3339); `duration`
+/// is relative to `session_start` (ISO-8601 form). Both must hold when
+/// both are present (logical AND — most restrictive wins).
+///
+/// Malformed values are treated as invalid → grant is filtered out.
+/// Closed-by-default semantics: an unparseable bound never accidentally
+/// allows the operation.
+fn grant_time_valid(grant: &WriteGrant, now: DateTime<Utc>, session_start: DateTime<Utc>) -> bool {
+    if let Some(ref expires) = grant.expires_at {
+        match expires.parse::<DateTime<Utc>>() {
+            Ok(exp) => {
+                if now >= exp {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    if let Some(ref dur_str) = grant.duration {
+        match parse_iso8601_duration(dur_str) {
+            Some(dur) => {
+                let elapsed = now - session_start;
+                if elapsed >= dur {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Parse an ISO-8601 duration of the form `P[<n>D][T[<n>H][<n>M][<n>S]]`
+/// into [`chrono::Duration`]. Integer values only; no fractional seconds,
+/// weeks, months, or years (those rarely appear in audit policies and
+/// add ambiguity around calendar arithmetic).
+///
+/// Examples that parse: `PT1H`, `PT30M`, `P1D`, `P1DT12H`, `PT45S`.
+fn parse_iso8601_duration(s: &str) -> Option<Duration> {
+    let s = s.strip_prefix('P')?;
+    let (date_part, time_part) = match s.find('T') {
+        // ISO-8601 requires at least one component after the `T`
+        // designator — "P1DT" without time components is malformed.
+        Some(idx) => {
+            let time = &s[idx + 1..];
+            if time.is_empty() {
+                return None;
+            }
+            (&s[..idx], time)
+        }
+        None => (s, ""),
+    };
+
+    let mut total = Duration::zero();
+
+    if !date_part.is_empty() {
+        let n: i64 = date_part.strip_suffix('D')?.parse().ok()?;
+        if n < 0 {
+            return None;
+        }
+        total = total.checked_add(&Duration::days(n))?;
+    }
+
+    let mut t = time_part;
+    while !t.is_empty() {
+        let unit_pos = t.find(['H', 'M', 'S'])?;
+        let n: i64 = t[..unit_pos].parse().ok()?;
+        if n < 0 {
+            return None;
+        }
+        let unit = t.as_bytes()[unit_pos];
+        let increment = match unit {
+            b'H' => Duration::hours(n),
+            b'M' => Duration::minutes(n),
+            b'S' => Duration::seconds(n),
+            _ => return None,
+        };
+        total = total.checked_add(&increment)?;
+        t = &t[unit_pos + 1..];
+    }
+
+    Some(total)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod time_tests {
+    use super::*;
+
+    #[test]
+    fn iso8601_duration_examples() {
+        assert_eq!(parse_iso8601_duration("PT1H"), Some(Duration::hours(1)));
+        assert_eq!(parse_iso8601_duration("PT30M"), Some(Duration::minutes(30)));
+        assert_eq!(parse_iso8601_duration("PT45S"), Some(Duration::seconds(45)));
+        assert_eq!(parse_iso8601_duration("P1D"), Some(Duration::days(1)));
+        assert_eq!(parse_iso8601_duration("P1DT12H"), Some(Duration::hours(36)),);
+        assert_eq!(
+            parse_iso8601_duration("PT1H30M"),
+            Some(Duration::minutes(90)),
+        );
+        assert_eq!(parse_iso8601_duration("PT0S"), Some(Duration::zero()));
+
+        assert!(parse_iso8601_duration("").is_none());
+        assert!(parse_iso8601_duration("1H").is_none());
+        assert!(parse_iso8601_duration("PT1X").is_none());
+        assert!(parse_iso8601_duration("P1DT").is_none()); // T present but empty
     }
 }

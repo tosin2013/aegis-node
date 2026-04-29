@@ -3,7 +3,9 @@ package manifest
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // DecisionKind mirrors aegis_policy::Decision in Rust. The cross-language
@@ -44,12 +46,20 @@ const (
 
 // Query is one I/O attempt described abstractly so both Go and Rust
 // engines can evaluate it without invoking the underlying syscall.
+//
+// Now and SessionStart are consulted for time-bounded write_grants
+// (per F7 / issue #38). Zero values mean "no clock anchor available";
+// in that case write_grants with `duration` or `expires_at` are treated
+// as unbound (current behavior pre-#38 — required for back-compat with
+// fixtures written before the clock fields existed).
 type Query struct {
-	Kind        QueryKind `json:"kind"`
-	ResourceURI string    `json:"resource_uri,omitempty"`
-	Host        string    `json:"host,omitempty"`
-	Port        int       `json:"port,omitempty"`
-	Protocol    string    `json:"protocol,omitempty"`
+	Kind         QueryKind `json:"kind"`
+	ResourceURI  string    `json:"resource_uri,omitempty"`
+	Host         string    `json:"host,omitempty"`
+	Port         int       `json:"port,omitempty"`
+	Protocol     string    `json:"protocol,omitempty"`
+	Now          time.Time `json:"now,omitempty"`
+	SessionStart time.Time `json:"session_start,omitempty"`
 }
 
 // Decide answers a Query against `m`. Closed-by-default: silence is
@@ -62,9 +72,9 @@ func (m *Manifest) Decide(q Query) Decision {
 	case QueryFilesystemRead:
 		return m.decideFsRead(q.ResourceURI)
 	case QueryFilesystemWrite:
-		return m.decideFsWrite(q.ResourceURI)
+		return m.decideFsWrite(q.ResourceURI, q.Now, q.SessionStart)
 	case QueryFilesystemDelete:
-		return m.decideFsDelete(q.ResourceURI)
+		return m.decideFsDelete(q.ResourceURI, q.Now, q.SessionStart)
 	case QueryNetworkOutbound:
 		return m.decideNetwork(true, q.Host, q.Port, q.Protocol)
 	case QueryNetworkInbound:
@@ -87,8 +97,8 @@ func (m *Manifest) decideFsRead(uri string) Decision {
 	return allowDecision()
 }
 
-func (m *Manifest) decideFsWrite(uri string) Decision {
-	if g := m.findWriteGrantFor(uri, ActionWrite); g != nil {
+func (m *Manifest) decideFsWrite(uri string, now, sessionStart time.Time) Decision {
+	if g := m.findWriteGrantFor(uri, ActionWrite, now, sessionStart); g != nil {
 		return m.writeGrantDecision(uri, g, ActionWrite)
 	}
 	var paths []string
@@ -102,8 +112,8 @@ func (m *Manifest) decideFsWrite(uri string) Decision {
 	return denyDecision(fmt.Sprintf("filesystem write of %s not granted by manifest", uri))
 }
 
-func (m *Manifest) decideFsDelete(uri string) Decision {
-	if g := m.findWriteGrantFor(uri, ActionDelete); g != nil {
+func (m *Manifest) decideFsDelete(uri string, now, sessionStart time.Time) Decision {
+	if g := m.findWriteGrantFor(uri, ActionDelete, now, sessionStart); g != nil {
 		return m.writeGrantDecision(uri, g, ActionDelete)
 	}
 	return denyDecision(fmt.Sprintf("filesystem delete of %s not granted by any write_grant", uri))
@@ -200,19 +210,123 @@ const (
 // interop without changing types.go signatures.
 type WriteAction string
 
-func (m *Manifest) findWriteGrantFor(uri string, action WriteAction) *WriteGrant {
+func (m *Manifest) findWriteGrantFor(
+	uri string,
+	action WriteAction,
+	now, sessionStart time.Time,
+) *WriteGrant {
 	for i := range m.WriteGrants {
 		g := &m.WriteGrants[i]
 		if g.Resource != uri {
 			continue
 		}
+		hasAction := false
 		for _, a := range g.Actions {
 			if a == string(action) {
-				return g
+				hasAction = true
+				break
 			}
 		}
+		if !hasAction {
+			continue
+		}
+		if !grantTimeValid(g, now, sessionStart) {
+			continue
+		}
+		return g
 	}
 	return nil
+}
+
+// grantTimeValid mirrors aegis_policy::policy::grant_time_valid in Rust:
+// expires_at is an absolute cut-off (RFC 3339); duration is relative to
+// session_start (ISO-8601). Both must hold when both are present.
+//
+// If `now` or `sessionStart` are zero values, time bounds are skipped —
+// callers without a clock anchor see pre-#38 behavior. Real callers
+// (the F0 mediator) always pass real timestamps.
+func grantTimeValid(g *WriteGrant, now, sessionStart time.Time) bool {
+	if now.IsZero() {
+		return true
+	}
+	if g.ExpiresAt != "" {
+		exp, err := time.Parse(time.RFC3339, g.ExpiresAt)
+		if err != nil {
+			return false
+		}
+		if !now.Before(exp) {
+			return false
+		}
+	}
+	if g.Duration != "" {
+		dur, ok := parseISO8601Duration(g.Duration)
+		if !ok {
+			return false
+		}
+		if sessionStart.IsZero() {
+			return true
+		}
+		if now.Sub(sessionStart) >= dur {
+			return false
+		}
+	}
+	return true
+}
+
+// parseISO8601Duration accepts the form `P[<n>D][T[<n>H][<n>M][<n>S]]`
+// with integer components. Mirrors the Rust parser. No fractional
+// seconds, weeks, months, or years.
+func parseISO8601Duration(s string) (time.Duration, bool) {
+	if !strings.HasPrefix(s, "P") {
+		return 0, false
+	}
+	s = s[1:]
+
+	var datePart, timePart string
+	if idx := strings.Index(s, "T"); idx >= 0 {
+		datePart = s[:idx]
+		timePart = s[idx+1:]
+		if timePart == "" {
+			// "P1DT" with empty time-part is malformed.
+			return 0, false
+		}
+	} else {
+		datePart = s
+	}
+
+	var total time.Duration
+	if datePart != "" {
+		if !strings.HasSuffix(datePart, "D") {
+			return 0, false
+		}
+		n, err := strconv.Atoi(datePart[:len(datePart)-1])
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		total += time.Duration(n) * 24 * time.Hour
+	}
+
+	for timePart != "" {
+		idx := strings.IndexAny(timePart, "HMS")
+		if idx < 0 {
+			return 0, false
+		}
+		n, err := strconv.Atoi(timePart[:idx])
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		switch timePart[idx] {
+		case 'H':
+			total += time.Duration(n) * time.Hour
+		case 'M':
+			total += time.Duration(n) * time.Minute
+		case 'S':
+			total += time.Duration(n) * time.Second
+		}
+		timePart = timePart[idx+1:]
+	}
+
+	return total, true
 }
 
 func (m *Manifest) writeGrantDecision(uri string, g *WriteGrant, action WriteAction) Decision {

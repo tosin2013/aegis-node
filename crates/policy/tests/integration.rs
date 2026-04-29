@@ -6,8 +6,18 @@ use std::path::Path;
 
 use aegis_ledger_writer::{EntryType, LedgerWriter};
 use aegis_policy::{emit_violation, NetworkProto, Policy, ViolationEvent};
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
+
+/// Fixed clock used by the v0.5.0 tests that don't care about
+/// time-bounded write_grants. Sessions started one minute before "now"
+/// — far inside any reasonable duration window.
+fn t_now() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 4, 29, 10, 1, 0).unwrap()
+}
+fn t_session_start() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap()
+}
 
 fn read_only_research() -> Policy {
     Policy::from_yaml_file(Path::new(
@@ -52,10 +62,10 @@ fn read_only_manifest_denies_paths_outside_grants() {
 fn read_only_manifest_denies_all_writes() {
     let p = read_only_research();
     assert!(p
-        .check_filesystem_write(Path::new("/data/reports/x"))
+        .check_filesystem_write(Path::new("/data/reports/x"), t_now(), t_session_start())
         .is_deny());
     assert!(p
-        .check_filesystem_delete(Path::new("/data/reports/x"))
+        .check_filesystem_delete(Path::new("/data/reports/x"), t_now(), t_session_start())
         .is_deny());
 }
 
@@ -74,7 +84,11 @@ fn read_only_manifest_denies_network() {
 fn write_grant_with_approval_returns_approval() {
     let p = single_write_target();
     // The write_grant explicitly sets approval_required: true.
-    let dec = p.check_filesystem_write(Path::new("/data/output/daily-report.md"));
+    let dec = p.check_filesystem_write(
+        Path::new("/data/output/daily-report.md"),
+        t_now(),
+        t_session_start(),
+    );
     assert!(dec.is_approval(), "got {dec:?}");
 }
 
@@ -82,7 +96,11 @@ fn write_grant_with_approval_returns_approval() {
 fn write_outside_grant_is_denied() {
     let p = single_write_target();
     assert!(p
-        .check_filesystem_write(Path::new("/data/output/other.md"))
+        .check_filesystem_write(
+            Path::new("/data/output/other.md"),
+            t_now(),
+            t_session_start()
+        )
         .is_deny());
 }
 
@@ -101,7 +119,7 @@ tools:
 approval_required_for: ["any_write"]
 "#;
     let p = Policy::from_yaml_bytes(yaml.as_bytes()).unwrap();
-    let dec = p.check_filesystem_write(Path::new("/tmp/scratch"));
+    let dec = p.check_filesystem_write(Path::new("/tmp/scratch"), t_now(), t_session_start());
     assert!(dec.is_approval(), "got {dec:?}");
 }
 
