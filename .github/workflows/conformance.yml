@@ -33,3 +33,10 @@ jobs:
 
       - name: Rust conformance
         run: cargo test -p aegis-policy --test conformance -- --nocapture
+
+      - name: mTLS cross-language conformance
+        # Spawns the Go cmd/approver-bot from a Rust integration test
+        # and asserts the approver SPIFFE ID is recorded in the Granted
+        # outcome on the Rust side. See crates/approval-gate/tests/
+        # mtls_conformance.rs.
+        run: cargo test -p aegis-approval-gate --test mtls_conformance -- --nocapture
