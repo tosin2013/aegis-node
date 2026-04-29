@@ -23,12 +23,7 @@ fn init_ca(dir: &Path) {
     LocalCa::init(dir, TRUST_DOMAIN).unwrap();
 }
 
-fn boot(
-    dir: &Path,
-    ca_dir: &Path,
-    session_id: &str,
-    manifest_yaml: &str,
-) -> (Session, PathBuf) {
+fn boot(dir: &Path, ca_dir: &Path, session_id: &str, manifest_yaml: &str) -> (Session, PathBuf) {
     let manifest_path = dir.join("manifest.yaml");
     let model_path = dir.join("model.gguf");
     let ledger_path = dir.join("ledger.jsonl");
@@ -74,7 +69,9 @@ tools:
     );
     let (mut s, ledger) = boot(dir.path(), ca_dir.path(), "session-fs-read", &yaml);
 
-    let bytes = s.mediate_filesystem_read(&target, Some("rstep-001")).unwrap();
+    let bytes = s
+        .mediate_filesystem_read(&target, Some("rstep-001"))
+        .unwrap();
     assert_eq!(bytes, b"contents");
 
     let root = s.shutdown().unwrap();
