@@ -150,6 +150,59 @@ tools:
 	}
 }
 
+// Per ADR-018 / issue #46. Loads the agent-with-mcp example manifest
+// (research agent + Anthropic filesystem MCP server, read-only subset).
+// Catches drift if the example is hand-edited into a malformed shape.
+func TestLoadAgentWithMCPExample(t *testing.T) {
+	m, err := Load("../../schemas/manifest/v1/examples/agent-with-mcp.manifest.yaml")
+	if err != nil {
+		t.Fatalf("load example: %v", err)
+	}
+	if len(m.Tools.MCP) != 1 {
+		t.Fatalf("tools.mcp: got %d entries, want 1", len(m.Tools.MCP))
+	}
+	server := m.Tools.MCP[0]
+	if server.ServerName != "filesystem" {
+		t.Errorf("server_name: %q", server.ServerName)
+	}
+	if server.ServerURI != "stdio:/usr/local/bin/mcp-server-filesystem" {
+		t.Errorf("server_uri: %q", server.ServerURI)
+	}
+	if len(server.AllowedTools) == 0 {
+		t.Fatal("allowed_tools must be non-empty for this fixture")
+	}
+	// Read-only invariant: none of the listed tools may be a writer.
+	writers := map[string]bool{
+		"write_file":       true,
+		"edit_file":        true,
+		"move_file":        true,
+		"create_directory": true,
+	}
+	for _, tool := range server.AllowedTools {
+		if writers[tool] {
+			t.Errorf("agent-with-mcp must stay read-only; %q is a writer", tool)
+		}
+	}
+
+	// Decide() agreement with the new tools.mcp[] semantics.
+	allowed := m.Decide(Query{
+		Kind:      QueryMCPToolCall,
+		MCPServer: "filesystem",
+		MCPTool:   "read_text_file",
+	})
+	if allowed.Kind != DecisionAllow {
+		t.Errorf("read_text_file should be allowed: got %q", allowed.Kind)
+	}
+	denied := m.Decide(Query{
+		Kind:      QueryMCPToolCall,
+		MCPServer: "filesystem",
+		MCPTool:   "write_file",
+	})
+	if denied.Kind != DecisionDeny {
+		t.Errorf("write_file should be denied: got %q", denied.Kind)
+	}
+}
+
 // Per ADR-018 / issue #43. Parses a valid `tools.mcp[]` example.
 func TestMCPServerGrantParses(t *testing.T) {
 	yaml := `schemaVersion: "1"
