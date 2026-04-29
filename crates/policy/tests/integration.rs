@@ -247,6 +247,27 @@ fn emit_violation_appends_violation_entry() {
     let _ = EntryType::Violation; // sanity
 }
 
+/// Per ADR-018 / issue #46. Loads the agent-with-mcp example (research
+/// agent + Anthropic filesystem MCP server, read-only subset) and
+/// asserts the engine agrees with the manifest's intent.
+#[test]
+fn agent_with_mcp_example_enforces_read_only_subset() {
+    let p = Policy::from_yaml_file(Path::new(
+        "../../schemas/manifest/v1/examples/agent-with-mcp.manifest.yaml",
+    ))
+    .unwrap();
+
+    // Listed tool: read_text_file => allow.
+    assert!(p.check_mcp_tool("filesystem", "read_text_file").is_allow());
+
+    // Same server, but write_file is deliberately omitted from
+    // allowed_tools — the example is read-only.
+    assert!(p.check_mcp_tool("filesystem", "write_file").is_deny());
+
+    // Server not listed => deny regardless of tool name.
+    assert!(p.check_mcp_tool("evil-server", "read_text_file").is_deny());
+}
+
 /// Per ADR-018 / issue #43. Parses a valid `tools.mcp[]` example.
 #[test]
 fn mcp_server_grant_parses() {

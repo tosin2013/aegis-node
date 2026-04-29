@@ -1,0 +1,59 @@
+# Example Permission Manifest — research agent that uses the official
+# Anthropic filesystem MCP server (@modelcontextprotocol/server-filesystem)
+# in read-only mode.
+#
+# Per ADR-018 (F2-MCP-D / issue #46). Demonstrates the layered enforcement
+# Aegis-Node provides for MCP tool calls:
+#
+#   1. tools.mcp[] gates the *call* — closed-by-default per server + tool.
+#   2. The MCP server's underlying side effects (e.g. read_text_file
+#      issuing a real fs read) flow through Session::mediate_filesystem_*
+#      and are authorized by tools.filesystem.read separately.
+#
+# Both layers must permit the operation. The MCP allowlist is not a
+# replacement for the syscall gate; it's an additional check that names
+# the protocol-level intent.
+#
+# Real-world launch (out of band of the manifest):
+#
+#   npx -y @modelcontextprotocol/server-filesystem /data /docs
+#
+# The agent connects via stdio and may invoke any tool listed in
+# allowed_tools; everything else is denied + emits an F2 violation.
+
+schemaVersion: "1"
+agent:
+  name: "research-mcp"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/research-mcp/inst-001"
+tools:
+  # Read-only filesystem coverage for the side-effects of the MCP
+  # server's read tools. Without this, the call would clear the MCP
+  # allowlist but the underlying fs read would still be denied.
+  filesystem:
+    read:
+      - "/data"
+      - "/docs"
+  network:
+    outbound: deny
+    inbound: deny
+  mcp:
+    # Anthropic's reference filesystem MCP server, launched via stdio.
+    # Phase 1 transport is `stdio:` only; HTTP/SSE is a follow-up.
+    - server_name: "filesystem"
+      server_uri: "stdio:/usr/local/bin/mcp-server-filesystem"
+      # Read-only subset of the upstream tool catalog. Write/delete tools
+      # (write_file, edit_file, move_file, create_directory) are
+      # deliberately omitted — closed-by-default keeps them denied
+      # regardless of what the upstream server advertises.
+      allowed_tools:
+        - "read_text_file"
+        - "read_multiple_files"
+        - "list_directory"
+        - "list_directory_with_sizes"
+        - "directory_tree"
+        - "search_files"
+        - "get_file_info"
+        - "list_allowed_directories"
+write_grants: []
