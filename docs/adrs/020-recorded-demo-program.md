@@ -70,15 +70,15 @@ which caps the model size we can use without the recording feeling slow.
    **Published OCI artifact** (per [ADR-021](021-huggingface-as-upstream-oci-as-trust-boundary.md)):
 
    - **Reference:** `ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m:latest`
-   - **Digest:** `sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6`
+   - **Digest:** `sha256:c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37`
    - **Blob SHA-256:** `6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e`
    - **Upstream:** [Qwen/Qwen2.5-1.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) · file `qwen2.5-1.5b-instruct-q4_k_m.gguf` · revision `91cad51170dc346986eccefdc2dd33a9da36ead9`
-   - **Signed by:** `models-publish.yml` workflow ([run 25135210278](https://github.com/tosin2013/aegis-node/actions/runs/25135210278)) via Sigstore keyless.
+   - **Signed by:** `models-publish.yml` workflow ([run 25172111227](https://github.com/tosin2013/aegis-node/actions/runs/25172111227)) via Sigstore keyless. Carries the `dev.aegis-node.chat-template.sha256=d5495a1e...` annotation per [ADR-022](022-trust-boundary-format-agnosticism.md). The original publish (run 25135210278, digest `sha256:240ece32...`) predates ADR-022 and is no longer the operator pin.
 
    Demos pull this artifact at boot via:
 
    ```bash
-   aegis pull ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6 \
+   aegis pull ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37 \
      --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
      --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
    ```

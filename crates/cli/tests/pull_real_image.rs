@@ -9,11 +9,14 @@
 //! - real `cosign verify` against Sigstore's Fulcio cert + Rekor entry
 //! - the actual OCI artifact layout `models-publish.yml` produces
 //!
-//! The test pins the specific digest from the workflow's first
-//! successful run ([run 25135210278](https://github.com/tosin2013/aegis-node/actions/runs/25135210278))
+//! The test pins the specific digest from the OCI-B re-publish run
+//! ([run 25172111227](https://github.com/tosin2013/aegis-node/actions/runs/25172111227))
 //! rather than resolving `:latest` — so the assertion remains valid
 //! regardless of future workflow re-runs that retag the same model
-//! against a different revision.
+//! against a different revision. The original publish was at run
+//! 25135210278 (digest `sha256:240ece32...`); ADR-022's chat-template
+//! annotation requirement forced a re-publish (annotations change the
+//! manifest, therefore the digest), and this is the new pin.
 //!
 //! Skipped quietly when `oras` or `cosign` aren't on `$PATH`. CI's
 //! `rust.yml` installs both before running this so every PR gets the
@@ -26,17 +29,18 @@ use std::path::PathBuf;
 use aegis_cli::pull::{self, PullConfig};
 
 /// Project-published Qwen2.5-1.5B-Instruct Q4_K_M OCI artifact pinned to
-/// the digest produced by `models-publish.yml` run 25135210278. This is
-/// the same value pinned in ADR-020 §"Pinned model" and the
-/// SUPPLY_CHAIN.md smoke-test recipe.
+/// the digest produced by `models-publish.yml` run 25172111227 (the
+/// OCI-B re-publish that added the `dev.aegis-node.chat-template.sha256`
+/// annotation, per ADR-022). This is the same value pinned in ADR-020
+/// §"Pinned model" and the SUPPLY_CHAIN.md smoke-test recipe.
 ///
 /// `PINNED_REF` carries the **manifest digest** (per OCI spec — that's
 /// what `<ref>@sha256:` always means). `PINNED_BLOB_SHA` is the actual
 /// content hash of the GGUF bytes — what `pull::pull` returns and what
 /// the F1 boot path will bind into the SVID. They are different values.
-const PINNED_REF: &str = "ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6";
+const PINNED_REF: &str = "ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37";
 const PINNED_MANIFEST_SHA: &str =
-    "240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6";
+    "c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37";
 const PINNED_BLOB_SHA: &str = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
 /// SHA-256 of the `tokenizer.chat_template` STRING value embedded in the
 /// pinned Qwen GGUF (extracted from the file at HF revision
