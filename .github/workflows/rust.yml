@@ -33,8 +33,12 @@ jobs:
       - name: Format check
         run: cargo fmt --all --check
 
+      # `aegis-llama-backend` is excluded from this fast job — its
+      # llama.cpp / cmake build adds ~50s and depends on libclang +
+      # cmake which aren't present here. The dedicated `llama.yml`
+      # job builds + tests it (per ADR-014, LLM-A).
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --exclude aegis-llama-backend --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --exclude aegis-llama-backend --all-targets

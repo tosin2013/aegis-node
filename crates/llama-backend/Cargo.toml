@@ -1,0 +1,22 @@
+[package]
+name = "aegis-llama-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Safe Rust wrapper around llama.cpp for the Aegis-Node runtime (per ADR-014, LLM-A)."
+
+[lints]
+workspace = true
+
+[dependencies]
+# Pinned to an exact version per ADR-014 §"Implementation": upstream
+# llama.cpp moves fast and is the load-bearing C++ surface here. Any
+# bump is an explicit, reviewed change to this number.
+llama-cpp-2 = "=0.1.145"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"

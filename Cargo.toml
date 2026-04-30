@@ -11,6 +11,24 @@ members = [
     "crates/filesystem-gate",
     "crates/approval-gate",
     "crates/mcp-client",
+    "crates/llama-backend",
+]
+# Default member set excludes `llama-backend` so the existing
+# `cargo build --workspace` / `cargo test --workspace` paths in
+# `rust.yml` don't pay the ~50s C++/CMake build cost on every PR.
+# A dedicated `llama.yml` job builds and tests `aegis-llama-backend`
+# explicitly.
+default-members = [
+    "crates/inference-engine",
+    "crates/network-gate",
+    "crates/ledger-writer",
+    "crates/identity",
+    "crates/cli",
+    "crates/access-log",
+    "crates/policy",
+    "crates/filesystem-gate",
+    "crates/approval-gate",
+    "crates/mcp-client",
 ]
 
 [workspace.package]

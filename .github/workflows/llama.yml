@@ -1,0 +1,69 @@
+name: Llama backend
+
+# Builds + tests `crates/llama-backend` — the Rust safe wrapper around
+# llama.cpp (per ADR-014, LLM-A / issue #70). Kept as a separate job
+# from `rust.yml` because llama-cpp-sys-2 builds llama.cpp's C++ surface
+# from source (~50s on a fresh runner; cached after that). We don't
+# want every workspace PR to pay that cost — `rust.yml` excludes this
+# crate via `--exclude aegis-llama-backend`.
+#
+# Path filter narrows triggering to changes that could plausibly
+# affect the build: the crate itself, the workspace Cargo.toml (where
+# the version is pinned), and this workflow file.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/llama-backend/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/llama.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/llama-backend/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/llama.yml"
+
+jobs:
+  build:
+    name: cargo test (llama-backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # llama-cpp-sys-2 needs cmake to drive its C++ build, and bindgen
+      # needs libclang for the FFI header parse. Both are standard
+      # build deps for any llama.cpp Rust binding.
+      - name: Install build deps (cmake, libclang)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libclang-dev clang
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # The llama.cpp build artifacts live under target/; cache them
+          # specifically so the second run reuses the ~50s of compile.
+          shared-key: llama-backend
+          cache-targets: "true"
+
+      - name: Format check
+        run: cargo fmt --package aegis-llama-backend -- --check
+
+      - name: Clippy
+        run: cargo clippy --package aegis-llama-backend --all-targets -- -D warnings
+
+      # `--all-targets` covers lib + tests/smoke. The smoke test that
+      # would actually load a real GGUF is `#[ignore]`d unless
+      # `AEGIS_LLAMA_TEST_MODEL` is set — the wrapper-API tests run
+      # unconditionally. Real-model coverage on CI lands in a follow-up
+      # PR once the GGUF fixture caching infrastructure is in place.
+      - name: Test
+        run: cargo test --package aegis-llama-backend --all-targets
