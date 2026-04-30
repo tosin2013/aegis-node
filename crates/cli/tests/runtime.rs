@@ -107,6 +107,7 @@ fn runtime_conformance_golden() {
         manifest: manifest_path,
         model: work.path().join("model.gguf"),
         config: None,
+        chat_template_sidecar: None,
         identity_dir: Some(ca_dir.path().to_path_buf()),
         workload: "conformance".to_string(),
         instance: "inst-1".to_string(),

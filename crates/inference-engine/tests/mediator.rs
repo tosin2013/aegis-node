@@ -34,6 +34,7 @@ fn boot(dir: &Path, ca_dir: &Path, session_id: &str, manifest_yaml: &str) -> (Se
         manifest_path,
         model_path,
         config_path: None,
+        chat_template_sidecar: None,
         identity_dir: ca_dir.to_path_buf(),
         workload_name: "research".to_string(),
         instance: "inst-1".to_string(),
