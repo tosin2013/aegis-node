@@ -127,12 +127,16 @@ fn cfg(cache_dir: PathBuf) -> PullConfig {
 }
 
 #[test]
-fn pull_succeeds_when_blob_matches_pinned_digest() {
+fn pull_succeeds_and_returns_blob_sha256() {
     let blob = b"fake gguf bytes for a tiny model";
     let mut hasher = Sha256::new();
     hasher.update(blob);
-    let digest = hex::encode(hasher.finalize());
-    let reference = format!("ghcr.io/example/tiny-model@sha256:{digest}");
+    let blob_sha = hex::encode(hasher.finalize());
+    // Note: in real OCI the ref's `@sha256:` is the *manifest* digest,
+    // not the blob digest. The fake-tools world has no manifest layer,
+    // so we put any 64-char hex here — it just becomes the cache-key.
+    let manifest_sha = "1".repeat(64);
+    let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
 
     let tools = fake_tool_dir(blob, "model.gguf", 0);
     let _path = PathGuard::prepend(&tools);
@@ -140,42 +144,28 @@ fn pull_succeeds_when_blob_matches_pinned_digest() {
     let cache = tempfile::tempdir().unwrap();
     let pulled = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap();
 
-    assert_eq!(pulled.sha256_hex, digest);
+    // pull::pull surfaces the *blob* SHA-256 (what F1 binds into the
+    // SVID), not the ref's manifest digest.
+    assert_eq!(pulled.sha256_hex, blob_sha);
     assert!(pulled.blob_path.exists(), "blob not in cache");
     let actual_bytes = fs::read(&pulled.blob_path).unwrap();
     assert_eq!(actual_bytes, blob);
-    // ref.txt sidecar for traceability.
-    assert!(pulled.blob_path.parent().unwrap().join("ref.txt").exists());
-}
-
-#[test]
-fn pull_refuses_when_blob_sha_does_not_match_pin() {
-    let blob = b"actual blob bytes";
-    let wrong_digest = "0".repeat(64); // ref pins to all-zeros, but blob hashes elsewhere
-    let reference = format!("ghcr.io/example/tiny-model@sha256:{wrong_digest}");
-
-    let tools = fake_tool_dir(blob, "model.gguf", 0);
-    let _path = PathGuard::prepend(&tools);
-
-    let cache = tempfile::tempdir().unwrap();
-    let err = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap_err();
-    match err {
-        PullError::Sha256Mismatch { expected, .. } => {
-            assert_eq!(expected, wrong_digest);
-        }
-        other => panic!("expected Sha256Mismatch, got {other:?}"),
-    }
-    // Cache must not contain the artifact dir on a refusal.
-    assert!(!cache.path().join(wrong_digest).exists());
+    // Cache layout: <cache>/<manifest-sha>/blob.bin + ref.txt + sha256.txt.
+    let dir = pulled.blob_path.parent().unwrap();
+    assert!(
+        dir.ends_with(&manifest_sha),
+        "cache key should be manifest sha"
+    );
+    assert!(dir.join("ref.txt").exists());
+    let recorded = fs::read_to_string(dir.join("sha256.txt")).unwrap();
+    assert_eq!(recorded.trim(), blob_sha);
 }
 
 #[test]
 fn pull_refuses_when_cosign_verify_fails() {
     let blob = b"some bytes";
-    let mut hasher = Sha256::new();
-    hasher.update(blob);
-    let digest = hex::encode(hasher.finalize());
-    let reference = format!("ghcr.io/example/tiny-model@sha256:{digest}");
+    let manifest_sha = "2".repeat(64);
+    let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
 
     // cosign exits 1 → CosignVerifyFailed.
     let tools = fake_tool_dir(blob, "model.gguf", 1);
@@ -190,7 +180,7 @@ fn pull_refuses_when_cosign_verify_fails() {
         other => panic!("expected CosignVerifyFailed, got {other:?}"),
     }
     assert!(
-        !cache.path().join(digest).exists(),
+        !cache.path().join(manifest_sha).exists(),
         "cosign-failed artifact must NOT be cached"
     );
 }
@@ -200,8 +190,9 @@ fn pull_short_circuits_when_blob_already_cached() {
     let blob = b"fake gguf bytes for a tiny model";
     let mut hasher = Sha256::new();
     hasher.update(blob);
-    let digest = hex::encode(hasher.finalize());
-    let reference = format!("ghcr.io/example/tiny-model@sha256:{digest}");
+    let blob_sha = hex::encode(hasher.finalize());
+    let manifest_sha = "3".repeat(64);
+    let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
 
     let tools = fake_tool_dir(blob, "model.gguf", 0);
     let _path = PathGuard::prepend(&tools);
@@ -219,16 +210,14 @@ fn pull_short_circuits_when_blob_already_cached() {
     chmod_exec(&tools.join("oras"));
 
     let pulled = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap();
-    assert_eq!(pulled.sha256_hex, digest);
+    assert_eq!(pulled.sha256_hex, blob_sha);
 }
 
 #[test]
 fn pull_refuses_when_cached_blob_corrupted() {
     let blob = b"fake gguf bytes for a tiny model";
-    let mut hasher = Sha256::new();
-    hasher.update(blob);
-    let digest = hex::encode(hasher.finalize());
-    let reference = format!("ghcr.io/example/tiny-model@sha256:{digest}");
+    let manifest_sha = "4".repeat(64);
+    let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
 
     let tools = fake_tool_dir(blob, "model.gguf", 0);
     let _path = PathGuard::prepend(&tools);
