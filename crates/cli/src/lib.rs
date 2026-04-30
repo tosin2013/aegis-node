@@ -269,5 +269,8 @@ fn cmd_pull(args: PullArgs) -> Result<()> {
     println!("reference: {}", pulled.reference.canonical());
     println!("sha256: {}", pulled.sha256_hex);
     println!("blob_path: {}", pulled.blob_path.display());
+    if let Some(template_sha) = &pulled.chat_template_sha256_hex {
+        println!("chat_template_sha256: {template_sha}");
+    }
     Ok(())
 }

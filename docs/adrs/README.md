@@ -29,6 +29,7 @@ The decisions are anchored in the Architecture Principles (PRD §7) and the ten-
 | [019](019-explicit-write-grant-takes-precedence.md) | Explicit Write Grant Takes Precedence Over Broad Path Coverage | §4 F7 |
 | [020](020-recorded-demo-program.md) | Recorded Demo Program — VHS Tapes Driven by Real CPU-Bound Models | §1, §5 Phase 1 |
 | [021](021-huggingface-as-upstream-oci-as-trust-boundary.md) | HuggingFace as Canonical Upstream; OCI + cosign as Trust Boundary | §6.1 |
+| [022](022-trust-boundary-format-agnosticism.md) | Trust-Boundary Format Agnosticism — Verify Signed Claims, Don't Parse Files | §6.1, §7 |
 
 ## Decision Coverage Matrix
 

@@ -1,17 +1,20 @@
 //! End-to-end orchestration tests for `aegis pull`.
 //!
-//! Per OCI-A / ADR-013 / issue #66. Real registries / cosign keys
-//! aren't reachable in CI — instead we drop fake `oras` and `cosign`
-//! shell scripts on PATH that mimic their interface (oras writes a
-//! known blob to its `-o` dir; cosign exits 0 for "verified" or 1
-//! for "refused"). That way the test exercises every gate in
-//! `pull::pull` (ref parse → oras invocation → cosign verify →
+//! Per OCI-A / OCI-B / ADR-013 / ADR-022 / issues #66 and #67. Real
+//! registries / cosign keys aren't reachable in CI — instead we drop
+//! fake `oras` and `cosign` shell scripts on PATH that mimic their
+//! interface:
+//!
+//! - fake `oras pull` writes a known blob to its `-o` dir
+//! - fake `oras manifest fetch` echoes a fixture JSON manifest
+//! - fake `cosign verify` exits 0 for "verified" or 1 for "refused"
+//!
+//! That way the test exercises every gate in `pull::pull` (ref parse →
+//! manifest fetch → annotation extraction → oras pull → cosign verify →
 //! sha256 recompute → cache move) without depending on the network.
 //!
-//! A real-registry round-trip lives in docs/SUPPLY_CHAIN.md as the
-//! operator workflow. F1 boot-path integration ("session boots
-//! against a pulled blob and the SVID's bound model digest matches")
-//! lands with the F1 wiring follow-up — out of scope for OCI-A.
+//! A real-registry round-trip lives in `tests/pull_real_image.rs` and
+//! runs against the live Qwen artifact `models-publish.yml` produces.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -22,41 +25,94 @@ use std::path::{Path, PathBuf};
 use aegis_cli::pull::{self, PullConfig, PullError};
 use sha2::{Digest, Sha256};
 
-/// Build a fake `oras` script that writes `blob_bytes` to its -o dir
-/// and a fake `cosign` script that exits with `cosign_exit_code`.
+const MODEL_GGUF_MEDIA_TYPE: &str = "application/vnd.aegis-node.model.gguf.v1";
+const NON_MODEL_MEDIA_TYPE: &str = "application/vnd.example.unknown.v1";
+
+/// Build a synthetic OCI manifest JSON with the given artifact-type and
+/// optional chat-template annotation. Mirrors what
+/// `oras manifest fetch` returns from a real registry.
+fn manifest_json(artifact_type: &str, chat_template_sha: Option<&str>) -> String {
+    let annotations = match chat_template_sha {
+        Some(s) => format!(r#""annotations":{{"dev.aegis-node.chat-template.sha256":"{s}"}},"#),
+        None => String::new(),
+    };
+    format!(
+        r#"{{
+            "schemaVersion":2,
+            "mediaType":"application/vnd.oci.image.manifest.v1+json",
+            "artifactType":"{artifact_type}",
+            "config":{{"mediaType":"application/vnd.oci.empty.v1+json","digest":"sha256:0000","size":0}},
+            "layers":[{{"mediaType":"{artifact_type}","digest":"sha256:1111","size":42}}],
+            {annotations}
+            "_test":"synthetic"
+        }}"#
+    )
+}
+
+/// Build fake `oras` + `cosign` scripts on a temp PATH dir.
 ///
-/// Returns a directory we can prepend to PATH.
-fn fake_tool_dir(blob_bytes: &[u8], blob_name: &str, cosign_exit_code: i32) -> PathBuf {
+/// `oras pull -o <dir> <ref>` copies a canned blob to `<dir>/<blob_name>`.
+/// `oras manifest fetch <ref>` echoes `manifest_json` on stdout.
+/// `cosign verify ...` exits with `cosign_exit_code`.
+fn fake_tool_dir(
+    blob_bytes: &[u8],
+    blob_name: &str,
+    cosign_exit_code: i32,
+    manifest_json: &str,
+) -> PathBuf {
     let dir = tempfile::tempdir().unwrap().keep();
-    // Encode the blob into the script as a here-doc base64 wouldn't
-    // round-trip binary cleanly, so we drop the bytes to a sidecar
-    // file the script copies on every invocation. This keeps the
-    // script tiny and binary-clean.
+
+    // Drop the blob bytes to a sidecar — easier than encoding them into
+    // a shell here-doc, and keeps binary content clean.
     let blob_src = dir.join("__blob.bin");
     fs::write(&blob_src, blob_bytes).unwrap();
+
+    // The fake `oras` writes the manifest JSON via `cat` of a sidecar
+    // file. That keeps escaping out of the shell heredoc — the JSON has
+    // braces and colons that bash gets fussy about.
+    let manifest_src = dir.join("__manifest.json");
+    fs::write(&manifest_src, manifest_json).unwrap();
 
     let oras_path = dir.join("oras");
     let oras = format!(
         r#"#!/usr/bin/env bash
-# fake oras: usage `oras pull -o <out_dir> <ref>` — copy the canned
-# blob into <out_dir>/<blob_name>.
+# fake oras: dispatches `pull` and `manifest fetch` subcommands.
 set -euo pipefail
-out_dir=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -o) out_dir="$2"; shift 2 ;;
-    *)  shift ;;
-  esac
-done
-if [[ -z "$out_dir" ]]; then
-  echo "fake oras: missing -o" >&2
-  exit 2
-fi
-mkdir -p "$out_dir"
-cp "{src}" "$out_dir/{blob_name}"
+sub="${{1:-}}"
+case "$sub" in
+  pull)
+    shift
+    out_dir=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -o) out_dir="$2"; shift 2 ;;
+        *)  shift ;;
+      esac
+    done
+    if [[ -z "$out_dir" ]]; then
+      echo "fake oras pull: missing -o" >&2
+      exit 2
+    fi
+    mkdir -p "$out_dir"
+    cp "{blob_src}" "$out_dir/{blob_name}"
+    ;;
+  manifest)
+    shift
+    if [[ "${{1:-}}" != "fetch" ]]; then
+      echo "fake oras manifest: only 'fetch' supported" >&2
+      exit 2
+    fi
+    cat "{manifest_src}"
+    ;;
+  *)
+    echo "fake oras: unknown subcommand '$sub'" >&2
+    exit 2
+    ;;
+esac
 "#,
-        src = blob_src.display(),
+        blob_src = blob_src.display(),
         blob_name = blob_name,
+        manifest_src = manifest_src.display(),
     );
     fs::write(&oras_path, oras).unwrap();
     chmod_exec(&oras_path);
@@ -82,8 +138,8 @@ fn chmod_exec(p: &Path) {
 }
 
 /// Prepend `dir` to PATH for the duration of the test, restoring it
-/// at scope end. Tests serialize on PATH via `tempfile::env_lock` —
-/// without that they clobber each other in parallel runs.
+/// at scope end. Tests serialize on PATH — without serialization they
+/// clobber each other in parallel runs.
 struct PathGuard {
     original: Option<std::ffi::OsString>,
     _lock: std::sync::MutexGuard<'static, ()>,
@@ -128,37 +184,33 @@ fn cfg(cache_dir: PathBuf) -> PullConfig {
 
 #[test]
 fn pull_succeeds_and_returns_blob_sha256() {
-    let blob = b"fake gguf bytes for a tiny model";
+    let blob = b"opaque non-model blob";
     let mut hasher = Sha256::new();
     hasher.update(blob);
     let blob_sha = hex::encode(hasher.finalize());
-    // Note: in real OCI the ref's `@sha256:` is the *manifest* digest,
-    // not the blob digest. The fake-tools world has no manifest layer,
-    // so we put any 64-char hex here — it just becomes the cache-key.
     let manifest_sha = "1".repeat(64);
-    let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
+    let reference = format!("ghcr.io/example/something@sha256:{manifest_sha}");
 
-    let tools = fake_tool_dir(blob, "model.gguf", 0);
+    // Non-model artifact-type → annotation not required, sidecar absent.
+    let manifest = manifest_json(NON_MODEL_MEDIA_TYPE, None);
+    let tools = fake_tool_dir(blob, "thing.bin", 0, &manifest);
     let _path = PathGuard::prepend(&tools);
 
     let cache = tempfile::tempdir().unwrap();
     let pulled = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap();
 
-    // pull::pull surfaces the *blob* SHA-256 (what F1 binds into the
-    // SVID), not the ref's manifest digest.
     assert_eq!(pulled.sha256_hex, blob_sha);
     assert!(pulled.blob_path.exists(), "blob not in cache");
     let actual_bytes = fs::read(&pulled.blob_path).unwrap();
     assert_eq!(actual_bytes, blob);
-    // Cache layout: <cache>/<manifest-sha>/blob.bin + ref.txt + sha256.txt.
     let dir = pulled.blob_path.parent().unwrap();
-    assert!(
-        dir.ends_with(&manifest_sha),
-        "cache key should be manifest sha"
-    );
+    assert!(dir.ends_with(&manifest_sha));
     assert!(dir.join("ref.txt").exists());
     let recorded = fs::read_to_string(dir.join("sha256.txt")).unwrap();
     assert_eq!(recorded.trim(), blob_sha);
+    // Non-model → no chat-template surface, no sidecar.
+    assert_eq!(pulled.chat_template_sha256_hex, None);
+    assert!(!dir.join("chat_template.sha256.txt").exists());
 }
 
 #[test]
@@ -167,8 +219,11 @@ fn pull_refuses_when_cosign_verify_fails() {
     let manifest_sha = "2".repeat(64);
     let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
 
-    // cosign exits 1 → CosignVerifyFailed.
-    let tools = fake_tool_dir(blob, "model.gguf", 1);
+    // cosign exits 1 → CosignVerifyFailed. Manifest doesn't matter for
+    // this gate (it runs after manifest fetch + annotation read but
+    // refusal is the same regardless).
+    let manifest = manifest_json(NON_MODEL_MEDIA_TYPE, None);
+    let tools = fake_tool_dir(blob, "model.gguf", 1, &manifest);
     let _path = PathGuard::prepend(&tools);
 
     let cache = tempfile::tempdir().unwrap();
@@ -194,7 +249,8 @@ fn pull_short_circuits_when_blob_already_cached() {
     let manifest_sha = "3".repeat(64);
     let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
 
-    let tools = fake_tool_dir(blob, "model.gguf", 0);
+    let manifest = manifest_json(NON_MODEL_MEDIA_TYPE, None);
+    let tools = fake_tool_dir(blob, "model.gguf", 0, &manifest);
     let _path = PathGuard::prepend(&tools);
 
     let cache = tempfile::tempdir().unwrap();
@@ -219,7 +275,8 @@ fn pull_refuses_when_cached_blob_corrupted() {
     let manifest_sha = "4".repeat(64);
     let reference = format!("ghcr.io/example/tiny-model@sha256:{manifest_sha}");
 
-    let tools = fake_tool_dir(blob, "model.gguf", 0);
+    let manifest = manifest_json(NON_MODEL_MEDIA_TYPE, None);
+    let tools = fake_tool_dir(blob, "model.gguf", 0, &manifest);
     let _path = PathGuard::prepend(&tools);
 
     let cache = tempfile::tempdir().unwrap();
@@ -231,4 +288,108 @@ fn pull_refuses_when_cached_blob_corrupted() {
 
     let err = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap_err();
     assert!(matches!(err, PullError::Sha256Mismatch { .. }), "{err}");
+}
+
+#[test]
+fn pull_emits_chat_template_sidecar_from_model_artifact_annotation() {
+    let blob = b"opaque-gguf-bytes";
+    let template_sha = "a".repeat(64);
+    let manifest_sha = "5".repeat(64);
+    let reference = format!("ghcr.io/example/qwen-tiny@sha256:{manifest_sha}");
+
+    let manifest = manifest_json(MODEL_GGUF_MEDIA_TYPE, Some(&template_sha));
+    let tools = fake_tool_dir(blob, "model.gguf", 0, &manifest);
+    let _path = PathGuard::prepend(&tools);
+
+    let cache = tempfile::tempdir().unwrap();
+    let pulled = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap();
+
+    assert_eq!(
+        pulled.chat_template_sha256_hex.as_deref(),
+        Some(template_sha.as_str()),
+        "annotation value should propagate to the surfaced chat-template digest"
+    );
+    let dir = pulled.blob_path.parent().unwrap();
+    let template_sidecar = dir.join("chat_template.sha256.txt");
+    assert!(template_sidecar.exists());
+    assert_eq!(
+        fs::read_to_string(&template_sidecar).unwrap().trim(),
+        template_sha
+    );
+
+    // Cache hit reuses the sidecar without re-fetching the manifest.
+    fs::write(tools.join("oras"), "#!/bin/sh\nexit 77\n").unwrap();
+    chmod_exec(&tools.join("oras"));
+    let pulled2 = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap();
+    assert_eq!(
+        pulled2.chat_template_sha256_hex.as_deref(),
+        Some(template_sha.as_str())
+    );
+}
+
+#[test]
+fn pull_refuses_when_model_artifact_lacks_chat_template_annotation() {
+    let blob = b"opaque-gguf-bytes";
+    let manifest_sha = "6".repeat(64);
+    let reference = format!("ghcr.io/example/qwen-tiny@sha256:{manifest_sha}");
+
+    // Model artifact-type but no annotation → publisher misconfiguration,
+    // refuse rather than silently leave the F1 binding unmoored.
+    let manifest = manifest_json(MODEL_GGUF_MEDIA_TYPE, None);
+    let tools = fake_tool_dir(blob, "model.gguf", 0, &manifest);
+    let _path = PathGuard::prepend(&tools);
+
+    let cache = tempfile::tempdir().unwrap();
+    let err = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap_err();
+    assert!(
+        matches!(err, PullError::MissingChatTemplateAnnotation { .. }),
+        "{err}"
+    );
+    assert!(
+        !cache.path().join(manifest_sha).exists(),
+        "missing-annotation artifact must NOT be cached"
+    );
+}
+
+#[test]
+fn pull_refuses_when_chat_template_annotation_is_not_hex() {
+    let blob = b"opaque-gguf-bytes";
+    let manifest_sha = "7".repeat(64);
+    let reference = format!("ghcr.io/example/qwen-tiny@sha256:{manifest_sha}");
+
+    // Annotation present but malformed (uppercase + length 64 → fails
+    // the lowercase-hex check). cosign would catch tampering, but the
+    // hex validator catches a publisher bug before cosign would run.
+    let bad = "DEADBEEF".repeat(8); // 64 chars, but uppercase
+    assert_eq!(bad.len(), 64);
+    let manifest = manifest_json(MODEL_GGUF_MEDIA_TYPE, Some(&bad));
+    let tools = fake_tool_dir(blob, "model.gguf", 0, &manifest);
+    let _path = PathGuard::prepend(&tools);
+
+    let cache = tempfile::tempdir().unwrap();
+    let err = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap_err();
+    assert!(
+        matches!(err, PullError::InvalidAnnotationValue { .. }),
+        "{err}"
+    );
+}
+
+#[test]
+fn pull_accepts_non_model_artifact_without_annotation() {
+    // The devbox image, third-party tooling images, etc. don't declare
+    // the model-GGUF media type and aren't required to carry the
+    // chat-template annotation — `aegis pull` stays general-purpose.
+    let blob = b"some non-model bytes";
+    let manifest_sha = "8".repeat(64);
+    let reference = format!("ghcr.io/example/devbox@sha256:{manifest_sha}");
+
+    let manifest = manifest_json(NON_MODEL_MEDIA_TYPE, None);
+    let tools = fake_tool_dir(blob, "image.tar", 0, &manifest);
+    let _path = PathGuard::prepend(&tools);
+
+    let cache = tempfile::tempdir().unwrap();
+    let pulled = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap();
+    assert_eq!(pulled.chat_template_sha256_hex, None);
+    let dir = pulled.blob_path.parent().unwrap();
+    assert!(!dir.join("chat_template.sha256.txt").exists());
 }

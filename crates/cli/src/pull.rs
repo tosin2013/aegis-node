@@ -1,7 +1,9 @@
 //! `aegis pull` — fetch + verify a model artifact from an OCI registry.
 //!
-//! Per ADR-013 (OCI Artifacts for Model Distribution) and OCI-A
-//! ([issue #66](https://github.com/tosin2013/aegis-node/issues/66)).
+//! Per ADR-013 (OCI Artifacts for Model Distribution), ADR-021 (HF →
+//! OCI mirror), ADR-022 (trust-boundary format agnosticism), and
+//! issues [#66](https://github.com/tosin2013/aegis-node/issues/66) /
+//! [#67](https://github.com/tosin2013/aegis-node/issues/67).
 //!
 //! Phase 1 ships a shell-out implementation around the `oras` and
 //! `cosign` binaries that the supply-chain workflow already requires
@@ -14,23 +16,32 @@
 //!    pulling a moving target invalidates the F1 digest binding.
 //! 2. **Stage the pull in a temp dir.** No partial state ever touches
 //!    the cache.
-//! 3. **Run `oras pull`** to fetch the descriptor + blob. `oras`
+//! 3. **Fetch the manifest** via `oras manifest fetch`, parse its JSON,
+//!    extract the `dev.aegis-node.chat-template.sha256` annotation. For
+//!    artifacts whose media type is `MODEL_GGUF_MEDIA_TYPE` the
+//!    annotation is required (publisher misconfiguration → typed
+//!    `MissingChatTemplateAnnotation` refusal); for non-model artifacts
+//!    (e.g. devbox image) it is optional. Per ADR-022: the runtime
+//!    trust boundary verifies a signed claim; it never parses the GGUF.
+//! 4. **Run `oras pull`** to fetch the descriptor + blob. `oras`
 //!    verifies each pulled blob against the manifest's layer
 //!    descriptor — that's where blob-bytes-vs-manifest integrity
 //!    happens.
-//! 4. **Run `cosign verify`** against the configured key (or keyless
+//! 5. **Run `cosign verify`** against the configured key (or keyless
 //!    via Sigstore's public Fulcio + Rekor — keyless is the default
 //!    when `--cosign-key` is omitted, matching ADR-017). cosign
 //!    verifies the manifest's signature, which transitively covers
-//!    the layer descriptors.
-//! 5. **Compute the blob's SHA-256** and persist it as a sidecar
+//!    the layer descriptors *and* every annotation read in step 3.
+//! 6. **Compute the blob's SHA-256** and persist it as a sidecar
 //!    (`sha256.txt`) for the F1 boot path's SVID-binding use and
 //!    for cache-hit re-verification on subsequent pulls. We do NOT
 //!    compare this against the ref's `@sha256:` — that's the
 //!    *manifest* digest (per OCI spec), a different value from the
 //!    blob's content hash. cosign + oras together provide the
 //!    integrity guarantee; we surface the blob's hash for callers.
-//! 6. **Move into the cache** at `<cache-dir>/<manifest-sha>/blob.bin`.
+//! 7. **Persist the chat-template digest** (when present) as
+//!    `chat_template.sha256.txt` for the F1 boot binding (OCI-B (b)).
+//! 8. **Move into the cache** at `<cache-dir>/<manifest-sha>/blob.bin`.
 //!    The atomic rename keeps the cache consistent — either the
 //!    artifact is fully verified and present, or it isn't.
 //!
@@ -47,6 +58,19 @@ use std::process::Command;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+/// OCI media type for a single-blob GGUF model artifact published by
+/// Aegis-Node's `models-publish.yml` (per ADR-021). Publishers that use
+/// this media type MUST also set the chat-template annotation —
+/// `aegis pull` enforces that in `extract_chat_template_annotation`.
+pub const MODEL_GGUF_MEDIA_TYPE: &str = "application/vnd.aegis-node.model.gguf.v1";
+
+/// OCI manifest annotation carrying the SHA-256 of the GGUF's
+/// `tokenizer.chat_template` bytes. Defends against template-only
+/// poisoning per ADR-013 §"Decision" item 4 and ADR-022 §"Decision":
+/// the trust boundary verifies a signed claim instead of parsing the
+/// GGUF itself.
+pub const CHAT_TEMPLATE_SHA_ANNOTATION: &str = "dev.aegis-node.chat-template.sha256";
+
 /// Outcome of a successful `aegis pull`. The cache path is what
 /// callers (and `Session::boot`) consume.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +81,16 @@ pub struct PulledArtifact {
     pub blob_path: PathBuf,
     /// SHA-256 digest of the blob, lowercase hex.
     pub sha256_hex: String,
+    /// SHA-256 of the GGUF's `tokenizer.chat_template` bytes, lowercase
+    /// hex — read from the cosign-covered manifest annotation
+    /// `dev.aegis-node.chat-template.sha256`. `None` for non-model
+    /// artifacts (e.g., the devbox image). Required for artifacts whose
+    /// media type is `MODEL_GGUF_MEDIA_TYPE`. Defends against
+    /// template-only poisoning per ADR-013 §"Decision" item 4. The
+    /// runtime never parses the GGUF itself (per ADR-022): we trust the
+    /// publisher's signed claim, defended in depth by llama.cpp's own
+    /// parser at inference time.
+    pub chat_template_sha256_hex: Option<String>,
 }
 
 /// Typed errors. Surface mapped 1:1 to verification gates so an
@@ -102,6 +136,36 @@ pub enum PullError {
     /// descriptor was swapped post-signing — either way, refuse.
     #[error("sha256 mismatch: ref pinned {expected}, computed {got} (artifact discarded)")]
     Sha256Mismatch { expected: String, got: String },
+
+    /// `oras manifest fetch` exited non-zero, or its output isn't valid
+    /// JSON. We need the manifest to read the chat-template annotation;
+    /// without it the F1 binding would be unmoored.
+    #[error("oras manifest fetch failed: {detail}")]
+    ManifestFetchFailed { detail: String },
+
+    /// Manifest declares the model-GGUF media type but is missing the
+    /// `dev.aegis-node.chat-template.sha256` annotation. Per ADR-022
+    /// the publisher is responsible for setting this; refusing here
+    /// means a misconfigured publish surfaces loudly instead of leaving
+    /// a session unboundable.
+    #[error(
+        "manifest declares model artifact-type {media_type:?} but lacks the \
+         {annotation:?} annotation (publisher misconfiguration; \
+         re-run models-publish.yml or analogous)"
+    )]
+    MissingChatTemplateAnnotation {
+        media_type: String,
+        annotation: &'static str,
+    },
+
+    /// The annotation is present but its value isn't a 64-char
+    /// lowercase hex SHA-256. We refuse rather than guess what the
+    /// publisher meant.
+    #[error("manifest annotation {annotation:?} is not a 64-char hex sha256: {value:?}")]
+    InvalidAnnotationValue {
+        annotation: &'static str,
+        value: String,
+    },
 
     /// Catch-all for filesystem errors (creating temp dirs, moves,
     /// etc.). Wrapped so callers don't have to match `io::Error` raw.
@@ -281,12 +345,22 @@ pub fn pull(reference: &str, cfg: &PullConfig) -> Result<PulledArtifact> {
                 got,
             });
         }
+        let chat_template_sha256_hex = read_chat_template_sidecar(&target_dir)?;
         return Ok(PulledArtifact {
             reference: parsed.clone(),
             blob_path: target_blob,
             sha256_hex: recorded,
+            chat_template_sha256_hex,
         });
     }
+
+    // Fetch the cosign-covered manifest and extract the chat-template
+    // annotation BEFORE pulling the blob. cosign verifies the manifest's
+    // signature (which transitively covers all annotations); reading the
+    // annotation here means the trust-boundary code in this function
+    // never has to parse the GGUF itself (per ADR-022).
+    let manifest = run_oras_manifest_fetch(&parsed)?;
+    let chat_template_sha256_hex = extract_chat_template_annotation(&manifest)?;
 
     // Stage in a sibling temp dir so a partial pull never pollutes
     // the cache root.
@@ -304,18 +378,41 @@ pub fn pull(reference: &str, cfg: &PullConfig) -> Result<PulledArtifact> {
 
     std::fs::create_dir_all(&target_dir)?;
     // Persist sidecars alongside the blob:
-    //   ref.txt     — canonical reference, for traceability
-    //   sha256.txt  — blob's actual SHA-256, used by the F1 boot path
-    //                 and by future cache-hit re-verification
+    //   ref.txt                   — canonical reference, for traceability
+    //   sha256.txt                — blob's actual SHA-256, used by the
+    //                               F1 boot path and by future cache-hit
+    //                               re-verification
+    //   chat_template.sha256.txt  — chat-template SHA-256 read from the
+    //                               cosign-covered manifest annotation
+    //                               (Some for model artifacts; absent
+    //                               for non-model artifacts like devbox)
     std::fs::write(target_dir.join("ref.txt"), parsed.canonical().as_bytes())?;
     std::fs::write(&sidecar, blob_sha256_hex.as_bytes())?;
+    if let Some(hex) = &chat_template_sha256_hex {
+        std::fs::write(target_dir.join("chat_template.sha256.txt"), hex.as_bytes())?;
+    }
     std::fs::rename(&blob, &target_blob)?;
 
     Ok(PulledArtifact {
         reference: parsed.clone(),
         blob_path: target_blob,
         sha256_hex: blob_sha256_hex,
+        chat_template_sha256_hex,
     })
+}
+
+/// Read the chat-template sidecar from a populated cache dir, if it
+/// exists. Cache hits reuse the sidecar rather than re-fetching the
+/// manifest — the blob's own SHA-256 is re-verified above, and the
+/// sidecar was written from a cosign-verified annotation under the
+/// original pull.
+fn read_chat_template_sidecar(dir: &Path) -> Result<Option<String>> {
+    let p = dir.join("chat_template.sha256.txt");
+    if !p.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&p)?;
+    Ok(Some(raw.trim().to_string()))
 }
 
 fn require_tool(tool: &'static str) -> Result<()> {
@@ -351,6 +448,87 @@ fn run_oras_pull(parsed: &ParsedRef, into: &Path) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// Fetch the OCI manifest JSON for `parsed` via `oras manifest fetch`.
+/// Used by the trust-boundary code to read the cosign-covered
+/// chat-template annotation without ever parsing the GGUF (per ADR-022).
+fn run_oras_manifest_fetch(parsed: &ParsedRef) -> Result<serde_json::Value> {
+    let out = Command::new("oras")
+        .arg("manifest")
+        .arg("fetch")
+        .arg(parsed.canonical())
+        .output()?;
+    if !out.status.success() {
+        return Err(PullError::ManifestFetchFailed {
+            detail: format!(
+                "exit {:?}: {}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        });
+    }
+    serde_json::from_slice(&out.stdout).map_err(|e| PullError::ManifestFetchFailed {
+        detail: format!("manifest is not valid JSON: {e}"),
+    })
+}
+
+/// Pull the chat-template SHA-256 annotation out of an OCI manifest.
+/// Returns `None` for non-model artifacts (devbox image, third-party
+/// images that don't follow this convention). For artifacts whose
+/// `artifactType` (or top-level `mediaType`) is `MODEL_GGUF_MEDIA_TYPE`,
+/// the annotation is required and a missing or malformed value is a
+/// hard refusal.
+fn extract_chat_template_annotation(manifest: &serde_json::Value) -> Result<Option<String>> {
+    // OCI 1.1+ manifests use `artifactType` for the artifact's purpose;
+    // older single-blob artifacts ("config-as-content") put the same
+    // value in `config.mediaType`. Accept either to interop with both
+    // oras 1.1 and 1.2 outputs.
+    let artifact_type = manifest
+        .get("artifactType")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            manifest
+                .get("config")
+                .and_then(|c| c.get("mediaType"))
+                .and_then(|v| v.as_str())
+        })
+        .unwrap_or("");
+    let is_model = artifact_type == MODEL_GGUF_MEDIA_TYPE;
+
+    let annotation_value = manifest
+        .get("annotations")
+        .and_then(|a| a.get(CHAT_TEMPLATE_SHA_ANNOTATION))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    match annotation_value {
+        Some(raw) => {
+            if !is_valid_sha256_hex(&raw) {
+                return Err(PullError::InvalidAnnotationValue {
+                    annotation: CHAT_TEMPLATE_SHA_ANNOTATION,
+                    value: raw,
+                });
+            }
+            Ok(Some(raw))
+        }
+        None => {
+            if is_model {
+                Err(PullError::MissingChatTemplateAnnotation {
+                    media_type: artifact_type.to_string(),
+                    annotation: CHAT_TEMPLATE_SHA_ANNOTATION,
+                })
+            } else {
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn is_valid_sha256_hex(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 fn run_cosign_verify(parsed: &ParsedRef, cfg: &PullConfig) -> Result<()> {
