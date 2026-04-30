@@ -46,7 +46,8 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 
 - **[Architectural Decision Records](docs/adrs/)** — 21 ADRs covering the security primitives, runtime architecture, supply chain, dev environment, agent ↔ tool protocol (MCP), write-grant precedence, the recorded demo program, and HuggingFace-as-upstream model distribution.
 - **[Compatibility Charter](docs/COMPATIBILITY_CHARTER.md)** — what the project promises not to break across versions (manifest, ledger, IPC).
-- **[Supply Chain Verification](docs/SUPPLY_CHAIN.md)** — `cosign verify` / `oras pull` flow for the signed devbox image and (later) model artifacts.
+- **[Supply Chain Verification](docs/SUPPLY_CHAIN.md)** — `cosign verify` / `oras pull` flow for the signed devbox image and model artifacts.
+- **[Model Mirroring](docs/MODEL_MIRRORING.md)** — operator workflow for publishing a HuggingFace model to your internal OCI registry, signed with your org's cosign trust root (per ADR-013 + ADR-021).
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — DCO sign-off, dev workflow, ADR process.
 - **[RELEASE_PLAN.md](RELEASE_PLAN.md)** — 7 baseline milestones (v0.1.0 → v3.0.0). v1.0.0 anchors to the U.S. CMMC 2.0 deadline (2026-11-02).
 - **[TODO.md](TODO.md)** — phase-grouped task plan plus paired test+production tasks decomposed from each ADR.

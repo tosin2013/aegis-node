@@ -103,8 +103,9 @@ Refusal cases — every one of these exits non-zero with a typed error:
 | Reference uses a tag instead of `@sha256:` | `UnpinnedRef` | refuse before any network call |
 | `oras` or `cosign` not on `$PATH` | `MissingTool` | refuse before any network call |
 | Cosign signature missing or fails | `CosignVerifyFailed` | refuse, blob not cached |
-| Pulled blob's SHA-256 ≠ pinned digest | `Sha256Mismatch` | refuse, blob discarded |
-| Cached blob corrupted between pulls | `Sha256Mismatch` | refuse, surface tampering |
+| Cached blob corrupted between pulls (tampering) | `Sha256Mismatch` | refuse, surface tampering |
+
+The integrity model: cosign verifies the manifest's signature; oras verifies each pulled blob against the manifest's layer descriptor; the two together cover registry-side integrity end-to-end. `aegis pull` does not re-compare the blob's content hash against the ref's `@sha256:` (those are different OCI concepts — the ref carries the *manifest digest*, not the blob digest). It does compute the blob's SHA-256 and persist it as a sidecar, used for cache-hit re-verification and future F1 SVID-binding.
 
 **End-to-end smoke test (Qwen2.5-1.5B-Instruct Q4_K_M).** The `models-publish.yml` workflow has shipped its first artifact — pull it through the full `aegis pull` flow:
 
@@ -121,9 +122,9 @@ GGUF + chat-template-bound verification (defends against template-only poisoning
 
 ## Mirroring an upstream model
 
-Per [ADR-021](adrs/021-huggingface-as-upstream-oci-as-trust-boundary.md), the runtime never reaches HuggingFace. Operators bring an HF model into a trust boundary they control by running the same `HF → scan → sign → push` pipeline the Aegis-Node project ships at [`.github/workflows/models-publish.yml`](../.github/workflows/models-publish.yml).
+Operators publishing their own models to an internal registry follow the same `HF → scan → sign → push` pipeline this project uses for its demo models. The full operator workflow — including scanning gates, KMS vs. Sigstore signing, license-review checklist, and a worked Qwen example — lives in **[docs/MODEL_MIRRORING.md](MODEL_MIRRORING.md)**.
 
-The published Qwen artifact above was produced by dispatching that workflow:
+Quick reference: dispatch the project's own pipeline against its demo input by running
 
 ```bash
 gh workflow run models-publish.yml --ref main \
@@ -132,15 +133,7 @@ gh workflow run models-publish.yml --ref main \
   -f hf_revision=91cad51170dc346986eccefdc2dd33a9da36ead9
 ```
 
-Operator-side adaptation (in your fork or your org's mirror repo):
-
-1. Copy `models-publish.yml` to your repo. Replace the registry hostname (`ghcr.io/<owner>/aegis-node-models/...`) with your internal registry.
-2. Add an org-specific scanning step before `oras push` (malware AV, prompt-injection corpus check, license review). The default workflow does not scan — your org owns that policy.
-3. Adjust the cosign signing identity. Keyless via Sigstore (recommended) ties signatures to the workflow's GitHub Actions OIDC, exactly as the project does. KMS-backed keys are also supported via cosign's `--key` flag.
-4. License gate: only Apache-2.0 / MIT / similarly-permissive models are appropriate for this no-review pipeline. Llama-licensed and other restrictively-licensed models need legal review per your org's policy.
-5. Pin the resulting `<ref>@sha256:<digest>` in your operator-facing docs the same way ADR-020 §"Pinned model" pins the project's demo artifact.
-
-Air-gapped consumers then pull from the operator's internal registry — no HF dependency at runtime, no Sigstore dependency on the air-gap side once the digest is pinned (per ADR-017's "Option A: verify online once and pin the digest").
+— then pin the resulting `<ref>@sha256:<digest>` in your operator config the same way ADR-020 §"Pinned model" pins this project's demo artifact.
 
 ## Reporting integrity issues
 
