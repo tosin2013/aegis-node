@@ -25,6 +25,13 @@ pub enum Error {
     )]
     SvidSelfCheck { field: String },
 
+    /// The chat-template sidecar (`chat_template.sha256.txt` produced by
+    /// `aegis pull`) is missing, unreadable, or doesn't carry a 64-char
+    /// hex SHA-256. Per ADR-022 the F1 boot path refuses rather than
+    /// silently omit the chat-template binding.
+    #[error("chat-template sidecar at {path:?}: {detail}")]
+    ChatTemplateSidecar { path: String, detail: String },
+
     #[error("access-log: {0}")]
     AccessLog(#[from] aegis_access_log::Error),
 

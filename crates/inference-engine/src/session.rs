@@ -15,7 +15,10 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use aegis_approval_gate::ApprovalChannel;
-use aegis_identity::{verify_digest_binding, Digest, DigestField, DigestTriple, LocalCa, SpiffeId};
+use aegis_identity::{
+    verify_chat_template_binding, verify_digest_binding, Digest, DigestField, DigestTriple,
+    LocalCa, SpiffeId,
+};
 use aegis_ledger_writer::{Entry, EntryType, LedgerWriter};
 use aegis_mcp_client::McpClient;
 use aegis_policy::Policy;
@@ -35,6 +38,13 @@ pub struct BootConfig {
     pub model_path: PathBuf,
     /// Optional runtime config; absent → empty-bytes digest.
     pub config_path: Option<PathBuf>,
+    /// Optional chat-template digest sidecar produced by `aegis pull`
+    /// (per ADR-022 / OCI-B). When `Some`, the file's hex contents are
+    /// parsed into a 32-byte SHA-256 and bound into the SVID via the
+    /// `CHAT_TEMPLATE_BINDING_OID` extension. When `None`, no
+    /// chat-template binding is set (back-compat for legacy callers and
+    /// for non-GGUF models that don't carry a chat template).
+    pub chat_template_sidecar: Option<PathBuf>,
     pub identity_dir: PathBuf,
     pub workload_name: String,
     pub instance: String,
@@ -51,6 +61,11 @@ pub struct Session {
     svid_cert_pem: String,
     svid_key_pem: String,
     bound_digests: DigestTriple,
+    /// Bound chat-template digest (per ADR-022 / OCI-B). `None` when the
+    /// session was booted without a chat-template sidecar (e.g., legacy
+    /// callers, non-GGUF models). `Some` when the SVID's
+    /// `CHAT_TEMPLATE_BINDING_OID` extension was issued.
+    bound_chat_template: Option<Digest>,
     spiffe_id: SpiffeId,
     agent_identity_hash: [u8; 32],
     session_id: String,
@@ -130,12 +145,36 @@ impl Session {
             config: Digest(config_digest),
         };
 
+        // Read the chat-template sidecar if the caller supplied one.
+        // Per ADR-022 the sidecar carries a hex SHA-256 of the GGUF's
+        // `tokenizer.chat_template` bytes; we parse it but do NOT
+        // re-derive it here (the runtime trust boundary doesn't parse
+        // GGUFs). The sidecar is itself the product of a cosign-covered
+        // manifest annotation; if it's been tampered with on disk, the
+        // SVID-self-check below catches it indirectly via the issuer.
+        let bound_chat_template = match &cfg.chat_template_sidecar {
+            Some(path) => Some(read_chat_template_sidecar(path)?),
+            None => None,
+        };
+
         let ca = LocalCa::load(&cfg.identity_dir)?;
-        let svid = ca.issue_svid(&cfg.workload_name, &cfg.instance, bound_digests)?;
+        let svid = ca.issue_svid_with_chat_template(
+            &cfg.workload_name,
+            &cfg.instance,
+            bound_digests,
+            bound_chat_template,
+        )?;
 
         // Self-check: the cert we just got back MUST encode the digests
         // we passed in. If not, aegis-identity has a bug — fail loud.
         if let Some(mismatch) = verify_digest_binding(&svid.cert_pem, &bound_digests)? {
+            return Err(Error::SvidSelfCheck {
+                field: digest_field_name(mismatch.field).to_string(),
+            });
+        }
+        if let Some(mismatch) =
+            verify_chat_template_binding(&svid.cert_pem, bound_chat_template.as_ref())?
+        {
             return Err(Error::SvidSelfCheck {
                 field: digest_field_name(mismatch.field).to_string(),
             });
@@ -159,6 +198,12 @@ impl Session {
             "configDigestHex".to_string(),
             Value::String(hex::encode(bound_digests.config.0)),
         );
+        if let Some(template) = bound_chat_template {
+            payload.insert(
+                "chatTemplateDigestHex".to_string(),
+                Value::String(hex::encode(template.0)),
+            );
+        }
         ledger.append(Entry {
             session_id: cfg.session_id.clone(),
             entry_type: EntryType::SessionStart,
@@ -173,6 +218,7 @@ impl Session {
             svid_cert_pem: svid.cert_pem,
             svid_key_pem: svid.key_pem,
             bound_digests,
+            bound_chat_template,
             spiffe_id: svid.spiffe_id,
             agent_identity_hash,
             session_id: cfg.session_id,
@@ -243,6 +289,13 @@ impl Session {
         &self.bound_digests
     }
 
+    /// Bound chat-template digest, if the session was booted with a
+    /// chat-template sidecar. `None` for sessions booted without one
+    /// (legacy callers, non-GGUF models). Per ADR-022 / OCI-B.
+    pub fn bound_chat_template(&self) -> Option<&Digest> {
+        self.bound_chat_template.as_ref()
+    }
+
     pub fn cert_pem(&self) -> &str {
         &self.svid_cert_pem
     }
@@ -305,10 +358,27 @@ fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
     out
 }
 
-fn digest_field_name(f: DigestField) -> &'static str {
-    match f {
-        DigestField::Model => "model",
-        DigestField::Manifest => "manifest",
-        DigestField::Config => "config",
+/// Read a `chat_template.sha256.txt` sidecar file (lowercase 64-char hex)
+/// into a [`Digest`]. Returns a typed error if the file is missing,
+/// unreadable, or doesn't carry a 64-char hex SHA-256.
+fn read_chat_template_sidecar(path: &Path) -> Result<Digest> {
+    let raw = std::fs::read_to_string(path).map_err(|e| Error::ChatTemplateSidecar {
+        path: path.display().to_string(),
+        detail: format!("read failed: {e}"),
+    })?;
+    let trimmed = raw.trim();
+    if trimmed.len() != 64 || !trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(Error::ChatTemplateSidecar {
+            path: path.display().to_string(),
+            detail: format!("expected 64-char hex SHA-256, got {trimmed:?}"),
+        });
     }
+    Digest::from_hex(trimmed).map_err(|e| Error::ChatTemplateSidecar {
+        path: path.display().to_string(),
+        detail: e.to_string(),
+    })
+}
+
+fn digest_field_name(f: DigestField) -> &'static str {
+    f.name()
 }

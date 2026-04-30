@@ -196,8 +196,9 @@ code.
 
 ## Implementation
 
-Lands as part of the [OCI-B (a)](https://github.com/tosin2013/aegis-node/issues/67)
-PR:
+Lands across two PRs both tracked under [OCI-B (#67)](https://github.com/tosin2013/aegis-node/issues/67):
+
+**OCI-B (a) — pull-side annotation read** (PR #85):
 
 1. `crates/cli/src/pull.rs` — add `run_oras_manifest_fetch` and
    `extract_chat_template_annotation`; remove the discarded GGUF
@@ -211,6 +212,36 @@ PR:
 4. Tests in `crates/cli/tests/pull.rs` cover annotation-present /
    annotation-missing-on-model-artifact / non-model-artifact-without-
    annotation / bad-hex-annotation paths.
+
+**OCI-B (b) — session-side SVID binding**:
+
+1. `crates/identity/src/svid.rs` + `ca.rs` — add a *separate*
+   `CHAT_TEMPLATE_BINDING_OID` X.509 extension carrying the 32-byte
+   SHA-256, alongside the existing 96-byte `(model, manifest, config)`
+   extension. Separate extension keeps the Compatibility Charter
+   freeze on the digest-binding payload format intact (pre-OCI-B SVIDs
+   stay valid; the new extension is optional).
+2. `crates/identity/src/ca.rs::issue_svid_with_chat_template` — new
+   public entry point taking `Option<Digest>`; the original
+   `issue_svid` now delegates with `None`.
+3. `crates/identity/src/binding.rs` — `verify_chat_template_binding`
+   helper, plus a `DigestField::ChatTemplate` variant.
+4. `crates/inference-engine/src/session.rs` — `BootConfig` grows
+   `chat_template_sidecar: Option<PathBuf>`. When set, `Session::boot`
+   reads `chat_template.sha256.txt` (the file written by `aegis pull`),
+   binds the digest into the SVID, surfaces it as
+   `chatTemplateDigestHex` in `SessionStart`, and exposes it via
+   `Session::bound_chat_template`. Malformed/absent sidecar →
+   `Error::ChatTemplateSidecar`.
+5. `aegis run --chat-template-sidecar <path>` flag wires the option
+   end-to-end.
+
+Per-tool-call rebind for chat-template is intentionally **not** wired
+under (b): the chat-template digest is read-only attestation. A
+defense-in-depth re-derivation against llama.cpp's parser at session
+boot lands once [LLM-A #70](https://github.com/tosin2013/aegis-node/issues/70)
+exposes the parsed bytes — that's the only point we can ask "what does
+the consumer actually use?" without re-introducing a runtime parser.
 
 ## Related
 

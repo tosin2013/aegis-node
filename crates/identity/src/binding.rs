@@ -12,16 +12,21 @@
 
 use std::fmt;
 
-use crate::ca::extract_digest_triple_from_pem;
+use crate::ca::{extract_chat_template_from_pem, extract_digest_triple_from_pem};
 use crate::error::Result;
 use crate::svid::{Digest, DigestTriple};
 
-/// Which of the three bound artifacts changed.
+/// Which of the bound artifacts changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DigestField {
     Model,
     Manifest,
     Config,
+    /// GGUF `tokenizer.chat_template` SHA-256 (per ADR-022 / OCI-B).
+    /// Bound via a separate optional X.509 extension
+    /// (`CHAT_TEMPLATE_BINDING_OID`); only relevant when the SVID was
+    /// issued with a chat-template digest.
+    ChatTemplate,
 }
 
 impl DigestField {
@@ -30,6 +35,7 @@ impl DigestField {
             DigestField::Model => "model",
             DigestField::Manifest => "manifest",
             DigestField::Config => "config",
+            DigestField::ChatTemplate => "chat_template",
         }
     }
 }
@@ -98,4 +104,46 @@ pub fn verify_digest_binding(
         }));
     }
     Ok(None)
+}
+
+/// Verify the SVID's chat-template binding (per ADR-022 / OCI-B).
+///
+/// Semantics, ordered by the way they show up at runtime:
+///
+/// - SVID has no chat-template extension AND `live` is `None` →
+///   `Ok(None)`. Nothing was bound, nothing was claimed; not a violation.
+/// - SVID has no chat-template extension AND `live` is `Some(_)` →
+///   `Ok(None)`. The runtime computed a chat-template digest but the
+///   SVID didn't promise anything about it; treat as informational, not
+///   a violation. (If you want to *require* a binding, refuse at boot
+///   when the operator passes a `live` digest but the issuer wasn't
+///   given one — that's a configuration issue, not a rebind.)
+/// - SVID has a chat-template extension AND `live` is `Some(d)` AND
+///   `bound == d` → `Ok(None)`. Match.
+/// - SVID has a chat-template extension AND `live` is `Some(d)` AND
+///   `bound != d` → `Ok(Some(mismatch))`. Drift, halt at the call site.
+/// - SVID has a chat-template extension AND `live` is `None` →
+///   `Ok(Some(mismatch))` with `live = Digest::ZERO`. The SVID claims a
+///   template but nothing was provided to compare; that's unsafe
+///   ambiguity and we refuse.
+/// - Cert-format problems → `Err(_)`.
+pub fn verify_chat_template_binding(
+    cert_pem: &str,
+    live: Option<&Digest>,
+) -> Result<Option<DigestMismatch>> {
+    let bound = extract_chat_template_from_pem(cert_pem)?;
+    match (bound, live) {
+        (None, _) => Ok(None),
+        (Some(b), Some(l)) if &b == l => Ok(None),
+        (Some(b), Some(l)) => Ok(Some(DigestMismatch {
+            field: DigestField::ChatTemplate,
+            bound: b,
+            live: *l,
+        })),
+        (Some(b), None) => Ok(Some(DigestMismatch {
+            field: DigestField::ChatTemplate,
+            bound: b,
+            live: Digest([0u8; 32]),
+        })),
+    }
 }

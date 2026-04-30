@@ -50,6 +50,13 @@ pub struct RunArgs {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
+    /// Optional `chat_template.sha256.txt` sidecar produced by
+    /// `aegis pull` (per ADR-022 / OCI-B). When set, the digest is
+    /// bound into the SVID via the `CHAT_TEMPLATE_BINDING_OID`
+    /// extension and surfaced in the SessionStart ledger entry.
+    #[arg(long)]
+    pub chat_template_sidecar: Option<PathBuf>,
+
     /// Where the local CA's `ca.crt`/`ca.key` live. Default:
     /// `$XDG_CONFIG_HOME/aegis/identity`.
     #[arg(long)]
@@ -155,6 +162,7 @@ pub fn execute(args: RunArgs) -> Result<RunOutcome> {
         manifest_path: args.manifest.clone(),
         model_path: args.model.clone(),
         config_path: args.config.clone(),
+        chat_template_sidecar: args.chat_template_sidecar.clone(),
         identity_dir,
         workload_name: args.workload.clone(),
         instance: args.instance.clone(),

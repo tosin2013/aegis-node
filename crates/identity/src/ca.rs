@@ -24,7 +24,10 @@ use time::{Duration, OffsetDateTime};
 
 use crate::error::{Error, Result};
 use crate::spiffe::SpiffeId;
-use crate::svid::{DigestTriple, X509Svid, DIGEST_BINDING_OID};
+use crate::svid::{
+    Digest, DigestTriple, X509Svid, CHAT_TEMPLATE_BINDING_LEN, CHAT_TEMPLATE_BINDING_OID,
+    DIGEST_BINDING_OID,
+};
 
 const CA_CERT_FILE: &str = "ca.crt";
 const CA_KEY_FILE: &str = "ca.key";
@@ -135,11 +138,38 @@ impl LocalCa {
 
     /// Issue a fresh X.509-SVID for the named workload + instance, binding
     /// the (model, manifest, config) digest triple into a custom extension.
+    /// No chat-template binding — equivalent to
+    /// [`Self::issue_svid_with_chat_template`] passing `None`. Kept as the
+    /// primary entry point so pre-OCI-B callers don't need to thread an
+    /// `Option`.
     pub fn issue_svid(
         &self,
         workload_name: &str,
         instance: &str,
         digests: DigestTriple,
+    ) -> Result<X509Svid> {
+        self.issue_svid_with_chat_template(workload_name, instance, digests, None)
+    }
+
+    /// Issue an SVID and (when `Some`) attach a second non-critical
+    /// extension carrying the chat-template SHA-256 from
+    /// [`CHAT_TEMPLATE_BINDING_OID`] (per ADR-022 / OCI-B). The `(model,
+    /// manifest, config)` triple is always bound; the chat-template is
+    /// only bound when supplied.
+    ///
+    /// We use a *separate* extension rather than extending
+    /// [`DigestTriple`] because the Compatibility Charter freezes the
+    /// digest-binding payload format at 96 bytes. Adding a fourth
+    /// digest there would break every previously-issued SVID's parser.
+    /// A new optional extension is back-compatible: pre-OCI-B SVIDs
+    /// simply lack it, and verifiers treat absence as "no
+    /// chat-template binding."
+    pub fn issue_svid_with_chat_template(
+        &self,
+        workload_name: &str,
+        instance: &str,
+        digests: DigestTriple,
+        chat_template: Option<Digest>,
     ) -> Result<X509Svid> {
         let spiffe_id = SpiffeId::new(&self.trust_domain, workload_name, instance)?;
         let now = OffsetDateTime::now_utc();
@@ -166,12 +196,20 @@ impl LocalCa {
         ext.set_criticality(false);
         params.custom_extensions.push(ext);
 
+        if let Some(template) = chat_template {
+            let mut ct_ext =
+                CustomExtension::from_oid_content(CHAT_TEMPLATE_BINDING_OID, template.0.to_vec());
+            ct_ext.set_criticality(false);
+            params.custom_extensions.push(ct_ext);
+        }
+
         let leaf_key = KeyPair::generate()?;
         let leaf = params.signed_by(&leaf_key, &self.ca_cert, &self.ca_key)?;
 
         Ok(X509Svid {
             spiffe_id,
             digests,
+            chat_template,
             cert_pem: leaf.pem(),
             key_pem: leaf_key.serialize_pem(),
         })
@@ -234,6 +272,42 @@ pub fn extract_digest_triple_from_pem(cert_pem: &str) -> Result<DigestTriple> {
         .ok_or_else(|| Error::CertParse(format!("missing digest-binding extension {oid_str}")))?;
 
     DigestTriple::decode(ext.value)
+}
+
+/// Extract the chat-template binding from an SVID PEM, if present. Per
+/// ADR-022 / OCI-B this extension is **optional** — `Ok(None)` means the
+/// SVID was issued without a chat-template digest (back-compatible with
+/// every pre-OCI-B SVID). `Ok(Some(digest))` returns the bound 32-byte
+/// SHA-256. `Err` only for cert-format problems or a malformed payload.
+pub fn extract_chat_template_from_pem(cert_pem: &str) -> Result<Option<Digest>> {
+    use x509_parser::parse_x509_certificate;
+    use x509_parser::pem::Pem;
+
+    let pem = Pem::iter_from_buffer(cert_pem.as_bytes())
+        .next()
+        .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
+        .map_err(|e| Error::CertParse(e.to_string()))?;
+    let (_, cert) =
+        parse_x509_certificate(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
+
+    let oid_str = oid_components_to_dotted(CHAT_TEMPLATE_BINDING_OID);
+    match cert
+        .extensions()
+        .iter()
+        .find(|e| e.oid.to_id_string() == oid_str)
+    {
+        Some(ext) => {
+            if ext.value.len() != CHAT_TEMPLATE_BINDING_LEN {
+                return Err(Error::CertParse(format!(
+                    "chat-template binding extension has wrong length: expected {}, got {}",
+                    CHAT_TEMPLATE_BINDING_LEN,
+                    ext.value.len()
+                )));
+            }
+            Ok(Some(Digest::from_bytes(ext.value)?))
+        }
+        None => Ok(None),
+    }
 }
 
 /// Like `extract_digest_triple_from_pem` but for the SPIFFE ID encoded in the

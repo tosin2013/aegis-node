@@ -19,6 +19,22 @@ pub const DIGEST_BINDING_OID: &[u64] = &[1, 3, 6, 1, 4, 1, 99999, 1];
 /// Length of the digest-binding extension payload (model || manifest || config).
 pub const DIGEST_BINDING_LEN: usize = 32 * 3;
 
+/// Aegis private chat-template-binding OID — separate extension from the
+/// `(model, manifest, config)` triple so adding it doesn't break wire-format
+/// compatibility with SVIDs issued before OCI-B (per [ADR-022](../../docs/adrs/022-trust-boundary-format-agnosticism.md)).
+/// The extension is **optional**: SVIDs issued without an upstream chat-template
+/// claim simply omit it. Verifiers treat absence as "no chat-template binding,"
+/// not as a violation.
+///
+/// Payload is a single 32-byte SHA-256 of the GGUF's `tokenizer.chat_template`
+/// bytes — the same value the publisher set in the cosign-covered manifest
+/// annotation `dev.aegis-node.chat-template.sha256` (see
+/// `aegis_cli::pull::CHAT_TEMPLATE_SHA_ANNOTATION`).
+pub const CHAT_TEMPLATE_BINDING_OID: &[u64] = &[1, 3, 6, 1, 4, 1, 99999, 2];
+
+/// Length of the chat-template-binding extension payload.
+pub const CHAT_TEMPLATE_BINDING_LEN: usize = 32;
+
 /// SHA-256 digest of one bound artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Digest(pub [u8; 32]);
@@ -87,6 +103,10 @@ impl DigestTriple {
 pub struct X509Svid {
     pub spiffe_id: SpiffeId,
     pub digests: DigestTriple,
+    /// Chat-template binding (per ADR-022 / OCI-B). `Some` when the issuer
+    /// was given a chat-template digest; `None` when the SVID was issued
+    /// without one (back-compatible — every pre-OCI-B SVID is `None`).
+    pub chat_template: Option<Digest>,
     pub cert_pem: String,
     pub key_pem: String,
 }

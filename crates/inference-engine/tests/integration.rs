@@ -38,6 +38,7 @@ fn boot_cfg(dir: &Path, ca_dir: &Path, session_id: &str) -> BootConfig {
         manifest_path,
         model_path,
         config_path: None,
+        chat_template_sidecar: None,
         identity_dir: ca_dir.to_path_buf(),
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
@@ -137,6 +138,7 @@ tools: {}
         manifest_path,
         model_path: dir.path().join("model.gguf"),
         config_path: None,
+        chat_template_sidecar: None,
         identity_dir: ca_dir.path().to_path_buf(),
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
@@ -144,6 +146,90 @@ tools: {}
     };
     let err = Session::boot(cfg).unwrap_err();
     assert!(matches!(err, Error::Policy(_)), "got {err:?}");
+}
+
+#[test]
+fn boot_with_chat_template_sidecar_binds_into_svid_and_ledger() {
+    // Per ADR-022 / OCI-B (b): when the caller supplies a
+    // `chat_template.sha256.txt` sidecar (produced by `aegis pull`),
+    // boot reads the hex SHA-256, binds it into the SVID via the
+    // CHAT_TEMPLATE_BINDING_OID extension, and writes a
+    // `chatTemplateDigestHex` field into SessionStart.
+    use aegis_identity::{extract_chat_template_from_pem, Digest};
+
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let template_hex = "d5495a1e5db0611132a97e46a65dbb64a642a499421228b9c8b93229097fa9a4";
+    let sidecar = dir.path().join("chat_template.sha256.txt");
+    std::fs::write(&sidecar, template_hex).unwrap();
+
+    let mut cfg = boot_cfg(dir.path(), ca_dir.path(), "session-template-bound");
+    cfg.chat_template_sidecar = Some(sidecar);
+    let ledger_path = cfg.ledger_path.clone();
+
+    let session = Session::boot(cfg).unwrap();
+
+    // SVID carries the chat-template extension with the same digest.
+    let bound = session.bound_chat_template().copied().unwrap();
+    assert_eq!(bound, Digest::from_hex(template_hex).unwrap());
+    let extracted = extract_chat_template_from_pem(session.cert_pem()).unwrap();
+    assert_eq!(extracted, Some(bound));
+
+    // SessionStart entry surfaces the digest for audit consumption.
+    let _ = session.shutdown().unwrap();
+    let content = std::fs::read_to_string(&ledger_path).unwrap();
+    let v0: Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+    assert_eq!(v0["entryType"], "session_start");
+    assert_eq!(v0["chatTemplateDigestHex"].as_str().unwrap(), template_hex);
+}
+
+#[test]
+fn boot_refuses_when_chat_template_sidecar_is_malformed() {
+    // Sidecar present but its contents aren't a 64-char hex SHA-256
+    // (e.g., truncated, mid-write tampering). The fail-closed pull-side
+    // gate from OCI-B (a) is mirrored at boot — refuse rather than bind
+    // a placeholder digest.
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let sidecar = dir.path().join("chat_template.sha256.txt");
+    std::fs::write(&sidecar, "not-hex-and-too-short").unwrap();
+
+    let mut cfg = boot_cfg(dir.path(), ca_dir.path(), "session-bad-sidecar");
+    cfg.chat_template_sidecar = Some(sidecar);
+    let ledger_path = cfg.ledger_path.clone();
+
+    let err = Session::boot(cfg).unwrap_err();
+    assert!(
+        matches!(err, Error::ChatTemplateSidecar { .. }),
+        "got {err:?}"
+    );
+    // No partial ledger left behind.
+    assert!(!ledger_path.exists());
+}
+
+#[test]
+fn boot_refuses_when_chat_template_sidecar_is_missing() {
+    // Caller pointed at a sidecar that doesn't exist. Treat as a
+    // configuration error (the sidecar is the binding's input — its
+    // absence means the operator pinned a path that isn't there).
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let mut cfg = boot_cfg(dir.path(), ca_dir.path(), "session-absent-sidecar");
+    cfg.chat_template_sidecar = Some(dir.path().join("does-not-exist.txt"));
+    let ledger_path = cfg.ledger_path.clone();
+
+    let err = Session::boot(cfg).unwrap_err();
+    assert!(
+        matches!(err, Error::ChatTemplateSidecar { .. }),
+        "got {err:?}"
+    );
+    assert!(!ledger_path.exists());
 }
 
 #[test]
