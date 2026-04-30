@@ -48,6 +48,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use std::path::Path;
+use std::sync::Arc;
 
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -56,6 +57,9 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use thiserror::Error;
+
+pub mod chat;
+pub use chat::{LlamaCppBackend, LlamaCppLoadedModel};
 
 /// All errors the wrapper surfaces. Each variant maps to one phase of
 /// `Model::load` / `Session::infer` so an operator can see exactly
@@ -165,30 +169,40 @@ impl Backend {
     }
 }
 
-/// A loaded GGUF model. Borrows `&Backend`, so the backend is
-/// statically guaranteed to outlive the model. On `Drop`, llama.cpp
-/// releases the model weights — that's `LlamaModel::Drop`'s job, which
-/// we just wrap.
-pub struct Model<'b> {
+/// A loaded GGUF model. Owns an `Arc<Backend>` so it has no lifetime
+/// parameter — required for `Box<dyn LoadedModel>` in the LLM-B trait
+/// (the dyn-trait object can't carry a Rust lifetime). The Arc is
+/// cheap to clone and ensures the backend stays alive as long as
+/// any model derived from it.
+///
+/// On `Drop`, llama.cpp releases the model weights — that's
+/// `LlamaModel::Drop`'s job, which we just wrap.
+pub struct Model {
     inner: LlamaModel,
-    /// The `Backend` reference that authorized this model load. Held
-    /// only for the lifetime tie; we never read it again.
-    _backend: &'b Backend,
+    /// Shared `Backend` ownership. The Arc is the only thing keeping
+    /// the backend alive when callers drop their original `Backend`
+    /// handle.
+    backend: Arc<Backend>,
 }
 
-impl std::fmt::Debug for Model<'_> {
+impl std::fmt::Debug for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Model").finish_non_exhaustive()
     }
 }
 
-impl<'b> Model<'b> {
+impl Model {
     /// Load a GGUF model from disk.
+    ///
+    /// `backend` is taken by `Arc` so the resulting `Model` is
+    /// `'static` and can be moved into a `Box<dyn LoadedModel>`. Clone
+    /// the Arc cheaply if you need the backend handle to outlive any
+    /// individual model.
     ///
     /// Errors are mapped to typed variants so the caller (and the F1
     /// boot path) sees exactly which gate refused: the file system,
     /// the GGUF parser, or context allocation.
-    pub fn load(backend: &'b Backend, path: &Path) -> Result<Self, LlamaError> {
+    pub fn load(backend: Arc<Backend>, path: &Path) -> Result<Self, LlamaError> {
         if !path.exists() {
             return Err(LlamaError::ModelFileUnreadable {
                 path: path.display().to_string(),
@@ -203,14 +217,11 @@ impl<'b> Model<'b> {
 
         // SAFETY-INVARIANT (delegated to llama-cpp-2):
         // `LlamaModel::load_from_file` requires a valid `&LlamaBackend`
-        // (held alive by the lifetime tie above) and a valid file
-        // path. It returns `Err` for any FFI / IO problem; we never
-        // unwrap here.
+        // (held alive by the Arc field below) and a valid file path.
+        // It returns `Err` for any FFI / IO problem; we never unwrap
+        // here.
         match LlamaModel::load_from_file(&backend.inner, path, &params) {
-            Ok(inner) => Ok(Self {
-                inner,
-                _backend: backend,
-            }),
+            Ok(inner) => Ok(Self { inner, backend }),
             Err(e) => Err(LlamaError::ModelLoadFailed {
                 path: path.display().to_string(),
                 detail: e.to_string(),
@@ -251,8 +262,8 @@ impl Default for SessionOptions {
 
 /// A single-shot inference session. Holds a llama.cpp context bound to
 /// `&Model`; on `Drop`, the context is released by `LlamaContext::Drop`.
-pub struct Session<'m, 'b> {
-    model: &'m Model<'b>,
+pub struct Session<'m> {
+    model: &'m Model,
     /// Shadow of [`SessionOptions::max_tokens`] — kept on the session
     /// so each `infer` call is bounded the same way.
     max_tokens: u32,
@@ -263,9 +274,9 @@ pub struct Session<'m, 'b> {
     context: llama_cpp_2::context::LlamaContext<'m>,
 }
 
-impl<'m, 'b> Session<'m, 'b> {
+impl<'m> Session<'m> {
     /// Open a fresh inference context against `model`.
-    pub fn new(model: &'m Model<'b>, options: SessionOptions) -> Result<Self, LlamaError> {
+    pub fn new(model: &'m Model, options: SessionOptions) -> Result<Self, LlamaError> {
         if options.max_tokens == 0 {
             return Err(LlamaError::InvalidConfig("max_tokens must be > 0"));
         }
@@ -285,7 +296,7 @@ impl<'m, 'b> Session<'m, 'b> {
         // don't unwrap.
         let context = model
             .inner
-            .new_context(&model._backend.inner, params)
+            .new_context(&model.backend.inner, params)
             .map_err(|e| LlamaError::SessionInitFailed(e.to_string()))?;
 
         // Greedy sampler — `temperature=0`, no top-k / top-p. LLM-C

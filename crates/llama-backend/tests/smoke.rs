@@ -27,6 +27,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use aegis_llama_backend::{Backend, LlamaError, Model, Session, SessionOptions};
 
@@ -39,13 +40,13 @@ fn fixture_path() -> Option<PathBuf> {
 #[test]
 fn missing_model_file_returns_typed_error() {
     let backend = match Backend::init() {
-        Ok(b) => b,
+        Ok(b) => Arc::new(b),
         Err(e) => {
             eprintln!("[skipped] backend init failed: {e}");
             return;
         }
     };
-    let err = Model::load(&backend, std::path::Path::new("/no/such/path.gguf")).unwrap_err();
+    let err = Model::load(backend, std::path::Path::new("/no/such/path.gguf")).unwrap_err();
     assert!(
         matches!(err, LlamaError::ModelFileUnreadable { .. }),
         "got {err:?}"
@@ -67,8 +68,8 @@ fn smoke_load_and_infer_one_turn() {
         return;
     }
 
-    let backend = Backend::init().expect("backend init");
-    let model = Model::load(&backend, &path).expect("model load");
+    let backend = Arc::new(Backend::init().expect("backend init"));
+    let model = Model::load(backend, &path).expect("model load");
     let mut session = Session::new(
         &model,
         SessionOptions {

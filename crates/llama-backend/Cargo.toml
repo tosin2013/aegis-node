@@ -17,6 +17,18 @@ workspace = true
 # bump is an explicit, reviewed change to this number.
 llama-cpp-2 = "=0.1.145"
 thiserror = "1"
+# The Backend / LoadedModel traits + chat-time types live in
+# `aegis-inference-engine` so the runtime build path stays clear of
+# llama.cpp. Per LLM-B / ADR-014.
+aegis-inference-engine = { path = "../inference-engine" }
+# `chat.rs` serializes tool catalogs as JSON for the OpenAI-compatible
+# chat template path and parses tool-call blocks from raw model output.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+# Real-model end-to-end test in `tests/run_turn_real_model.rs` boots a
+# full `aegis_inference_engine::Session` against a live GGUF — needs
+# the local-CA helper for SVID issuance.
+aegis-identity = { path = "../identity" }
