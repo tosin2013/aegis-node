@@ -32,6 +32,24 @@ pub enum Error {
     #[error("chat-template sidecar at {path:?}: {detail}")]
     ChatTemplateSidecar { path: String, detail: String },
 
+    /// `Session::run_turn` was called but no [`crate::backend::LoadedModel`]
+    /// is attached. Use [`crate::Session::with_loaded_model`] after boot.
+    #[error("no inference backend configured for session (call with_loaded_model first)")]
+    NoBackendConfigured,
+
+    /// The model returned an error from its `infer` call. The detail
+    /// carries the impl-specific reason; the kind discriminates so the
+    /// mediator can decide whether to halt or continue.
+    #[error("backend infer failed: {0}")]
+    BackendInfer(#[from] crate::backend::BackendError),
+
+    /// `run_turn` parsed a tool call whose name doesn't match the
+    /// expected `<server>__<tool>` shape (per ADR-018 LLM-B contract).
+    /// The model emitted something the runtime can't dispatch — record
+    /// the violation, don't try to interpret.
+    #[error("tool call name {name:?} is not in the expected <server>__<tool> shape")]
+    UnroutableToolCall { name: String },
+
     #[error("access-log: {0}")]
     AccessLog(#[from] aegis_access_log::Error),
 

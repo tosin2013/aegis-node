@@ -90,6 +90,10 @@ pub struct Session {
     /// session — the mediator returns `Error::Denied` rather than panic.
     /// Set via [`Session::with_mcp_client`] after boot.
     pub(crate) mcp_client: Option<Box<dyn McpClient>>,
+    /// LLM-B inference backend. None means `run_turn` is unavailable
+    /// (the legacy fixed-script `run` path keeps working). Set via
+    /// [`Session::with_loaded_model`] after boot. Per ADR-014.
+    pub(crate) loaded_model: Option<Box<dyn crate::backend::LoadedModel>>,
 }
 
 /// One observed network-connection attempt + the gate's decision.
@@ -229,6 +233,7 @@ impl Session {
             approval_channel: None,
             network_log: Vec::new(),
             mcp_client: None,
+            loaded_model: None,
         })
     }
 
@@ -246,6 +251,14 @@ impl Session {
     /// Violation citing "no MCP client configured").
     pub fn with_mcp_client(mut self, client: Box<dyn McpClient>) -> Self {
         self.mcp_client = Some(client);
+        self
+    }
+
+    /// Attach an LLM-B inference backend. Required to invoke
+    /// [`Self::run_turn`]; without it `run_turn` returns
+    /// [`Error::NoBackendConfigured`]. Per ADR-014 / LLM-B.
+    pub fn with_loaded_model(mut self, model: Box<dyn crate::backend::LoadedModel>) -> Self {
+        self.loaded_model = Some(model);
         self
     }
 

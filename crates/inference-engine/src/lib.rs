@@ -11,9 +11,16 @@
 //! that point.
 
 pub mod attestation;
+pub mod backend;
 pub mod error;
 mod mediator;
 mod session;
+mod turn;
 
+pub use backend::{
+    Backend, BackendError, BackendErrorKind, ChatMessage, ChatRole, InferRequest, InferResponse,
+    LoadedModel, ToolCall, ToolDecl,
+};
 pub use error::{Error, Result};
 pub use session::{BootConfig, NetworkConnectionDecision, NetworkConnectionMeta, Session};
+pub use turn::{ToolCallOutcome, ToolCallResult, TurnOutcome};
