@@ -116,6 +116,37 @@ jobs:
           echo "hex=${digest}" >> "$GITHUB_OUTPUT"
           echo "Computed sha256: ${digest}"
 
+      # Per ADR-022: the publisher computes format-specific facts (here
+      # the chat-template hash) and asserts them via cosign-signed
+      # manifest annotations. The runtime never parses GGUF bytes; it
+      # trusts the cosign-covered annotation. Use the official
+      # ggml-org `gguf` Python package — when GGUF v4 ships, this is
+      # the first place to update.
+      - name: Extract tokenizer.chat_template SHA-256
+        id: chat_template
+        run: |
+          set -euo pipefail
+          pip install --no-cache-dir 'gguf>=0.10.0'
+          python3 - <<'PY'
+          from gguf import GGUFReader
+          import hashlib, os, sys
+          r = GGUFReader('${{ steps.download.outputs.path }}', 'r')
+          field = r.get_field('tokenizer.chat_template')
+          if field is None:
+              print('::error::tokenizer.chat_template absent from GGUF — refuse to publish (ADR-022)', file=sys.stderr)
+              sys.exit(2)
+          # GGUFReader STRING values come back as a list of numpy uint8
+          # arrays (one per part). For a STRING the first part is the
+          # bytes; concat to be safe across versions of gguf-py.
+          parts = b''.join(bytes(field.parts[i]) for i in field.data)
+          digest = hashlib.sha256(parts).hexdigest()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'sha256={digest}\n')
+              f.write(f'length={len(parts)}\n')
+          print(f'chat-template length: {len(parts)} bytes')
+          print(f'chat-template sha256: {digest}')
+          PY
+
       - name: Push as single-blob OCI artifact
         id: push
         env:
@@ -143,6 +174,7 @@ jobs:
             --annotation "dev.aegis-node.upstream.repo=${{ inputs.hf_repo }}" \
             --annotation "dev.aegis-node.upstream.revision=${{ inputs.hf_revision }}" \
             --annotation "dev.aegis-node.upstream.filename=${{ inputs.gguf_filename }}" \
+            --annotation "dev.aegis-node.chat-template.sha256=${{ steps.chat_template.outputs.sha256 }}" \
             "${file_name}:application/vnd.aegis-node.model.gguf.v1"
 
           desc=$(oras manifest fetch --descriptor "$ref")
@@ -171,12 +203,14 @@ jobs:
       - name: Print pinning info for ADR-020 / SUPPLY_CHAIN.md
         run: |
           echo "::notice title=Published OCI artifact::"
-          echo "ref:                ${{ steps.target.outputs.ref }}"
-          echo "manifest_digest:    ${{ steps.push.outputs.manifest_digest }}"
-          echo "blob_sha256:        ${{ steps.sha.outputs.hex }}"
-          echo "hf_repo:            ${{ inputs.hf_repo }}"
-          echo "hf_revision:        ${{ inputs.hf_revision }}"
-          echo "filename:           ${{ inputs.gguf_filename }}"
+          echo "ref:                  ${{ steps.target.outputs.ref }}"
+          echo "manifest_digest:      ${{ steps.push.outputs.manifest_digest }}"
+          echo "blob_sha256:          ${{ steps.sha.outputs.hex }}"
+          echo "chat_template_sha256: ${{ steps.chat_template.outputs.sha256 }}"
+          echo "chat_template_length: ${{ steps.chat_template.outputs.length }} bytes"
+          echo "hf_repo:              ${{ inputs.hf_repo }}"
+          echo "hf_revision:          ${{ inputs.hf_revision }}"
+          echo "filename:             ${{ inputs.gguf_filename }}"
           echo
-          echo "Pin in ADR-020 + SUPPLY_CHAIN.md:"
+          echo "Pin in ADR-020 + SUPPLY_CHAIN.md + tests/pull_real_image.rs:"
           echo "  ${{ steps.target.outputs.ref }}@${{ steps.push.outputs.manifest_digest }}"

@@ -38,6 +38,13 @@ const PINNED_REF: &str = "ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instr
 const PINNED_MANIFEST_SHA: &str =
     "240ece322070801d583241caaeced1a6b1ac55cbe42bf5379e95735ca89d4fa6";
 const PINNED_BLOB_SHA: &str = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e";
+/// SHA-256 of the `tokenizer.chat_template` STRING value embedded in the
+/// pinned Qwen GGUF (extracted from the file at HF revision
+/// `91cad51170dc346986eccefdc2dd33a9da36ead9`). Exercises OCI-B's
+/// chat-template extraction against a real Jinja template — matches the
+/// 2509-byte `{%- if tools %}...` block visible at upstream.
+const PINNED_CHAT_TEMPLATE_SHA: &str =
+    "d5495a1e5db0611132a97e46a65dbb64a642a499421228b9c8b93229097fa9a4";
 
 /// Identity regex matching the `models-publish.yml` workflow that signed
 /// the artifact. Must stay in lockstep with the workflow file.
@@ -118,6 +125,32 @@ fn pull_qwen_model_round_trips_against_real_registry() {
         &head[..4],
         b"GGUF",
         "first 4 bytes are not the GGUF magic — pulled artifact is not a GGUF"
+    );
+
+    // OCI-B: chat-template SHA-256 was extracted from the GGUF metadata
+    // and is surfaced + persisted in a sidecar. Pinned against the
+    // upstream HF revision so a template swap (template-only poisoning,
+    // ADR-013 §4) trips this assertion before any session-boot binding
+    // is wired up.
+    assert_eq!(
+        pulled.chat_template_sha256_hex.as_deref(),
+        Some(PINNED_CHAT_TEMPLATE_SHA),
+        "extracted chat-template SHA-256 does not match the pinned digest \
+         (upstream chat-template may have changed — re-pin only after manual review)"
+    );
+    let template_sidecar = pulled
+        .blob_path
+        .parent()
+        .unwrap()
+        .join("chat_template.sha256.txt");
+    assert!(
+        template_sidecar.exists(),
+        "chat_template.sha256.txt sidecar missing — F1 SVID binding will have nothing to read"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&template_sidecar).unwrap().trim(),
+        PINNED_CHAT_TEMPLATE_SHA,
+        "chat_template.sha256.txt should record the pinned digest"
     );
 }
 
