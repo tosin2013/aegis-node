@@ -227,6 +227,19 @@ pub fn execute(args: RunArgs) -> Result<RunOutcome> {
         session = session.with_approval_channel(Box::new(channel));
     }
 
+    // Attach a stdio MCP client when the manifest declares any
+    // `tools.mcp[]` servers (per ADR-018). Without this, the
+    // mediator denies every MCP tool call with "no mcp client
+    // configured for session" — fine for script-mode runs that
+    // don't use MCP at all, but a regression for `--prompt` against
+    // a manifest that grants MCP servers. Each `server_uri` is a
+    // `stdio:/path/to/binary [args...]` URI per ADR-018; the client
+    // spawns the child process on first invocation per server.
+    if !session.policy().manifest().tools.mcp.is_empty() {
+        let mcp_client = aegis_mcp_client::StdioMcpClient::new();
+        session = session.with_mcp_client(Box::new(mcp_client));
+    }
+
     let (halted, halt_reason) = match (args.prompt.as_ref(), args.script.as_ref()) {
         (Some(prompt), _) => run_prompt(&mut session, &args, prompt)?,
         (None, Some(script_path)) => run_script(&mut session, script_path)?,

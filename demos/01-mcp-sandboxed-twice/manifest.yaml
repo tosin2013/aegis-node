@@ -1,0 +1,81 @@
+# Demo 01 — MCP, sandboxed twice (per ADR-020 §"Six scenarios" item 1
+# + ADR-024 per-tool pre-validation).
+#
+# The agent uses the Anthropic filesystem MCP server in read-only
+# mode, but two layers of enforcement guard every call:
+#
+#   1. tools.mcp[].allowed_tools — protocol-level allowlist. Tools
+#      not in the list (write_file, edit_file, etc.) are refused at
+#      the MCP-allowlist layer with `mcp://server/tool` resource_uri.
+#
+#   2. ADR-024 pre_validate clauses — per-tool side-effect mapping.
+#      For tools that take filesystem-shaped paths, the mediator
+#      extracts the path arg and runs it through tools.filesystem.read
+#      before dispatching to the MCP server. Paths outside the
+#      grant land as Violations with the distinguishable
+#      `mcp-prevalidate://server/tool?path=...` resource_uri so an
+#      auditor can tell which layer refused.
+#
+# Both layers must permit the operation. The demo recording walks
+# the agent through three calls — one allowed, one MCP-allowed-but-
+# pre-validate-denied, one MCP-denied — to make the two layers
+# legible at a glance.
+
+schemaVersion: "1"
+agent:
+  name: "research-mcp"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/research-mcp/inst-001"
+tools:
+  # The agent may read files under /data — that's where its
+  # research notes live. Reading outside this prefix (e.g. /etc/passwd)
+  # is denied by the syscall-shaped pre_validate clause below.
+  filesystem:
+    read:
+      - "/data"
+  network:
+    outbound: deny
+    inbound: deny
+  mcp:
+    # `filesystem` collides with the reserved native namespace
+    # (filesystem__/network__/exec__ — per #92), so the MCP server's
+    # name is `fs-mcp` even though upstream is the Anthropic
+    # @modelcontextprotocol/server-filesystem.
+    - server_name: "fs-mcp"
+      # The Anthropic mcp-server-filesystem requires at least one
+      # allowed-directory argument; we pass /data so the agent's
+      # /data/research-notes.txt read can land. The MCP server's
+      # OS-level enforcement is the sandbox's *first* layer; the
+      # ADR-024 pre_validate clause below is the *second*. Both
+      # have to permit a call before it dispatches.
+      server_uri: "stdio:/usr/bin/mcp-server-filesystem /data"
+      # Read-only subset of the upstream tool catalog, with
+      # ADR-024 pre_validate clauses on every path-shaped tool.
+      # write_file, edit_file, move_file, create_directory are
+      # deliberately omitted from the list — closed-by-default keeps
+      # them denied at the MCP-allowlist layer regardless of what
+      # the upstream server advertises.
+      allowed_tools:
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "list_directory"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        # Bare-name shorthand: returns the configured roots, no path
+        # argument to pre-validate.
+        - "list_allowed_directories"
+
+# Per ADR-020 + LLM-C: pin the determinism knobs so re-renders are
+# byte-identical. seed=42 + temperature=0 → greedy sampling →
+# reproducible output across runs.
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

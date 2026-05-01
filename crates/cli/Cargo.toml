@@ -39,6 +39,7 @@ aegis-inference-engine = { path = "../inference-engine" }
 aegis-ledger-writer = { path = "../ledger-writer" }
 aegis-llama-backend = { path = "../llama-backend", optional = true }
 aegis-litertlm-backend = { path = "../litertlm-backend", optional = true }
+aegis-mcp-client = { path = "../mcp-client" }
 aegis-policy = { path = "../policy" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
