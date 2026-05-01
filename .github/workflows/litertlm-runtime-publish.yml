@@ -170,17 +170,51 @@ jobs:
           # operate on a stable path.
           mkdir -p ../artifact
           cp "$out" ../artifact/libaegis_litertlm_engine_cpu.so
+
+          # Locate the constrained-decoding sidekick libGemmaModelConstraintProvider.so.
+          # The engine_cpu_shared .so has a DT_NEEDED entry for it
+          # (grammar-constrained sampler implementation, used by Gemma's
+          # tool-call decoder). Upstream ships it as a vendored, LFS-tracked
+          # prebuilt at:
+          #   runtime/components/constrained_decoding/
+          #     gemma_model_constraint_provider_shared_lib_prebuilt_linux_x86_64/
+          #     libGemmaModelConstraintProvider.so
+          # The runtime dynamic linker has to find it at session load time
+          # via the rpath of libaegis_litertlm_engine_cpu.so — we bundle
+          # both into the same OCI artifact so litertlm-sys's build.rs
+          # materializes them side-by-side.
+          gemma_so=$(find runtime/components/constrained_decoding \
+            -name 'libGemmaModelConstraintProvider.so' -print -quit 2>/dev/null || true)
+          if [[ -z "$gemma_so" || ! -f "$gemma_so" ]]; then
+            echo "::error::Could not locate libGemmaModelConstraintProvider.so in upstream tree (LFS pull may have failed)." >&2
+            find runtime/components/constrained_decoding -type f -print | head -20 || true
+            exit 2
+          fi
+          # Confirm we have the binary content, not an LFS pointer file.
+          if head -c 8 "$gemma_so" | grep -q 'version'; then
+            echo "::error::$gemma_so is an LFS pointer file, not the binary. Re-check actions/checkout's lfs:true setting." >&2
+            head -c 200 "$gemma_so" || true
+            exit 2
+          fi
+          cp "$gemma_so" ../artifact/libGemmaModelConstraintProvider.so
+
           echo "path=$(realpath ../artifact/libaegis_litertlm_engine_cpu.so)" >> "$GITHUB_OUTPUT"
+          echo "gemma_path=$(realpath ../artifact/libGemmaModelConstraintProvider.so)" >> "$GITHUB_OUTPUT"
+          echo "artifact_dir=$(realpath ../artifact)" >> "$GITHUB_OUTPUT"
           ls -lh ../artifact/
 
-      - name: Compute SHA-256 of the runtime .so
+      - name: Compute SHA-256s of the runtime .so files
         id: sha
         run: |
           set -euo pipefail
           path='${{ steps.build.outputs.path }}'
+          gemma_path='${{ steps.build.outputs.gemma_path }}'
           digest=$(sha256sum "$path" | awk '{print $1}')
+          gemma_digest=$(sha256sum "$gemma_path" | awk '{print $1}')
           echo "hex=${digest}" >> "$GITHUB_OUTPUT"
-          echo "Computed sha256: ${digest}"
+          echo "gemma_hex=${gemma_digest}" >> "$GITHUB_OUTPUT"
+          echo "Computed sha256 (engine_cpu): ${digest}"
+          echo "Computed sha256 (gemma_constraint_provider): ${gemma_digest}"
 
       - name: Capture build environment metadata
         id: env
@@ -230,10 +264,12 @@ jobs:
 
           ref='${{ steps.target.outputs.ref }}'
           path='${{ steps.build.outputs.path }}'
+          gemma_path='${{ steps.build.outputs.gemma_path }}'
           # `oras push` refuses absolute paths in layer names; cd into
-          # the artifact dir.
-          artifact_dir="$(dirname "$path")"
+          # the artifact dir so the layer titles are bare filenames.
+          artifact_dir='${{ steps.build.outputs.artifact_dir }}'
           file_name="$(basename "$path")"
+          gemma_name="$(basename "$gemma_path")"
           cd "$artifact_dir"
 
           oras push "$ref" \
@@ -249,10 +285,12 @@ jobs:
             --annotation "dev.aegis-node.bazel.target=//c:engine_cpu_shared" \
             --annotation "dev.aegis-node.glibc.target=${{ steps.env.outputs.glibc }}" \
             --annotation "dev.aegis-node.runtime.so.sha256=${{ steps.sha.outputs.hex }}" \
+            --annotation "dev.aegis-node.runtime.constraint_provider_so.sha256=${{ steps.sha.outputs.gemma_hex }}" \
             --annotation "dev.aegis-node.runtime.header.sha256=${{ steps.env.outputs.header_sha }}" \
             --annotation "dev.aegis-node.runtime.platform=linux/amd64" \
             --annotation "dev.aegis-node.runtime.kind=cpu-only" \
-            "${file_name}:application/vnd.aegis-node.litertlm-runtime.v1"
+            "${file_name}:application/vnd.aegis-node.litertlm-runtime.v1" \
+            "${gemma_name}:application/vnd.aegis-node.litertlm-runtime-constraint-provider.v1"
 
           desc=$(oras manifest fetch --descriptor "$ref")
           manifest_digest=$(echo "$desc" | jq -r '.digest')
@@ -280,15 +318,16 @@ jobs:
       - name: Print pinning info for ADR-023 + LiteRT-A
         run: |
           echo "::notice title=Published LiteRT-LM runtime artifact::"
-          echo "ref:                  ${{ steps.target.outputs.ref }}"
-          echo "manifest_digest:      ${{ steps.push.outputs.manifest_digest }}"
-          echo ".so sha256:           ${{ steps.sha.outputs.hex }}"
-          echo "header sha256:        ${{ steps.env.outputs.header_sha }}"
-          echo "upstream tag:         ${{ inputs.upstream_tag }}"
-          echo "upstream commit:      ${{ steps.upstream.outputs.commit }}"
-          echo "bazel:                ${{ steps.env.outputs.bazel }}"
-          echo "glibc target:         ${{ steps.env.outputs.glibc }}"
-          echo "platform:             linux/amd64 (cpu-only)"
+          echo "ref:                            ${{ steps.target.outputs.ref }}"
+          echo "manifest_digest:                ${{ steps.push.outputs.manifest_digest }}"
+          echo "engine_cpu .so sha256:          ${{ steps.sha.outputs.hex }}"
+          echo "constraint_provider .so sha256: ${{ steps.sha.outputs.gemma_hex }}"
+          echo "header sha256:                  ${{ steps.env.outputs.header_sha }}"
+          echo "upstream tag:                   ${{ inputs.upstream_tag }}"
+          echo "upstream commit:                ${{ steps.upstream.outputs.commit }}"
+          echo "bazel:                          ${{ steps.env.outputs.bazel }}"
+          echo "glibc target:                   ${{ steps.env.outputs.glibc }}"
+          echo "platform:                       linux/amd64 (cpu-only)"
           echo
-          echo "Pin in ADR-023 §Update + crates/litertlm-sys/Cargo.toml:"
+          echo "Pin in ADR-023 §Update + crates/litertlm-sys/build.rs:"
           echo "  ${{ steps.target.outputs.ref }}@${{ steps.push.outputs.manifest_digest }}"

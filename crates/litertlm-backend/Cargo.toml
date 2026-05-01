@@ -1,0 +1,24 @@
+[package]
+name = "aegis-litertlm-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Safe Rust wrapper around LiteRT-LM for the Aegis-Node runtime (per ADR-023, LiteRT-A)."
+
+[lints]
+workspace = true
+
+[dependencies]
+aegis-litertlm-sys = { path = "../litertlm-sys" }
+thiserror = "1"
+# `From<&aegis_policy::manifest::DeterminismKnobs>` for the
+# litertlm-backend mirror — same shape as llama-backend so a
+# manifest's `inference.determinism` block flows through unchanged
+# across both backends. Per LiteRT-A.
+aegis-policy = { path = "../policy" }
+
+[dev-dependencies]
+tempfile = "3"
