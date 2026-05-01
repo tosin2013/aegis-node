@@ -122,8 +122,9 @@ impl StdioMcpClient {
 
     fn ensure_connection(&mut self, server_uri: &str) -> Result<&mut StdioConnection> {
         if !self.connections.contains_key(server_uri) {
-            let path = parse_stdio_uri(server_uri)?;
+            let (path, args) = parse_stdio_uri(server_uri)?;
             let mut child = Command::new(path)
+                .args(args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::inherit())
@@ -197,12 +198,30 @@ impl Drop for StdioMcpClient {
     }
 }
 
-fn parse_stdio_uri(server_uri: &str) -> Result<&str> {
-    server_uri
+/// Parse a `stdio:` URI into `(binary_path, args)`. Whitespace
+/// between the path and any trailing tokens splits the path from
+/// its argv (shell-style). This is the minimum surface MCP servers
+/// like @modelcontextprotocol/server-filesystem need — they require
+/// at least one allowed-directory arg to operate. More exotic
+/// quoting (spaces in paths, etc.) isn't supported in Phase 1; the
+/// `server_uri` is operator-controlled, so a wrapper script is
+/// always available as an escape hatch.
+///
+/// Examples:
+///   stdio:/usr/bin/mcp-fs                 → ("/usr/bin/mcp-fs", [])
+///   stdio:/usr/bin/mcp-fs /data /docs     → ("/usr/bin/mcp-fs", ["/data", "/docs"])
+fn parse_stdio_uri(server_uri: &str) -> Result<(&str, Vec<&str>)> {
+    let rest = server_uri
         .strip_prefix("stdio:")
         .ok_or_else(|| Error::UnsupportedTransport {
             server_uri: server_uri.to_string(),
-        })
+        })?;
+    let mut parts = rest.split_whitespace();
+    let path = parts.next().ok_or_else(|| Error::UnsupportedTransport {
+        server_uri: server_uri.to_string(),
+    })?;
+    let args: Vec<&str> = parts.collect();
+    Ok((path, args))
 }
 
 /// Run the MCP initialize handshake. Aegis-Node advertises the minimum
