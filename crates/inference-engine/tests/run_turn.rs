@@ -293,3 +293,266 @@ fn run_turn_records_denied_tool_call_without_short_circuiting() {
         "ledger should have a Violation entry: {ledger}"
     );
 }
+
+// --- #92 native dispatch (filesystem / network / exec) -------------
+
+fn write_manifest_with_native_grants(path: &Path, dir: &Path) {
+    // Filesystem read covers the workdir + a denied path used by
+    // tests below to demonstrate the deny path. exec_grants is empty
+    // — the exec dispatch test uses the manifest's default closed
+    // policy. write_grants covers a single file.
+    let yaml = format!(
+        r#"schemaVersion: "1"
+agent: {{ name: "native-dispatch-test", version: "1.0.0" }}
+identity: {{ spiffeId: "spiffe://session-boot.local/agent/research/inst-001" }}
+tools:
+  filesystem:
+    read:
+      - "{dir}"
+write_grants:
+  - resource: "{dir}/out.txt"
+    actions: ["write"]
+    duration: "PT1H"
+"#,
+        dir = dir.display()
+    );
+    std::fs::write(path, yaml).unwrap();
+}
+
+fn boot_session_with_manifest(
+    dir: &Path,
+    ca_dir: &Path,
+    manifest_yaml: &str,
+    session_id: &str,
+) -> Session {
+    LocalCa::init(ca_dir, TRUST_DOMAIN).unwrap();
+    let manifest_path = dir.join("manifest.yaml");
+    let model_path = dir.join("model.gguf");
+    let ledger_path = dir.join("ledger.jsonl");
+    std::fs::write(&manifest_path, manifest_yaml).unwrap();
+    std::fs::write(&model_path, b"fake-model-bytes-for-test").unwrap();
+
+    let cfg = BootConfig {
+        session_id: session_id.to_string(),
+        manifest_path,
+        model_path,
+        config_path: None,
+        chat_template_sidecar: None,
+        identity_dir: ca_dir.to_path_buf(),
+        workload_name: "research".to_string(),
+        instance: "inst-001".to_string(),
+        ledger_path,
+    };
+    Session::boot(cfg).unwrap()
+}
+
+#[test]
+fn run_turn_dispatches_filesystem_read_natively_and_returns_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+
+    // File the model will "read" via filesystem__read.
+    let target = dir.path().join("notes.txt");
+    std::fs::write(&target, b"hello from the native fs read").unwrap();
+
+    let manifest_path = dir.path().join("manifest.yaml");
+    write_manifest_with_native_grants(&manifest_path, dir.path());
+    let manifest_yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let session =
+        boot_session_with_manifest(dir.path(), ca_dir.path(), &manifest_yaml, "session-fs-read");
+
+    let response = InferResponse {
+        reasoning: "Reading the notes file.".to_string(),
+        tool_calls: vec![ToolCall {
+            name: "filesystem__read".to_string(),
+            arguments: serde_json::json!({"path": target.to_str().unwrap()}),
+        }],
+        assistant_text: Some("Reading.".to_string()),
+    };
+    let (mock, mock_handle) = MockLoadedModel::new(vec![Ok(response)]);
+    let mut session = session.with_loaded_model(Box::new(mock));
+
+    let outcome = session.run_turn("read the file").unwrap();
+    assert_eq!(outcome.tool_calls.len(), 1);
+    match &outcome.tool_calls[0].result {
+        ToolCallResult::Success(v) => {
+            assert_eq!(v["contents"], "hello from the native fs read");
+            assert_eq!(v["bytes"], 29);
+        }
+        other => panic!("expected Success, got {other:?}"),
+    }
+
+    // The catalog the model saw included `filesystem__read` (no MCP entries).
+    let captured = mock_handle.captured_requests();
+    assert!(
+        captured[0]
+            .tools
+            .iter()
+            .any(|t| t.name == "filesystem__read"),
+        "catalog should advertise filesystem__read: {:?}",
+        captured[0]
+            .tools
+            .iter()
+            .map(|t| &t.name)
+            .collect::<Vec<_>>()
+    );
+
+    let _ = session.shutdown().unwrap();
+    let ledger = std::fs::read_to_string(dir.path().join("ledger.jsonl")).unwrap();
+    assert!(
+        ledger.contains("\"entryType\":\"access\""),
+        "expected Access entry in ledger: {ledger}"
+    );
+}
+
+#[test]
+fn run_turn_records_denied_filesystem_read_outside_allowed_paths() {
+    // Path NOT covered by the manifest's tools.filesystem.read.
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.yaml");
+    write_manifest_with_native_grants(&manifest_path, dir.path());
+    let manifest_yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let session =
+        boot_session_with_manifest(dir.path(), ca_dir.path(), &manifest_yaml, "session-fs-deny");
+
+    let response = InferResponse {
+        reasoning: String::new(),
+        tool_calls: vec![ToolCall {
+            name: "filesystem__read".to_string(),
+            arguments: serde_json::json!({"path": "/etc/passwd"}),
+        }],
+        assistant_text: None,
+    };
+    let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
+    let mut session = session.with_loaded_model(Box::new(mock));
+
+    let outcome = session.run_turn("read /etc/passwd").unwrap();
+    assert_eq!(outcome.tool_calls.len(), 1);
+    match &outcome.tool_calls[0].result {
+        ToolCallResult::Denied(_) => {}
+        other => panic!("expected Denied, got {other:?}"),
+    }
+    let _ = session.shutdown().unwrap();
+    let ledger = std::fs::read_to_string(dir.path().join("ledger.jsonl")).unwrap();
+    assert!(ledger.contains("violation"), "{ledger}");
+}
+
+#[test]
+fn run_turn_dispatches_filesystem_write_natively_against_a_write_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.yaml");
+    write_manifest_with_native_grants(&manifest_path, dir.path());
+    let manifest_yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let session = boot_session_with_manifest(
+        dir.path(),
+        ca_dir.path(),
+        &manifest_yaml,
+        "session-fs-write",
+    );
+
+    let target = dir.path().join("out.txt"); // matches the write_grant fixture
+    let response = InferResponse {
+        reasoning: String::new(),
+        tool_calls: vec![ToolCall {
+            name: "filesystem__write".to_string(),
+            arguments: serde_json::json!({
+                "path": target.to_str().unwrap(),
+                "contents": "summary"
+            }),
+        }],
+        assistant_text: None,
+    };
+    let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
+    let mut session = session.with_loaded_model(Box::new(mock));
+
+    let outcome = session.run_turn("save the summary").unwrap();
+    match &outcome.tool_calls[0].result {
+        ToolCallResult::Success(v) => {
+            assert_eq!(v["bytes"], 7);
+        }
+        other => panic!("expected Success, got {other:?}"),
+    }
+    // File was actually written.
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "summary");
+}
+
+#[test]
+fn run_turn_marks_native_tool_with_missing_args_as_unroutable() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.yaml");
+    write_manifest_with_native_grants(&manifest_path, dir.path());
+    let manifest_yaml = std::fs::read_to_string(&manifest_path).unwrap();
+    let session = boot_session_with_manifest(
+        dir.path(),
+        ca_dir.path(),
+        &manifest_yaml,
+        "session-fs-noargs",
+    );
+
+    // Missing the `path` argument — driver records Unroutable rather
+    // than crashing or silently denying.
+    let response = InferResponse {
+        reasoning: String::new(),
+        tool_calls: vec![ToolCall {
+            name: "filesystem__read".to_string(),
+            arguments: serde_json::json!({}),
+        }],
+        assistant_text: None,
+    };
+    let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
+    let mut session = session.with_loaded_model(Box::new(mock));
+
+    let outcome = session.run_turn("read").unwrap();
+    assert!(
+        matches!(&outcome.tool_calls[0].result, ToolCallResult::Unroutable(s) if s.contains("path")),
+        "{:?}",
+        outcome.tool_calls[0].result
+    );
+}
+
+#[test]
+fn boot_refuses_manifest_with_reserved_mcp_server_name() {
+    use aegis_inference_engine::Error;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    LocalCa::init(ca_dir.path(), TRUST_DOMAIN).unwrap();
+
+    let manifest_path = dir.path().join("manifest.yaml");
+    // server_name "filesystem" collides with the reserved native
+    // namespace. boot must refuse before any tool dispatch.
+    std::fs::write(
+        &manifest_path,
+        r#"schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://session-boot.local/agent/x/1" }
+tools:
+  mcp:
+    - server_name: "filesystem"
+      server_uri: "stdio:/usr/bin/something"
+      allowed_tools: ["read"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("model.gguf"), b"x").unwrap();
+
+    let cfg = BootConfig {
+        session_id: "session-reserved".to_string(),
+        manifest_path,
+        model_path: dir.path().join("model.gguf"),
+        config_path: None,
+        chat_template_sidecar: None,
+        identity_dir: ca_dir.path().to_path_buf(),
+        workload_name: "research".to_string(),
+        instance: "inst-001".to_string(),
+        ledger_path: dir.path().join("ledger.jsonl"),
+    };
+    let err = Session::boot(cfg).unwrap_err();
+    assert!(
+        matches!(err, Error::ReservedMcpServerName { ref name } if name == "filesystem"),
+        "{err:?}"
+    );
+}

@@ -50,6 +50,16 @@ pub enum Error {
     #[error("tool call name {name:?} is not in the expected <server>__<tool> shape")]
     UnroutableToolCall { name: String },
 
+    /// The manifest declared `tools.mcp[].server_name` shadows a name
+    /// reserved for native dispatch (`filesystem`, `network`, `exec`).
+    /// Rejected at boot rather than letting the collision surface
+    /// silently when the model emits a tool call. Per [#92](https://github.com/tosin2013/aegis-node/issues/92).
+    #[error(
+        "manifest's tools.mcp[].server_name {name:?} collides with a reserved native \
+         namespace; rename the MCP server (reserved: filesystem, network, exec)"
+    )]
+    ReservedMcpServerName { name: String },
+
     #[error("access-log: {0}")]
     AccessLog(#[from] aegis_access_log::Error),
 
