@@ -152,9 +152,35 @@ which caps the model size we can use without the recording feeling slow.
    first multimodal scenario and depends on multipart `ChatMessage` +
    `aegis run --image` plumbing tracked in [#100](https://github.com/tosin2013/aegis-node/issues/100).
 
-   The published OCI artifact pin in §"Pinned model" below stays
-   authoritative for Qwen-based demos; Gemma 4's pin lands in the
-   first PR that publishes the artifact ([LiteRT-C / #97](https://github.com/tosin2013/aegis-node/issues/97)).
+   The published OCI artifact pins for both reference models are
+   recorded below. Qwen for the mechanical demos (5, 6); Gemma 4 for
+   demos that lean on agent reasoning quality (2, 3, 4) plus the
+   multimodal Demo 7.
+
+   **Published OCI artifact — Gemma 4 E2B (LiteRT-LM)** (per
+   [ADR-021](021-huggingface-as-upstream-oci-as-trust-boundary.md) §"License scope"
+   amendment + [ADR-023](023-litertlm-as-second-inference-backend.md)):
+
+   - **Reference:** `ghcr.io/tosin2013/aegis-node-models/gemma-4-e2b-it:latest`
+   - **Manifest digest:** `sha256:365c6a8b3b226ec825b74ed16404515ec61521b2d7f24490eac672d74466b2ea`
+   - **Blob SHA-256:** `ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42` (~2.58 GB)
+   - **Chat-template SHA-256:** `02b3091acf53c0b722e3db0c7a1b4980363edcc2d85549dafa339ff5dbfff629` (11995 bytes — sibling `chat_template.jinja` from the HF repo, the canonical jinja prompt template the LiteRT-LM runtime uses)
+   - **Upstream:** [`litert-community/gemma-4-E2B-it-litert-lm`](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm) · file `gemma-4-E2B-it.litertlm` · revision `84b6978eff6e4eea02825bc2ee4ea48579f13109`
+   - **License:** Gemma Terms of Use (per ADR-021 §"License scope" — permissive with Google's prohibited-use list at the linked HF page)
+   - **Backend:** LiteRT-LM (`aegis run --backend litertlm`)
+   - **Signed by:** `models-publish.yml` workflow ([run 25235731230](https://github.com/tosin2013/aegis-node/actions/runs/25235731230)) via Sigstore keyless. Carries `dev.aegis-node.chat-template.sha256` per [ADR-022](022-trust-boundary-format-agnosticism.md).
+
+   Demos pull this artifact at boot via:
+
+   ```bash
+   aegis pull ghcr.io/tosin2013/aegis-node-models/gemma-4-e2b-it@sha256:365c6a8b3b226ec825b74ed16404515ec61521b2d7f24490eac672d74466b2ea \
+     --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
+     --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
+   ```
+
+   E4B (`gemma-4-E4B-it.litertlm`, ~3.7 GB) is published the same way
+   when a demo's per-turn budget can absorb the larger model — same
+   workflow inputs, just a different `litertlm_filename`.
 
 ## Why these decisions
 

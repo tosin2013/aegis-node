@@ -26,6 +26,7 @@ use aegis_cli::pull::{self, PullConfig, PullError};
 use sha2::{Digest, Sha256};
 
 const MODEL_GGUF_MEDIA_TYPE: &str = "application/vnd.aegis-node.model.gguf.v1";
+const MODEL_LITERTLM_MEDIA_TYPE: &str = "application/vnd.aegis-node.model.litertlm.v1";
 const NON_MODEL_MEDIA_TYPE: &str = "application/vnd.example.unknown.v1";
 
 /// Build a synthetic OCI manifest JSON with the given artifact-type and
@@ -392,4 +393,55 @@ fn pull_accepts_non_model_artifact_without_annotation() {
     assert_eq!(pulled.chat_template_sha256_hex, None);
     let dir = pulled.blob_path.parent().unwrap();
     assert!(!dir.join("chat_template.sha256.txt").exists());
+}
+
+#[test]
+fn pull_emits_chat_template_sidecar_for_litertlm_artifact() {
+    // Per LiteRT-C (#97): the new application/vnd.aegis-node.model.litertlm.v1
+    // artifact-type carries the same chat-template annotation requirement
+    // as GGUF, and `aegis pull` writes the same sidecar layout. This test
+    // exercises the new media-type acceptance path through the same
+    // pull.rs code that handles GGUF — proving the broadening of
+    // MODEL_ARTIFACT_TYPES doesn't fork the trust boundary's behavior
+    // across formats.
+    let blob = b"opaque-litertlm-bytes";
+    let template_sha = "b".repeat(64);
+    let manifest_sha = "9".repeat(64);
+    let reference = format!("ghcr.io/example/gemma-4-e2b-it@sha256:{manifest_sha}");
+
+    let manifest = manifest_json(MODEL_LITERTLM_MEDIA_TYPE, Some(&template_sha));
+    let tools = fake_tool_dir(blob, "gemma-4-E2B-it.litertlm", 0, &manifest);
+    let _path = PathGuard::prepend(&tools);
+
+    let cache = tempfile::tempdir().unwrap();
+    let pulled = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap();
+
+    assert_eq!(
+        pulled.chat_template_sha256_hex.as_deref(),
+        Some(template_sha.as_str()),
+        "annotation should propagate for the litertlm artifact-type identically to gguf"
+    );
+    let dir = pulled.blob_path.parent().unwrap();
+    assert!(dir.join("chat_template.sha256.txt").exists());
+}
+
+#[test]
+fn pull_refuses_when_litertlm_artifact_lacks_chat_template_annotation() {
+    // Same publisher-misconfiguration refusal as the GGUF path —
+    // the broadened MODEL_ARTIFACT_TYPES set must enforce the
+    // annotation requirement on every member.
+    let blob = b"opaque-litertlm-bytes";
+    let manifest_sha = "a".repeat(64);
+    let reference = format!("ghcr.io/example/gemma-4-e2b-it@sha256:{manifest_sha}");
+
+    let manifest = manifest_json(MODEL_LITERTLM_MEDIA_TYPE, None);
+    let tools = fake_tool_dir(blob, "gemma-4-E2B-it.litertlm", 0, &manifest);
+    let _path = PathGuard::prepend(&tools);
+
+    let cache = tempfile::tempdir().unwrap();
+    let err = pull::pull(&reference, &cfg(cache.path().to_path_buf())).unwrap_err();
+    assert!(
+        matches!(err, pull::PullError::MissingChatTemplateAnnotation { .. }),
+        "{err}"
+    );
 }

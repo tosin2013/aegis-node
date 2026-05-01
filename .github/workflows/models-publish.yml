@@ -2,14 +2,32 @@ name: Publish model OCI artifact
 
 # Per ADR-021 (HuggingFace as canonical upstream; OCI + cosign as trust
 # boundary). Manual-dispatch only: no scheduled runs, no implicit
-# fetches. Each invocation downloads a single GGUF from HuggingFace
-# (commit-pinned), verifies the LFS SHA-256, repackages as a single-
-# blob OCI artifact, pushes to GHCR, and signs via Sigstore keyless
-# tied to this workflow's identity.
+# fetches. Each invocation downloads a single model file from
+# HuggingFace (commit-pinned), verifies the LFS SHA-256, repackages
+# as a single-blob OCI artifact, pushes to GHCR, and signs via
+# Sigstore keyless tied to this workflow's identity.
 #
-# License gate: only Apache-2.0 / MIT / similarly-permissive models.
-# The workflow itself doesn't enforce this — humans dispatching it
-# review the upstream license first per ADR-021 §"License scope".
+# Two model formats supported:
+#   - format=gguf      → GGUF for the llama.cpp backend (ADR-014)
+#   - format=litertlm  → .litertlm for the LiteRT-LM backend (ADR-023)
+#
+# Both paths use the same trust boundary: a cosign-covered
+# `dev.aegis-node.chat-template.sha256` annotation lets the runtime
+# bind the chat template into the agent's SVID without ever parsing
+# the model file (per ADR-022). For GGUF, the chat template is
+# embedded in the model itself (extracted via the gguf Python
+# package). For .litertlm, the chat template lives as a sibling
+# `chat_template.jinja` in the same HF repo (the canonical
+# human-readable source HF model cards expose); this is the same
+# template embedded in the .litertlm flatbuffer's
+# `LlmMetadata.jinja_prompt_template` field, so hashing the sibling
+# is equivalent to hashing the embedded form for the trust-boundary
+# claim.
+#
+# License gate: only Apache-2.0 / MIT / similarly-permissive models,
+# plus models under the Gemma Terms of Use (per ADR-021 §"License
+# scope" amendment). The workflow itself doesn't enforce this —
+# humans dispatching it review the upstream license first.
 
 on:
   workflow_dispatch:
@@ -18,9 +36,23 @@ on:
         description: "HuggingFace repo id (e.g. Qwen/Qwen2.5-1.5B-Instruct-GGUF)"
         required: true
         type: string
+      format:
+        description: "Model format (gguf for llama.cpp / litertlm for LiteRT-LM)"
+        required: false
+        default: "gguf"
+        type: choice
+        options:
+          - gguf
+          - litertlm
       gguf_filename:
-        description: "GGUF filename inside the HF repo (e.g. qwen2.5-1.5b-instruct-q4_k_m.gguf)"
-        required: true
+        description: "GGUF filename inside the HF repo (required when format=gguf)"
+        required: false
+        default: ""
+        type: string
+      litertlm_filename:
+        description: "LiteRT-LM filename inside the HF repo (required when format=litertlm, e.g. gemma-4-E2B-it.litertlm)"
+        required: false
+        default: ""
         type: string
       hf_revision:
         description: "HF commit SHA — full 40-char hex, NOT a branch/tag (commit pinning is mandatory for reproducibility)"
@@ -56,6 +88,54 @@ jobs:
             exit 2
           fi
 
+      - name: Resolve model filename for chosen format
+        id: format
+        run: |
+          set -euo pipefail
+          fmt='${{ inputs.format }}'
+          gguf_name='${{ inputs.gguf_filename }}'
+          litertlm_name='${{ inputs.litertlm_filename }}'
+          case "$fmt" in
+            gguf)
+              if [[ -z "$gguf_name" ]]; then
+                echo "::error::format=gguf but gguf_filename is empty." >&2
+                exit 2
+              fi
+              if [[ -n "$litertlm_name" ]]; then
+                echo "::error::format=gguf but litertlm_filename is set; pick exactly one filename per format." >&2
+                exit 2
+              fi
+              echo "filename=${gguf_name}" >> "$GITHUB_OUTPUT"
+              echo "ext=gguf" >> "$GITHUB_OUTPUT"
+              echo "media_type=application/vnd.aegis-node.model.gguf.v1" >> "$GITHUB_OUTPUT"
+              ;;
+            litertlm)
+              if [[ -z "$litertlm_name" ]]; then
+                echo "::error::format=litertlm but litertlm_filename is empty." >&2
+                exit 2
+              fi
+              if [[ -n "$gguf_name" ]]; then
+                echo "::error::format=litertlm but gguf_filename is set; pick exactly one filename per format." >&2
+                exit 2
+              fi
+              # Sanity: the file must end in .litertlm so downstream
+              # extension-based dispatch (aegis run --backend litertlm)
+              # works without surprise.
+              if [[ "$litertlm_name" != *.litertlm ]]; then
+                echo "::error::litertlm_filename must end in .litertlm (got '$litertlm_name')." >&2
+                exit 2
+              fi
+              echo "filename=${litertlm_name}" >> "$GITHUB_OUTPUT"
+              echo "ext=litertlm" >> "$GITHUB_OUTPUT"
+              echo "media_type=application/vnd.aegis-node.model.litertlm.v1" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::Unknown format '$fmt' (expected gguf or litertlm)." >&2
+              exit 2
+              ;;
+          esac
+          echo "Resolved: format=$fmt filename=$(grep '^filename=' < /dev/null || true)$(cat \"$GITHUB_OUTPUT\" | grep '^filename=' | cut -d= -f2)"
+
       - name: Set up Python (for huggingface_hub CLI)
         uses: actions/setup-python@v5
         with:
@@ -77,8 +157,11 @@ jobs:
           owner="${{ github.repository_owner }}"
           target_repo='${{ inputs.target_repo }}'
           if [[ -z "$target_repo" ]]; then
-            base="${{ inputs.gguf_filename }}"
-            base="${base%.gguf}"
+            # Strip the format-specific extension before lowercasing
+            # so the GHCR path stays format-agnostic and matches the
+            # ADR-021 model-mirror naming convention.
+            base='${{ steps.format.outputs.filename }}'
+            base="${base%.${{ steps.format.outputs.ext }}}"
             base="${base,,}"
             base="${base// /-}"
             target_repo="ghcr.io/${owner}/aegis-node-models/${base}"
@@ -88,7 +171,7 @@ jobs:
           echo "repo=${target_repo}" >> "$GITHUB_OUTPUT"
           echo "Target: ${target_repo}:${target_tag}"
 
-      - name: Download GGUF from HuggingFace (commit-pinned)
+      - name: Download model file from HuggingFace (commit-pinned)
         id: download
         run: |
           set -euo pipefail
@@ -100,10 +183,23 @@ jobs:
             --revision '${{ inputs.hf_revision }}' \
             --local-dir . \
             '${{ inputs.hf_repo }}' \
-            '${{ inputs.gguf_filename }}'
-          echo "path=$(pwd)/${{ inputs.gguf_filename }}" >> "$GITHUB_OUTPUT"
+            '${{ steps.format.outputs.filename }}'
+          # For litertlm we also pull the sibling chat_template.jinja
+          # — that's where the publisher-computed chat-template hash
+          # comes from (per the workflow's header comment). For gguf
+          # the chat template is embedded in the model itself, so no
+          # sibling file to fetch.
+          if [[ '${{ steps.format.outputs.ext }}' == 'litertlm' ]]; then
+            hf download \
+              --revision '${{ inputs.hf_revision }}' \
+              --local-dir . \
+              '${{ inputs.hf_repo }}' \
+              chat_template.jinja
+          fi
+          echo "path=$(pwd)/${{ steps.format.outputs.filename }}" >> "$GITHUB_OUTPUT"
+          echo "chat_template_path=$(pwd)/chat_template.jinja" >> "$GITHUB_OUTPUT"
 
-      - name: Compute and record SHA-256 of the downloaded GGUF
+      - name: Compute and record SHA-256 of the downloaded model
         id: sha
         run: |
           set -euo pipefail
@@ -116,14 +212,26 @@ jobs:
           echo "hex=${digest}" >> "$GITHUB_OUTPUT"
           echo "Computed sha256: ${digest}"
 
-      # Per ADR-022: the publisher computes format-specific facts (here
-      # the chat-template hash) and asserts them via cosign-signed
-      # manifest annotations. The runtime never parses GGUF bytes; it
-      # trusts the cosign-covered annotation. Use the official
-      # ggml-org `gguf` Python package — when GGUF v4 ships, this is
-      # the first place to update.
-      - name: Extract tokenizer.chat_template SHA-256
-        id: chat_template
+      # Per ADR-022: the publisher computes format-specific facts
+      # (here the chat-template hash) and asserts them via cosign-
+      # signed manifest annotations. The runtime never parses model
+      # bytes; it trusts the cosign-covered annotation.
+      #
+      # Two extraction paths:
+      #   gguf      — read tokenizer.chat_template from the GGUF
+      #               metadata via the official ggml-org `gguf`
+      #               package. When GGUF v4 ships, this is the first
+      #               place to update.
+      #   litertlm  — hash the sibling chat_template.jinja that
+      #               litert-community models ship alongside the
+      #               .litertlm file. Same content as the embedded
+      #               LlmMetadata.jinja_prompt_template field; HF
+      #               model cards expose the sibling for human
+      #               review. Hashing that file is the canonical
+      #               publisher-side claim for the LiteRT-LM family.
+      - name: Extract chat-template SHA-256 (gguf)
+        if: ${{ inputs.format == 'gguf' }}
+        id: chat_template_gguf
         run: |
           set -euo pipefail
           pip install --no-cache-dir 'gguf>=0.10.0'
@@ -147,6 +255,35 @@ jobs:
           print(f'chat-template sha256: {digest}')
           PY
 
+      - name: Extract chat-template SHA-256 (litertlm)
+        if: ${{ inputs.format == 'litertlm' }}
+        id: chat_template_litertlm
+        run: |
+          set -euo pipefail
+          path='${{ steps.download.outputs.chat_template_path }}'
+          if [[ ! -f "$path" ]]; then
+            echo "::error::chat_template.jinja sibling absent from HF repo at the pinned revision (refuse to publish per ADR-022)." >&2
+            exit 2
+          fi
+          length=$(wc -c < "$path")
+          digest=$(sha256sum "$path" | awk '{print $1}')
+          echo "sha256=${digest}" >> "$GITHUB_OUTPUT"
+          echo "length=${length}" >> "$GITHUB_OUTPUT"
+          echo "chat-template length: ${length} bytes"
+          echo "chat-template sha256: ${digest}"
+
+      - name: Surface chat-template SHA into a unified output
+        id: chat_template
+        run: |
+          set -euo pipefail
+          if [[ '${{ inputs.format }}' == 'gguf' ]]; then
+            echo "sha256=${{ steps.chat_template_gguf.outputs.sha256 }}" >> "$GITHUB_OUTPUT"
+            echo "length=${{ steps.chat_template_gguf.outputs.length }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha256=${{ steps.chat_template_litertlm.outputs.sha256 }}" >> "$GITHUB_OUTPUT"
+            echo "length=${{ steps.chat_template_litertlm.outputs.length }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Push as single-blob OCI artifact
         id: push
         env:
@@ -164,18 +301,19 @@ jobs:
           path='${{ steps.download.outputs.path }}'
           artifact_dir="$(dirname "$path")"
           file_name="$(basename "$path")"
+          media_type='${{ steps.format.outputs.media_type }}'
           cd "$artifact_dir"
           oras push "$ref" \
-            --artifact-type "application/vnd.aegis-node.model.gguf.v1" \
+            --artifact-type "$media_type" \
             --annotation "org.opencontainers.image.source=https://huggingface.co/${{ inputs.hf_repo }}" \
             --annotation "org.opencontainers.image.revision=${{ inputs.hf_revision }}" \
-            --annotation "org.opencontainers.image.title=${{ inputs.gguf_filename }}" \
+            --annotation "org.opencontainers.image.title=${file_name}" \
             --annotation "dev.aegis-node.upstream=huggingface" \
             --annotation "dev.aegis-node.upstream.repo=${{ inputs.hf_repo }}" \
             --annotation "dev.aegis-node.upstream.revision=${{ inputs.hf_revision }}" \
-            --annotation "dev.aegis-node.upstream.filename=${{ inputs.gguf_filename }}" \
+            --annotation "dev.aegis-node.upstream.filename=${file_name}" \
             --annotation "dev.aegis-node.chat-template.sha256=${{ steps.chat_template.outputs.sha256 }}" \
-            "${file_name}:application/vnd.aegis-node.model.gguf.v1"
+            "${file_name}:${media_type}"
 
           desc=$(oras manifest fetch --descriptor "$ref")
           manifest_digest=$(echo "$desc" | jq -r '.digest')

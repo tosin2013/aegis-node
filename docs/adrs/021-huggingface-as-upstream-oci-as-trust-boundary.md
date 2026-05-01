@@ -87,11 +87,29 @@ closes that question.
    implementation. Operators control license review, scanning, and
    signing identity for their org.
 
-6. **License scope is limited.** Only Apache-2.0 / MIT / similarly-
-   permissive models go through the project's `models-publish.yml`
-   without legal review. Llama-licensed models and other restrictively-
-   licensed artifacts are out of scope for the project's published
-   mirror — operators sign their own.
+6. **License scope is limited.** The project's own
+   `models-publish.yml` mirror accepts:
+
+   - **Apache-2.0 / MIT / BSD / similarly permissive licenses** —
+     no legal review required.
+   - **Gemma Terms of Use** (Google's source-available license for the
+     Gemma family, used by `litert-community/gemma-*-litert-lm` and
+     friends — amended 2026-05-01 alongside
+     [ADR-023](023-litertlm-as-second-inference-backend.md)). The
+     terms permit redistribution and commercial use; the headline
+     restriction is Google's prohibited-use policy (no harmful
+     applications, etc.) which downstream operators agree to by
+     pulling the model. Aegis-Node reproduces the upstream license
+     and prohibited-use notice via the standard OCI annotations
+     (`org.opencontainers.image.source` points at the HF model card
+     where Google's terms are linked); the Aegis-Node project itself
+     does not redistribute the prohibited-use list — operators read
+     the source-of-truth at the linked HF page.
+
+   Llama-licensed models and other restrictively-licensed artifacts
+   stay out of scope for the project's published mirror — operators
+   sign their own per the operator path documented in
+   [`docs/MODEL_MIRRORING.md`](../MODEL_MIRRORING.md).
 
 ## Why these decisions
 
