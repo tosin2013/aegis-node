@@ -129,6 +129,33 @@ which caps the model size we can use without the recording feeling slow.
    close. The ADR is the long-lived artifact; the recordings ship in
    v0.9.x or early v1.0.0 alongside the marketing site refresh.
 
+8. **Model selection per demo** (amended 2026-05-01 alongside
+   [ADR-023](023-litertlm-as-second-inference-backend.md)). The
+   pinned-Qwen decision in item 4 above is no longer one-size-fits-
+   all once the LiteRT-LM second backend lands ([#98](https://github.com/tosin2013/aegis-node/issues/98)).
+   Each demo picks the model whose strengths match its narrative:
+
+   | # | Demo | Pinned model | Backend | Reason |
+   |---|---|---|---|---|
+   | 1 | MCP, sandboxed twice | Qwen2.5-1.5B-Q4_K_M | llama | (blocked on [#91](https://github.com/tosin2013/aegis-node/issues/91); choice revisited when unblocked) |
+   | 2 | Read-only research | **Gemma 4 E4B** | **litertlm** | Bigger model produces more useful "summarize" output; enterprise-clean origin matters for the canonical "agent reads docs" pitch |
+   | 3 | Code review + time-bounded write | **Gemma 4 E4B** | **litertlm** | Code understanding + agentic tool calls favor a 4B Western-origin model; F7 timer demo leans on credible review output |
+   | 4 | Customer-support + approval gate | **Gemma 4 E2B** | **litertlm** | Customer-support narrative reads better with realistic agent voice; E2B keeps the ~30-second budget |
+   | 5 | **Tampered model halts** | **Qwen2.5-1.5B-Q4_K_M** | **llama** | Mechanical F1 IdentityRebind demo. Model quality irrelevant; Qwen 1.5B is faster (3-second turn) and the existing GIF (PR [#93](https://github.com/tosin2013/aegis-node/pull/93)) works. Don't re-render. |
+   | 6 | Egress containment | Qwen2.5-1.5B-Q4_K_M | llama | F6 deny-by-default is mechanical; same reasoning as Demo 5 |
+   | **7** | **Multimodal vision agent** ([#100](https://github.com/tosin2013/aegis-node/issues/100)) | **Gemma 4 E4B (multimodal)** | **litertlm** | Genuinely new capability — agent reads a screenshot, F2 + F6 gate the side-effects. No competing runtime can show this. |
+
+   Mechanical demos (5, 6) stay on the original Qwen pin so re-renders are
+   cheap and `make demos` reproducibility is preserved through the LiteRT
+   transition. Demos that lean on agent reasoning quality (2, 3, 4) move
+   to Gemma 4 once the LiteRT-LM pipeline is live. Demo 7 is the program's
+   first multimodal scenario and depends on multipart `ChatMessage` +
+   `aegis run --image` plumbing tracked in [#100](https://github.com/tosin2013/aegis-node/issues/100).
+
+   The published OCI artifact pin in §"Pinned model" below stays
+   authoritative for Qwen-based demos; Gemma 4's pin lands in the
+   first PR that publishes the artifact ([LiteRT-C / #97](https://github.com/tosin2013/aegis-node/issues/97)).
+
 ## Why these decisions
 
 - **Why VHS specifically.** VHS is the de-facto standard for terminal
