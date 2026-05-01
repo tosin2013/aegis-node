@@ -175,19 +175,17 @@ jobs:
           # The engine_cpu_shared .so has a DT_NEEDED entry for it
           # (grammar-constrained sampler implementation, used by Gemma's
           # tool-call decoder). Upstream ships it as a vendored, LFS-tracked
-          # prebuilt at:
-          #   runtime/components/constrained_decoding/
-          #     gemma_model_constraint_provider_shared_lib_prebuilt_linux_x86_64/
-          #     libGemmaModelConstraintProvider.so
+          # prebuilt at prebuilt/linux_x86_64/libGemmaModelConstraintProvider.so
+          # (similar prebuilts exist for android_arm64, android_x86_64, etc).
           # The runtime dynamic linker has to find it at session load time
           # via the rpath of libaegis_litertlm_engine_cpu.so — we bundle
           # both into the same OCI artifact so litertlm-sys's build.rs
           # materializes them side-by-side.
-          gemma_so=$(find runtime/components/constrained_decoding \
+          gemma_so=$(find prebuilt/linux_x86_64 \
             -name 'libGemmaModelConstraintProvider.so' -print -quit 2>/dev/null || true)
           if [[ -z "$gemma_so" || ! -f "$gemma_so" ]]; then
             echo "::error::Could not locate libGemmaModelConstraintProvider.so in upstream tree (LFS pull may have failed)." >&2
-            find runtime/components/constrained_decoding -type f -print | head -20 || true
+            ls -la prebuilt/linux_x86_64/ || true
             exit 2
           fi
           # Confirm we have the binary content, not an LFS pointer file.
