@@ -1,0 +1,43 @@
+# Demo 06 — Egress containment (F6 deny + signed network attestation)
+#
+# Per ADR-020 §"Six scenarios" item 6. The narrative in one turn:
+#
+#   1. Manifest grants the agent the runtime's network__connect tool
+#      catalog entry (so the model knows to attempt) but pins
+#      tools.network.outbound: deny — closed by default.
+#   2. The model emits a network__connect tool call against an
+#      external host (the prompt nudges it).
+#   3. Mediator's per-tool-call rebind passes (no tampering); policy
+#      decision on outbound returns Deny; F6 emits a Violation entry
+#      naming the resource URI.
+#   4. At session shutdown the runtime walks the session's network log
+#      (every connect attempt regardless of outcome — per F6 / ADR-008)
+#      and emits a signed NetworkAttestation ledger entry.
+#
+# The recording shows the full F4/F6/F9 surface for one turn: model
+# tool call → mediator deny + Violation → end-of-session attestation
+# summarizing the denied attempt → SessionEnd. ~30s clip.
+
+schemaVersion: "1"
+agent:
+  name: "egress-demo"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/egress-demo/inst-001"
+tools:
+  network:
+    # Deny-by-default per F6. The model still sees a network__connect
+    # tool advertised in the catalog (per #92) — that's how we make
+    # the attempt visible. Without `outbound:` set, the catalog wouldn't
+    # list the tool and the model couldn't try.
+    outbound: deny
+write_grants: []
+
+# Required for `make demos` regeneration (per LLM-C / ADR-020).
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0
