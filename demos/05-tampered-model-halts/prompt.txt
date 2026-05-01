@@ -1,0 +1,1 @@
+Use the list_directory tool to list the files in the /data directory.
