@@ -43,11 +43,11 @@ type Inference struct {
 // output across runs — the configuration auditors rely on for replay
 // verification.
 type DeterminismKnobs struct {
-	Seed           *uint32  `yaml:"seed,omitempty" json:"seed,omitempty"`
-	Temperature    *float32 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
-	TopP           *float32 `yaml:"top_p,omitempty" json:"top_p,omitempty"`
-	TopK           *uint32  `yaml:"top_k,omitempty" json:"top_k,omitempty"`
-	RepeatPenalty  *float32 `yaml:"repeat_penalty,omitempty" json:"repeat_penalty,omitempty"`
+	Seed          *uint32  `yaml:"seed,omitempty" json:"seed,omitempty"`
+	Temperature   *float32 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
+	TopP          *float32 `yaml:"top_p,omitempty" json:"top_p,omitempty"`
+	TopK          *uint32  `yaml:"top_k,omitempty" json:"top_k,omitempty"`
+	RepeatPenalty *float32 `yaml:"repeat_penalty,omitempty" json:"repeat_penalty,omitempty"`
 }
 
 type Agent struct {
