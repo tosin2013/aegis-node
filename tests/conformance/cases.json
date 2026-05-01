@@ -286,6 +286,39 @@
         "mcp_tool": "search"
       },
       "expected": "deny"
+    },
+    {
+      "_doc": "ADR-024-A: an entry in object form (name + pre_validate clauses) is still allowed by tools.mcp[] — the MCP allowlist check uses the entry's name regardless of which shape the manifest used. The pre_validate clauses themselves are consumed by ADR-024-B's mediator pass.",
+      "name": "mcp_pre_validate_object_form_allows_by_name",
+      "manifest": "manifests/mcp-pre-validate.manifest.yaml",
+      "query": {
+        "kind": "mcp_tool_call",
+        "mcp_server": "fs",
+        "mcp_tool": "read_text_file"
+      },
+      "expected": "allow"
+    },
+    {
+      "_doc": "ADR-024-A: string shorthand and object form coexist in the same allowed_tools array. The shorthand entry list_allowed_directories deserializes as AllowedTool::Name and is allowed.",
+      "name": "mcp_pre_validate_string_shorthand_coexists",
+      "manifest": "manifests/mcp-pre-validate.manifest.yaml",
+      "query": {
+        "kind": "mcp_tool_call",
+        "mcp_server": "fs",
+        "mcp_tool": "list_allowed_directories"
+      },
+      "expected": "allow"
+    },
+    {
+      "_doc": "ADR-024-A: a tool name absent from allowed_tools is still denied even when sibling object-form entries declare pre_validate clauses. The schema-bump is additive — closed-by-default semantics are preserved.",
+      "name": "mcp_pre_validate_unlisted_tool_denied",
+      "manifest": "manifests/mcp-pre-validate.manifest.yaml",
+      "query": {
+        "kind": "mcp_tool_call",
+        "mcp_server": "fs",
+        "mcp_tool": "delete_file"
+      },
+      "expected": "deny"
     }
   ]
 }

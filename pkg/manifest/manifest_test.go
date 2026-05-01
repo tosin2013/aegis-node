@@ -179,8 +179,8 @@ func TestLoadAgentWithMCPExample(t *testing.T) {
 		"create_directory": true,
 	}
 	for _, tool := range server.AllowedTools {
-		if writers[tool] {
-			t.Errorf("agent-with-mcp must stay read-only; %q is a writer", tool)
+		if writers[tool.Name] {
+			t.Errorf("agent-with-mcp must stay read-only; %q is a writer", tool.Name)
 		}
 	}
 
@@ -230,7 +230,7 @@ tools:
 	if m.Tools.MCP[0].ServerName != "fs-helper" ||
 		m.Tools.MCP[0].ServerURI != "stdio:/usr/local/bin/mcp-fs" ||
 		len(m.Tools.MCP[0].AllowedTools) != 2 ||
-		m.Tools.MCP[0].AllowedTools[0] != "read_file" {
+		m.Tools.MCP[0].AllowedTools[0].Name != "read_file" {
 		t.Errorf("mcp[0]: %+v", m.Tools.MCP[0])
 	}
 	if m.Tools.MCP[1].ServerName != "web-search" ||

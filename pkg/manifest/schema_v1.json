@@ -196,11 +196,57 @@
         },
         "allowed_tools": {
           "type": "array",
-          "description": "Names of MCP tools from this server the agent may invoke. Closed-by-default; empty array means none.",
-          "items": { "type": "string", "minLength": 1 },
+          "description": "Names of MCP tools from this server the agent may invoke. Closed-by-default; empty array means none. Each entry is either a bare name (string, one-layer enforcement: only the MCP allowlist gates) OR an object with optional `pre_validate` clauses that ask the mediator to also check the tool's args against `tools.filesystem.*` / `tools.network.*` policy before dispatch (per ADR-024).",
+          "items": { "$ref": "#/definitions/allowedTool" },
           "uniqueItems": true
         }
       }
+    },
+    "allowedTool": {
+      "description": "One MCP tool entry — a bare name (legacy / one-layer) or an object with per-tool pre-validation clauses (per ADR-024).",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "pre_validate": {
+              "type": "array",
+              "description": "Side-effect clauses the mediator runs against `tools.filesystem.*` / `tools.network.*` after the MCP allowlist check, before dispatching to the MCP server. An empty or absent `pre_validate` collapses to the legacy one-layer behavior.",
+              "items": { "$ref": "#/definitions/preValidateClause" },
+              "uniqueItems": true
+            }
+          }
+        }
+      ]
+    },
+    "preValidateClause": {
+      "description": "One side-effect-shaped check the mediator should run on a named tool argument before dispatch. Phase 1 (ADR-024) supports filesystem_{read,write,delete} and network_outbound; exec_run is out of scope.",
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["filesystem_read", "filesystem_write", "filesystem_delete", "network_outbound"]
+        },
+        "arg": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the scalar argument carrying the path or URL the mediator should extract and check. Mutually exclusive with `arg_array`."
+        },
+        "arg_array": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of an array-of-strings argument; the mediator extracts each element and runs the check on it. Mutually exclusive with `arg`."
+        }
+      },
+      "oneOf": [
+        { "required": ["arg"] },
+        { "required": ["arg_array"] }
+      ]
     },
     "execGrant": {
       "type": "object",

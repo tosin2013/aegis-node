@@ -1,0 +1,62 @@
+# Conformance fixture for ADR-024-A: per-tool pre_validate clauses on
+# tools.mcp[].allowed_tools. Mixes both shapes (string shorthand +
+# object form) in the same array so cross-language deserializers
+# exercise the union.
+#
+# This fixture is paired with cases.json entries that assert:
+#   - the MCP allow/deny decision (still based on the tool name only)
+#     matches the legacy mcp-allowlist.manifest.yaml semantics;
+#   - the parsed manifest preserves both shapes (asserted by
+#     pkg/manifest's manifest_test.go and crates/policy's
+#     integration.rs).
+#
+# The mediator that consumes the pre_validate clauses lands in
+# ADR-024-B (#104); this PR is schema-only.
+schemaVersion: "1"
+agent:
+  name: "mcp-pre-validate-conformance"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/mcp-pre-validate-conformance/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/data"
+    write:
+      - "/tmp"
+  network:
+    outbound:
+      allowlist:
+        - host: "api.example.com"
+          port: 443
+          protocol: https
+  mcp:
+    - server_name: "fs"
+      server_uri: "stdio:/usr/local/bin/mcp-fs"
+      allowed_tools:
+        # String shorthand — no pre-validation. Lives alongside
+        # object-form entries in the same array.
+        - "list_allowed_directories"
+        # Object form — single arg (scalar path).
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        # Object form — array-of-strings arg.
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        # Object form — write-shaped clause.
+        - name: "write_file"
+          pre_validate:
+            - kind: filesystem_write
+              arg: path
+    - server_name: "net"
+      server_uri: "stdio:/usr/local/bin/mcp-net"
+      allowed_tools:
+        # network_outbound clause — host+port parsed from a URL arg.
+        - name: "fetch"
+          pre_validate:
+            - kind: network_outbound
+              arg: url
