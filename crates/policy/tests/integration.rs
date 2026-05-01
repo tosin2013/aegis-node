@@ -295,7 +295,10 @@ tools:
     let names: Vec<&str> = mcp[0].allowed_tools.iter().map(|t| t.name()).collect();
     assert_eq!(names, vec!["read_file", "list_dir"]);
     for entry in &mcp[0].allowed_tools {
-        assert!(entry.pre_validate().is_empty(), "shorthand should have no clauses");
+        assert!(
+            entry.pre_validate().is_empty(),
+            "shorthand should have no clauses"
+        );
     }
     assert_eq!(mcp[1].server_name, "web-search");
     assert!(mcp[1].allowed_tools.is_empty());
