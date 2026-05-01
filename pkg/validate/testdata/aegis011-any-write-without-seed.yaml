@@ -1,5 +1,6 @@
-# Clean manifest — every rule should pass. Used as a regression baseline:
-# any new rule that fires here is a candidate false-positive.
+# Trips AEGIS011: approval_required_for: [any_write] is set, but the
+# manifest doesn't pin inference.determinism.seed — F8 replay
+# verification can't reproduce the trajectory byte-for-byte.
 schemaVersion: "1"
 agent:
   name: "researcher"
@@ -12,10 +13,6 @@ tools:
       - "/data/reports"
   network:
     outbound: deny
-  mcp:
-    - server_name: "filesystem"
-      server_uri: "stdio:/usr/local/bin/mcp-server-filesystem"
-      allowed_tools: ["read_text_file", "list_directory"]
 write_grants:
   - resource: "/data/reports/q1.md"
     actions: ["write"]
@@ -24,10 +21,3 @@ approval_required_for:
   - "any_write"
 approval_authorities:
   - "spiffe://aegis-node.local/operator/security"
-inference:
-  determinism:
-    seed: 42
-    temperature: 0.0
-    top_p: 1.0
-    top_k: 0
-    repeat_penalty: 1.0

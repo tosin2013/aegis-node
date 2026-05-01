@@ -112,6 +112,14 @@
         "pattern": "^spiffe://"
       },
       "uniqueItems": true
+    },
+    "inference": {
+      "type": "object",
+      "description": "Inference-time configuration (per ADR-014, LLM-C / issue #72). Additive — absence means 'backend defaults.'",
+      "additionalProperties": false,
+      "properties": {
+        "determinism": { "$ref": "#/definitions/determinismKnobs" }
+      }
     }
   },
   "definitions": {
@@ -237,6 +245,40 @@
         "approval_required": {
           "type": "boolean",
           "default": false
+        }
+      }
+    },
+    "determinismKnobs": {
+      "type": "object",
+      "description": "Sampling determinism knobs (per ADR-014, LLM-C). All optional; absence means 'backend default for that knob.' For reproducibility-required contexts (compliance audit, replay verification), set seed and temperature: 0.0 — that's the byte-identical-output configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "description": "Sampler seed (uint32 range). Required for reproducibility — without it, the sampler picks a random seed per call."
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Logit softmax temperature. 0.0 = greedy (always pick argmax). Higher values flatten the distribution."
+        },
+        "top_p": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Nucleus sampling — keep tokens whose cumulative probability mass is within top_p. 1.0 = no filter."
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Keep only the top_k highest-probability tokens before sampling. 0 = no filter."
+        },
+        "repeat_penalty": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Penalty applied to recently-emitted tokens to discourage repetition. 1.0 = no penalty."
         }
       }
     }

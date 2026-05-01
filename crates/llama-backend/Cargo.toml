@@ -21,6 +21,10 @@ thiserror = "1"
 # `aegis-inference-engine` so the runtime build path stays clear of
 # llama.cpp. Per LLM-B / ADR-014.
 aegis-inference-engine = { path = "../inference-engine" }
+# `From<&aegis_policy::manifest::DeterminismKnobs>` for the
+# llama-backend mirror — lets the CLI wire a manifest's
+# `inference.determinism` block straight through. Per LLM-C / ADR-014.
+aegis-policy = { path = "../policy" }
 # `chat.rs` serializes tool catalogs as JSON for the OpenAI-compatible
 # chat template path and parses tool-call blocks from raw model output.
 serde = { version = "1", features = ["derive"] }

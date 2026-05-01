@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aegis_inference_engine::{Backend as RuntimeBackend, BootConfig, Session};
-use aegis_llama_backend::{Backend, LlamaCppBackend, SessionOptions};
+use aegis_llama_backend::{Backend, DeterminismKnobs, LlamaCppBackend, SessionOptions};
 
 const ENV_KEY: &str = "AEGIS_LLAMA_TEST_MODEL";
 
@@ -52,6 +52,7 @@ fn llama_cpp_backend_round_trips_a_run_turn_call() {
         SessionOptions {
             n_ctx: 1024,
             max_tokens: 32,
+            determinism: DeterminismKnobs::default(),
         },
     );
     let model = cpp_backend.load(&path).expect("load");

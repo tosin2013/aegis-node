@@ -15,10 +15,11 @@
 //!   output (the convention Qwen2.5 and most modern instruct models
 //!   emit).
 //!
-//! Out of scope here:
-//! - Determinism knobs — LLM-C ([#72](https://github.com/tosin2013/aegis-node/issues/72))
-//!   wires seed / temperature / top-p / top-k / repeat-penalty. Until
-//!   then, sampling is greedy at temperature 0.
+//! Determinism (LLM-C / [#72](https://github.com/tosin2013/aegis-node/issues/72))
+//! is wired through [`SessionOptions::determinism`] — the manifest's
+//! `inference.determinism` block translates to those knobs and the
+//! sampler chain in [`crate::Session::new`] honors them. With knobs
+//! unset, the chain collapses to greedy at temperature 0.
 
 use std::path::Path;
 use std::sync::Arc;

@@ -60,6 +60,7 @@ func TestEachRuleFiresOnItsFixture(t *testing.T) {
 		{"AEGIS008", "aegis008-mcp-empty-allowed-tools.yaml", "tools.mcp[0].allowed_tools"},
 		{"AEGIS009", "aegis009-approval-authorities-empty.yaml", "approval_authorities"},
 		{"AEGIS010", "aegis010-name-mismatch.yaml", "agent.name"},
+		{"AEGIS011", "aegis011-any-write-without-seed.yaml", "inference.determinism.seed"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -85,8 +86,8 @@ func TestEachRuleFiresOnItsFixture(t *testing.T) {
 // requires a test bump — keeps tests honest about rule churn.
 func TestRuleSetCount(t *testing.T) {
 	got := len(Rules())
-	if got != 10 {
-		t.Errorf("rule count: got %d want 10 (update this test if intentional)", got)
+	if got != 11 {
+		t.Errorf("rule count: got %d want 11 (update this test if intentional)", got)
 	}
 }
 

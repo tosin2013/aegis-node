@@ -33,6 +33,38 @@ pub struct Manifest {
     /// approvals are refused outright.
     #[serde(default, rename = "approval_authorities")]
     pub approval_authorities: Vec<String>,
+    /// Inference-time configuration (per ADR-014, LLM-C / issue #72).
+    /// Additive — `None` means "backend defaults."
+    #[serde(default)]
+    pub inference: Option<Inference>,
+}
+
+/// Inference-time configuration block. Currently carries determinism
+/// knobs only; future LLM- sub-issues may add more.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Inference {
+    #[serde(default)]
+    pub determinism: Option<DeterminismKnobs>,
+}
+
+/// Sampling determinism knobs (LLM-C). All fields optional; absence
+/// means "backend default for that knob." Setting `seed` and
+/// `temperature: 0.0` together gets byte-identical output across runs
+/// — the configuration auditors rely on for replay verification.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DeterminismKnobs {
+    #[serde(default)]
+    pub seed: Option<u32>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub top_k: Option<u32>,
+    #[serde(default)]
+    pub repeat_penalty: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

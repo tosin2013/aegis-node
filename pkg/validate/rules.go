@@ -113,6 +113,18 @@ func registry() []Rule {
 				"path is the source of truth at runtime.",
 			Check: ruleAgentNameMatchesSpiffeID,
 		},
+		{
+			ID:      "AEGIS011",
+			Default: SeverityWarn,
+			Summary: "approval_required_for: [any_write] but inference.determinism.seed is unset",
+			Rationale: "approval_required_for: [any_write] is the audit-reproducibility marker — " +
+				"an operator who gates writes through the F3 approval channel typically also " +
+				"needs the underlying inference to be replayable byte-for-byte (per F8 / " +
+				"ADR-010). Without inference.determinism.seed (and temperature: 0.0), the " +
+				"sampler picks a random seed each turn and the replay viewer cannot verify " +
+				"the trajectory. Pin both to make the audit complete.",
+			Check: ruleApprovalAnyWriteWithoutSeed,
+		},
 	}
 }
 
@@ -279,6 +291,28 @@ func ruleApprovalAuthoritiesEmpty(m *manifest.Manifest) []Finding {
 		Field: "approval_authorities",
 		Message: "approval_required_for is set but approval_authorities is empty; " +
 			"mTLS signed-API approvals will be refused (TTY/file/web channels still work)",
+	}}
+}
+
+func ruleApprovalAnyWriteWithoutSeed(m *manifest.Manifest) []Finding {
+	hasAnyWrite := false
+	for _, c := range m.ApprovalRequiredFor {
+		if c == manifest.ApprovalAnyWrite {
+			hasAnyWrite = true
+			break
+		}
+	}
+	if !hasAnyWrite {
+		return nil
+	}
+	if m.Inference != nil && m.Inference.Determinism != nil && m.Inference.Determinism.Seed != nil {
+		return nil
+	}
+	return []Finding{{
+		Field: "inference.determinism.seed",
+		Message: "approval_required_for: [any_write] is set but inference.determinism.seed is " +
+			"unset; replay verification (F8) requires byte-identical inference, which needs a " +
+			"pinned seed and temperature: 0.0",
 	}}
 }
 
