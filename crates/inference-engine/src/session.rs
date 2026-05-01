@@ -137,6 +137,21 @@ impl Session {
         let session_start = Utc::now();
         let policy = Policy::from_yaml_file(&cfg.manifest_path)?;
 
+        // Refuse a manifest that claims an MCP server name reserved
+        // for native dispatch (per [#92](https://github.com/tosin2013/aegis-node/issues/92)).
+        // Catching it here means the conflict is loud at boot, not
+        // silent at the first tool call.
+        for server in &policy.manifest().tools.mcp {
+            if crate::turn::RESERVED_NATIVE_NAMESPACES
+                .iter()
+                .any(|r| *r == server.server_name)
+            {
+                return Err(Error::ReservedMcpServerName {
+                    name: server.server_name.clone(),
+                });
+            }
+        }
+
         let model_digest = sha256_file(&cfg.model_path)?;
         let manifest_digest = sha256_file(&cfg.manifest_path)?;
         let config_digest = match &cfg.config_path {
