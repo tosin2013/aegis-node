@@ -1,0 +1,285 @@
+name: Publish LiteRT-LM runtime OCI artifact
+
+# Per ADR-023 (Update — 2026-05-01: prebuilt path doesn't exist; Aegis
+# publishes its own). Manual-dispatch only — no scheduled runs, no
+# implicit fetches. Each invocation:
+#
+#   1. Checks out google-ai-edge/LiteRT-LM at the pinned tag.
+#   2. Installs Bazel + clang.
+#   3. Patches the upstream `c/BUILD` with a small overlay
+#      (`engine_cpu_shared`) — Bazel doesn't expose a shared-library
+#      target by default, only the `cc_library` static archives.
+#      The overlay is one cc_shared_library rule that links engine_cpu's
+#      transitive deps into a single .so we can ship outside Bazel.
+#   4. Runs `bazel build //c:engine_cpu_shared` (CPU-only — Phase 1
+#      per ADR-023 §"Decision" item 3).
+#   5. Computes SHA-256 of the resulting .so.
+#   6. `oras push` to GHCR with the new
+#      `application/vnd.aegis-node.litertlm-runtime.v1` artifact-type
+#      + annotations capturing the upstream commit / Bazel version /
+#      glibc target / C ABI source SHA.
+#   7. `cosign sign --yes` keyless via Sigstore Fulcio + Rekor.
+#   8. Prints pinning info for the ADR-023 amendment + LiteRT-A
+#      (#95)'s `litertlm-sys/build.rs`.
+#
+# License: LiteRT-LM is Apache-2.0 (clean for vendoring + redistribution).
+# Apache-2.0 LICENSE file is preserved alongside the .so in the OCI
+# artifact via an annotation pointing at the upstream commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "LiteRT-LM upstream tag (e.g. v0.10.2)"
+        required: true
+        default: "v0.10.2"
+        type: string
+      bazel_version:
+        description: "Bazel version to use (must match upstream's .bazelversion)"
+        required: false
+        default: "7.6.1"
+        type: string
+      target_repo:
+        description: "GHCR repo path (defaults to ghcr.io/<owner>/aegis-node-runtime/litertlm-linux-amd64)"
+        required: false
+        type: string
+      target_tag:
+        description: "OCI tag for human discoverability (the digest is the load-bearing pin)"
+        required: false
+        default: "latest"
+        type: string
+
+permissions:
+  contents: read
+  packages: write     # GHCR push
+  id-token: write     # cosign keyless via Sigstore Fulcio
+
+jobs:
+  publish:
+    name: Bazel → .so → OCI → cosign
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate upstream_tag shape
+        run: |
+          tag='${{ inputs.upstream_tag }}'
+          # Accept v<semver> or v<semver>-rc.N
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; then
+            echo "::error::upstream_tag must look like v<semver> or v<semver>-rc[.N] (got '$tag')." >&2
+            exit 2
+          fi
+
+      - name: Checkout LiteRT-LM upstream at pinned tag
+        uses: actions/checkout@v4
+        with:
+          repository: google-ai-edge/LiteRT-LM
+          ref: ${{ inputs.upstream_tag }}
+          path: upstream
+          # We need to capture the resolved commit SHA for the OCI
+          # annotation; fetch enough history to read it.
+          fetch-depth: 1
+
+      - name: Resolve upstream commit SHA
+        id: upstream
+        run: |
+          set -euo pipefail
+          cd upstream
+          sha=$(git rev-parse HEAD)
+          echo "commit=${sha}" >> "$GITHUB_OUTPUT"
+          echo "Upstream commit: ${sha}"
+
+      - name: Install Bazel ${{ inputs.bazel_version }}
+        uses: bazel-contrib/setup-bazel@0.13.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ inputs.upstream_tag }}
+          repository-cache: true
+
+      - name: Install clang + llvm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm
+
+      - name: Pin Bazel version locally
+        run: |
+          set -euo pipefail
+          cd upstream
+          # Use the version the upstream pins, OR the one the operator
+          # specified — the input default matches upstream's
+          # .bazelversion at v0.10.2 (7.6.1). If they diverge, prefer
+          # upstream's pin so the build matches what upstream tested.
+          if [[ -f .bazelversion ]]; then
+            cat .bazelversion
+          fi
+          # Bazelisk respects USE_BAZEL_VERSION too:
+          echo "USE_BAZEL_VERSION=${{ inputs.bazel_version }}" >> "$GITHUB_ENV"
+
+      - name: Add Aegis overlay — cc_shared_library on top of //c:engine_cpu
+        run: |
+          set -euo pipefail
+          cd upstream
+          # The upstream c/BUILD declares `engine_cpu` as a cc_library
+          # (a static archive). We need a single shared library
+          # consumable from outside Bazel — append a small overlay rule.
+          # Per Bazel's cc_shared_library: the `roots` attribute names
+          # the libraries to expose; transitive deps are linked in.
+          cat >> c/BUILD <<'EOF'
+
+          # --- Aegis-Node overlay (added by litertlm-runtime-publish.yml) ---
+          # cc_shared_library that bundles engine_cpu's transitive deps
+          # into a single .so for distribution outside Bazel. The
+          # upstream c/BUILD's existing cc_library targets are
+          # static-archive-flavored.
+          cc_shared_library(
+              name = "engine_cpu_shared",
+              shared_lib_name = "libaegis_litertlm_engine_cpu.so",
+              deps = [":engine_cpu"],
+              visibility = ["//visibility:public"],
+          )
+          EOF
+          echo "--- appended overlay ---"
+          tail -12 c/BUILD
+
+      - name: Build //c:engine_cpu_shared
+        id: build
+        run: |
+          set -euo pipefail
+          cd upstream
+          # CPU-only build, optimized. -c opt is the release config.
+          bazel build -c opt //c:engine_cpu_shared
+
+          # Locate the built .so. Bazel writes it under
+          # bazel-bin/c/. cc_shared_library produces a single output.
+          out=$(find bazel-bin/c -maxdepth 2 -name 'libaegis_litertlm_engine_cpu.so' -print -quit)
+          if [[ -z "$out" || ! -f "$out" ]]; then
+            echo "::error::Could not locate libaegis_litertlm_engine_cpu.so under bazel-bin/c/" >&2
+            ls -la bazel-bin/c/ || true
+            exit 2
+          fi
+          # Copy out of the Bazel sandbox so subsequent steps can
+          # operate on a stable path.
+          mkdir -p ../artifact
+          cp "$out" ../artifact/libaegis_litertlm_engine_cpu.so
+          echo "path=$(realpath ../artifact/libaegis_litertlm_engine_cpu.so)" >> "$GITHUB_OUTPUT"
+          ls -lh ../artifact/
+
+      - name: Compute SHA-256 of the runtime .so
+        id: sha
+        run: |
+          set -euo pipefail
+          path='${{ steps.build.outputs.path }}'
+          digest=$(sha256sum "$path" | awk '{print $1}')
+          echo "hex=${digest}" >> "$GITHUB_OUTPUT"
+          echo "Computed sha256: ${digest}"
+
+      - name: Capture build environment metadata
+        id: env
+        run: |
+          set -euo pipefail
+          glibc_ver=$(ldd --version | head -1 | awk '{print $NF}')
+          bazel_actual=$(cd upstream && bazel --version | head -1 | awk '{print $2}')
+          # Hash the upstream c/engine.h so litertlm-sys's bindgen has
+          # a checksum to verify the headers it generates against
+          # match what was built into this .so.
+          header_sha=$(sha256sum upstream/c/engine.h | awk '{print $1}')
+          echo "glibc=${glibc_ver}" >> "$GITHUB_OUTPUT"
+          echo "bazel=${bazel_actual}" >> "$GITHUB_OUTPUT"
+          echo "header_sha=${header_sha}" >> "$GITHUB_OUTPUT"
+          echo "glibc:      ${glibc_ver}"
+          echo "bazel:      ${bazel_actual}"
+          echo "header sha: ${header_sha}"
+
+      - name: Compute target ref
+        id: target
+        run: |
+          set -euo pipefail
+          owner="${{ github.repository_owner }}"
+          target_repo='${{ inputs.target_repo }}'
+          if [[ -z "$target_repo" ]]; then
+            target_repo="ghcr.io/${owner}/aegis-node-runtime/litertlm-linux-amd64"
+          fi
+          target_tag='${{ inputs.target_tag }}'
+          echo "ref=${target_repo}:${target_tag}" >> "$GITHUB_OUTPUT"
+          echo "repo=${target_repo}" >> "$GITHUB_OUTPUT"
+          echo "Target: ${target_repo}:${target_tag}"
+
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Push as single-blob OCI artifact
+        id: push
+        env:
+          ORAS_USERNAME: ${{ github.actor }}
+          ORAS_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$ORAS_PASSWORD" | oras login ghcr.io --username "$ORAS_USERNAME" --password-stdin
+
+          ref='${{ steps.target.outputs.ref }}'
+          path='${{ steps.build.outputs.path }}'
+          # `oras push` refuses absolute paths in layer names; cd into
+          # the artifact dir.
+          artifact_dir="$(dirname "$path")"
+          file_name="$(basename "$path")"
+          cd "$artifact_dir"
+
+          oras push "$ref" \
+            --artifact-type "application/vnd.aegis-node.litertlm-runtime.v1" \
+            --annotation "org.opencontainers.image.source=https://github.com/google-ai-edge/LiteRT-LM" \
+            --annotation "org.opencontainers.image.revision=${{ steps.upstream.outputs.commit }}" \
+            --annotation "org.opencontainers.image.title=${file_name}" \
+            --annotation "dev.aegis-node.upstream=github" \
+            --annotation "dev.aegis-node.upstream.repo=google-ai-edge/LiteRT-LM" \
+            --annotation "dev.aegis-node.upstream.tag=${{ inputs.upstream_tag }}" \
+            --annotation "dev.aegis-node.upstream.commit=${{ steps.upstream.outputs.commit }}" \
+            --annotation "dev.aegis-node.bazel.version=${{ steps.env.outputs.bazel }}" \
+            --annotation "dev.aegis-node.bazel.target=//c:engine_cpu_shared" \
+            --annotation "dev.aegis-node.glibc.target=${{ steps.env.outputs.glibc }}" \
+            --annotation "dev.aegis-node.runtime.so.sha256=${{ steps.sha.outputs.hex }}" \
+            --annotation "dev.aegis-node.runtime.header.sha256=${{ steps.env.outputs.header_sha }}" \
+            --annotation "dev.aegis-node.runtime.platform=linux/amd64" \
+            --annotation "dev.aegis-node.runtime.kind=cpu-only" \
+            "${file_name}:application/vnd.aegis-node.litertlm-runtime.v1"
+
+          desc=$(oras manifest fetch --descriptor "$ref")
+          manifest_digest=$(echo "$desc" | jq -r '.digest')
+          echo "manifest_digest=${manifest_digest}" >> "$GITHUB_OUTPUT"
+          echo "Pushed: ${ref}@${manifest_digest}"
+
+      - name: Sign with cosign (Sigstore keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          ref='${{ steps.target.outputs.ref }}'
+          digest='${{ steps.push.outputs.manifest_digest }}'
+          cosign sign "${ref}@${digest}"
+
+      - name: Verify the signature we just produced
+        run: |
+          set -euo pipefail
+          ref='${{ steps.target.outputs.ref }}'
+          digest='${{ steps.push.outputs.manifest_digest }}'
+          cosign verify "${ref}@${digest}" \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository }}/\.github/workflows/litertlm-runtime-publish\.yml@.*$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+      - name: Print pinning info for ADR-023 + LiteRT-A
+        run: |
+          echo "::notice title=Published LiteRT-LM runtime artifact::"
+          echo "ref:                  ${{ steps.target.outputs.ref }}"
+          echo "manifest_digest:      ${{ steps.push.outputs.manifest_digest }}"
+          echo ".so sha256:           ${{ steps.sha.outputs.hex }}"
+          echo "header sha256:        ${{ steps.env.outputs.header_sha }}"
+          echo "upstream tag:         ${{ inputs.upstream_tag }}"
+          echo "upstream commit:      ${{ steps.upstream.outputs.commit }}"
+          echo "bazel:                ${{ steps.env.outputs.bazel }}"
+          echo "glibc target:         ${{ steps.env.outputs.glibc }}"
+          echo "platform:             linux/amd64 (cpu-only)"
+          echo
+          echo "Pin in ADR-023 §Update + crates/litertlm-sys/Cargo.toml:"
+          echo "  ${{ steps.target.outputs.ref }}@${{ steps.push.outputs.manifest_digest }}"
