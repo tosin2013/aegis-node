@@ -1,0 +1,369 @@
+//! Build script for `aegis-litertlm-sys`.
+//!
+//! Three responsibilities:
+//!
+//! 1. Verify the vendored `c/engine.h` header against the SHA pinned at
+//!    the top of this file, then run `bindgen` against it.
+//! 2. Locate the prebuilt LiteRT-LM runtime — either via the
+//!    `LITERT_LM_PREBUILT_SO` env-var override, or by `oras pull`'ing
+//!    the pinned OCI artifact. SHA-verify both `.so` files (the engine
+//!    and the constraint-provider sidekick it `DT_NEEDED`s) against
+//!    in-tree pins.
+//! 3. Emit the dynamic-link directives so downstream crates can call
+//!    into the engine `.so`.
+//!
+//! All three pins (header SHA, engine `.so` SHA, constraint-provider
+//! `.so` SHA) match the OCI artifact published by
+//! `.github/workflows/litertlm-runtime-publish.yml` and recorded in
+//! [ADR-023](../../docs/adrs/023-litertlm-as-second-inference-backend.md)
+//! §"Published artifact (current pin)":
+//!
+//! ```text
+//! ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64
+//!   @sha256:6add795dada783a61aeaf59892be7d249515ccf5cd13f0146b34eca2b841cbb4
+//! ```
+//!
+//! Resolution policy:
+//! - **`LITERT_LM_PREBUILT_SO`** set → use that path, skip network.
+//!   Air-gapped contributors and CI staging steps take this path.
+//! - **`oras` on PATH** → pull the pinned digest into `OUT_DIR`. CI
+//!   uses this path; the canonical recipe.
+//! - Neither → build error pointing the operator at the exact
+//!   `oras pull` invocation.
+//!
+//! Either way the SHA-256 of every materialized file is verified
+//! before bindgen runs — a tampered or wrong-version artifact fails
+//! the build with a precise actionable error rather than silently
+//! linking against the wrong runtime.
+
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use sha2::{Digest, Sha256};
+
+/// SHA-256 of `c/engine.h` at LiteRT-LM tag `v0.10.2` (commit
+/// `476c0bd49429569b2a4685c4db7a657d531d4b6e`). This is the same SHA
+/// recorded in the LiteRT-0 OCI artifact's `dev.aegis-node.runtime.header.sha256`
+/// annotation. Bumping the upstream pin is an explicit, reviewed change
+/// to this constant.
+const EXPECTED_HEADER_SHA: &str =
+    "cacee1d18aa9e2c22aeb8da2fc1576b25c03d7104e5319a0352c64a57bb691e9";
+
+/// SHA-256 of `libaegis_litertlm_engine_cpu.so` produced by the
+/// LiteRT-A publish run for tag v0.10.2. Recorded in the OCI
+/// artifact's `dev.aegis-node.runtime.so.sha256` annotation. Bumping
+/// the upstream pin is an explicit, reviewed change to this constant.
+///
+/// Built via `cc_binary(linkshared=True, linkstatic=True)` per the
+/// publish workflow's overlay rule (mirror of upstream's
+/// `python/litert_lm/litert_lm_ext.so`). Bundles the `llguidance`
+/// Rust crate statically so `llg_*` symbols resolve at runtime
+/// without needing a separate libllguidance.so. Resulting `.so` is
+/// ~43.8 MB (cf. ~21.4 MB for the earlier `cc_shared_library` output
+/// which had unresolved `llg_*` symbols at runtime).
+const EXPECTED_SO_SHA: &str = "82d8f96c91ad28c6d3257b8235d88c6603660d2f2bd817241d1f86e4f45dd1e4";
+
+/// SHAs of the four upstream-vendored prebuilt `.so` files the engine
+/// `.so` `DT_NEEDED`s (or transitively pulls via the constraint
+/// provider's own deps). All four are LFS-tracked in the upstream
+/// repo under `prebuilt/linux_x86_64/`. The publish workflow ships
+/// them in the same OCI artifact as separate layers so the dynamic
+/// linker resolves them via the engine's `rpath = $ORIGIN` at
+/// session-load time.
+///
+/// Mirrors the `_PREBUILT_LIBS` list in upstream's
+/// `python/litert_lm/BUILD` — same set of sidekicks the official
+/// Python wheel ships with. SHAs captured from the upstream LFS
+/// pointer files at tag v0.10.2; recorded in the OCI artifact's
+/// `dev.aegis-node.runtime.<name>_so.sha256` annotations.
+///
+/// Each entry is `(filename, expected_sha256)`. Order does not matter
+/// for verification; kept stable for readability and so changes to a
+/// single file produce small diffs.
+const EXPECTED_PREBUILT_SHAS: &[(&str, &str)] = &[
+    (
+        "libGemmaModelConstraintProvider.so",
+        "b30101a057a69d2c877266ac7373023864816ccaed7d9413d97b98ae12842009",
+    ),
+    (
+        "libLiteRt.so",
+        "e9844d634dbb69dbeb0bc51a71f7035bb7ba523e876384ff58192955b1da63e4",
+    ),
+    (
+        "libLiteRtTopKWebGpuSampler.so",
+        "f44b2eaded0a5b2e015c88a4eb6af960811c5a5df140f9101f84d845e8aff0ca",
+    ),
+    (
+        "libLiteRtWebGpuAccelerator.so",
+        "9523c6fd38f661599b904908f87d22448c2ff2c8da54291782e0c23fcf988863",
+    ),
+];
+
+/// Pinned OCI reference of the LiteRT-LM runtime artifact this build
+/// script expects. Recorded so error messages can point operators at
+/// the exact `oras pull` / `aegis pull` invocation that materializes
+/// the `.so` files. The artifact carries five layers — the engine
+/// `.so` plus four upstream-vendored prebuilt sidekicks
+/// (`libGemmaModelConstraintProvider`, `libLiteRt`,
+/// `libLiteRtTopKWebGpuSampler`, `libLiteRtWebGpuAccelerator`) — all
+/// verified against the SHA constants above.
+const PINNED_OCI_REF: &str = "ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64\
+     @sha256:6add795dada783a61aeaf59892be7d249515ccf5cd13f0146b34eca2b841cbb4";
+
+/// Filename of the engine `.so` (used for the
+/// `cargo:rustc-link-lib=dylib=...` directive — name strips the `lib`
+/// prefix and `.so` suffix).
+const SO_FILENAME: &str = "libaegis_litertlm_engine_cpu.so";
+
+/// Library name passed to `cargo:rustc-link-lib=dylib=`.
+const LINK_LIB_NAME: &str = "aegis_litertlm_engine_cpu";
+
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=c/engine.h");
+    println!("cargo:rerun-if-env-changed=LITERT_LM_PREBUILT_SO");
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+
+    if let Err(e) = run() {
+        // Use cargo's structured error output so the message lands in
+        // the build log under a clear marker. We exit with code 1 via
+        // process::exit rather than panic, so cargo's own panic-handling
+        // doesn't add noise to what is already a precise error.
+        println!("cargo:warning=aegis-litertlm-sys build failed: {e}");
+        eprintln!("\naegis-litertlm-sys: {e}\n");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
+    // docs.rs builds with no network and no prebuilt — emit empty
+    // bindings so docs build succeeds. Downstream crates compile
+    // against the same surface; only the link step would fail, and
+    // docs.rs doesn't link.
+    if env::var_os("DOCS_RS").is_some() {
+        return write_docs_rs_stub();
+    }
+
+    let manifest_dir = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR")
+            .map_err(|_| "CARGO_MANIFEST_DIR unset (cargo bug?)".to_string())?,
+    );
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|_| "OUT_DIR unset (cargo bug?)".to_string())?);
+
+    let header_path = manifest_dir.join("c").join("engine.h");
+    verify_sha256(&header_path, EXPECTED_HEADER_SHA, "vendored c/engine.h")?;
+
+    let so_path = locate_and_verify_so()?;
+    let so_dir = so_path
+        .parent()
+        .ok_or_else(|| format!("LITERT_LM_PREBUILT_SO has no parent: {}", so_path.display()))?
+        .to_path_buf();
+
+    // The engine .so has DT_NEEDED entries for the prebuilt sidekicks
+    // (libGemmaModelConstraintProvider, libLiteRt, libLiteRt*WebGpu*).
+    // Verify every file is present in the same staging dir and matches
+    // its pinned SHA-256. The dynamic linker resolves each one through
+    // the engine .so's rpath ($ORIGIN) at session-load time, so all
+    // five files must sit in the same directory.
+    verify_prebuilt_sidekicks(&so_dir)?;
+
+    // Emit cargo directives so downstream crates pick up the dylib at
+    // link time and at runtime (rpath). Adding the directory to both
+    // the link search path AND the rpath lets `cargo test` and `cargo
+    // run` find the .so without requiring LD_LIBRARY_PATH gymnastics.
+    println!("cargo:rustc-link-search=native={}", so_dir.display());
+    println!("cargo:rustc-link-lib=dylib={LINK_LIB_NAME}");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", so_dir.display());
+
+    let bindings = bindgen::Builder::default()
+        .header(
+            header_path
+                .to_str()
+                .ok_or_else(|| format!("non-UTF8 header path: {}", header_path.display()))?,
+        )
+        .clang_arg("-x")
+        .clang_arg("c")
+        .allowlist_function("litert_lm_.*")
+        .allowlist_type("LiteRtLm.*")
+        .allowlist_type("InputData.*")
+        .allowlist_type("InputDataType")
+        .allowlist_type("Type")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .layout_tests(false)
+        .generate()
+        .map_err(|e| format!("bindgen failed against c/engine.h: {e}"))?;
+
+    let bindings_path = out_dir.join("bindings.rs");
+    bindings.write_to_file(&bindings_path).map_err(|e| {
+        format!(
+            "failed to write bindings to {}: {e}",
+            bindings_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+/// Locate the prebuilt LiteRT-LM runtime `.so`.
+///
+/// Resolution order:
+/// 1. `LITERT_LM_PREBUILT_SO` env var: must be a path to the `.so`
+///    file (not a directory). SHA-256 verified against
+///    [`EXPECTED_SO_SHA`].
+/// 2. Try `oras` on PATH against [`PINNED_OCI_REF`]; pull the
+///    blob into `OUT_DIR` and return that path. Falls through if
+///    `oras` is not installed or the pull fails.
+///
+/// Otherwise returns a structured error pointing the operator at the
+/// exact recipe to materialize the file.
+fn locate_and_verify_so() -> Result<PathBuf, String> {
+    if let Some(p) = env::var_os("LITERT_LM_PREBUILT_SO") {
+        let path = PathBuf::from(p);
+        if !path.is_file() {
+            return Err(format!(
+                "LITERT_LM_PREBUILT_SO is set but does not point at a regular file: {}\n\
+                 Expected: a path to {SO_FILENAME} matching SHA-256 {EXPECTED_SO_SHA}.",
+                path.display()
+            ));
+        }
+        verify_sha256(&path, EXPECTED_SO_SHA, "LiteRT-LM runtime .so")?;
+        return Ok(path);
+    }
+
+    // Best-effort `oras pull` against the pinned digest. We don't make
+    // network access mandatory — air-gapped contributors set the env
+    // var instead.
+    if let Some(out_dir) = env::var_os("OUT_DIR") {
+        let staging = PathBuf::from(out_dir).join("litertlm-runtime");
+        if let Some(found) = try_oras_pull(&staging) {
+            verify_sha256(&found, EXPECTED_SO_SHA, "LiteRT-LM runtime .so (oras pull)")?;
+            return Ok(found);
+        }
+    }
+
+    Err(format!(
+        "LITERT_LM_PREBUILT_SO is unset and `oras pull` was unavailable or failed.\n\
+         \n\
+         Materialize the runtime artifact and re-run cargo build:\n\
+         \n\
+             oras pull {PINNED_OCI_REF} -o /tmp/litertlm-runtime\n\
+             export LITERT_LM_PREBUILT_SO=/tmp/litertlm-runtime/{SO_FILENAME}\n\
+             cargo build -p aegis-litertlm-sys\n\
+         \n\
+         (The .so is published by .github/workflows/litertlm-runtime-publish.yml\n\
+          and pinned in docs/adrs/023-litertlm-as-second-inference-backend.md.\n\
+          Expected SHA-256 of the .so: {EXPECTED_SO_SHA})"
+    ))
+}
+
+/// Try to pull the pinned OCI artifact via `oras`. Returns the path to
+/// the materialized `.so` on success, or `None` if `oras` is not
+/// available or the pull failed for any reason. The caller decides
+/// whether the failure is fatal.
+fn try_oras_pull(staging: &PathBuf) -> Option<PathBuf> {
+    if let Err(e) = std::fs::create_dir_all(staging) {
+        println!(
+            "cargo:warning=could not create oras staging dir {}: {e}",
+            staging.display()
+        );
+        return None;
+    }
+
+    let status = Command::new("oras")
+        .args(["pull", PINNED_OCI_REF, "-o"])
+        .arg(staging)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            let candidate = staging.join(SO_FILENAME);
+            if candidate.is_file() {
+                Some(candidate)
+            } else {
+                println!(
+                    "cargo:warning=oras pull succeeded but {} was not written; staging contents may differ",
+                    candidate.display()
+                );
+                None
+            }
+        }
+        Ok(s) => {
+            println!("cargo:warning=oras pull exited {s}");
+            None
+        }
+        Err(e) => {
+            // `oras` not on PATH is the common case — it's not an
+            // error in itself, just means the env-var path is required.
+            println!("cargo:warning=oras not available ({e}); set LITERT_LM_PREBUILT_SO instead");
+            None
+        }
+    }
+}
+
+/// Locate and verify the prebuilt sidekick `.so` files that
+/// `libaegis_litertlm_engine_cpu.so` resolves at runtime via its
+/// rpath. The publish workflow ships all of them as separate layers
+/// in the same OCI artifact; `oras pull` materializes them into the
+/// same staging directory.
+///
+/// If any file is missing or its SHA-256 doesn't match the pin,
+/// surface a precise error message that names the missing/bad file
+/// and the recovery recipe.
+fn verify_prebuilt_sidekicks(so_dir: &Path) -> Result<(), String> {
+    for &(filename, expected_sha) in EXPECTED_PREBUILT_SHAS {
+        let path = so_dir.join(filename);
+        if !path.is_file() {
+            return Err(format!(
+                "{filename} not found at {}\n\
+                 \n\
+                 The engine .so resolves this prebuilt sidekick at session-load time\n\
+                 via its rpath ($ORIGIN). It must sit in the same directory as\n\
+                 {SO_FILENAME}.\n\
+                 \n\
+                 Materialize the bundled artifact via `oras pull`:\n\
+                 \n\
+                     oras pull {PINNED_OCI_REF} -o /tmp/litertlm-runtime\n\
+                 \n\
+                 (Expected SHA-256 of {filename}: {expected_sha})",
+                path.display()
+            ));
+        }
+        verify_sha256(&path, expected_sha, filename)?;
+    }
+    Ok(())
+}
+
+fn verify_sha256(path: &Path, expected_hex: &str, label: &str) -> Result<(), String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("could not read {label} at {}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let actual = hex::encode(hasher.finalize());
+    if actual != expected_hex {
+        return Err(format!(
+            "{label} SHA-256 mismatch:\n  path:     {}\n  expected: {expected_hex}\n  actual:   {actual}\n\
+             This indicates the file was modified, replaced, or built from a different upstream tag.\n\
+             Refusing to proceed.",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Emit a stub `bindings.rs` for docs.rs builds (no network, no
+/// prebuilt artifact). Docs.rs builds the `aegis-litertlm-sys` crate
+/// only to extract its public surface; it never executes any FFI
+/// call, so a syntactically valid empty stub is enough.
+fn write_docs_rs_stub() -> Result<(), String> {
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|_| "OUT_DIR unset (cargo bug?)".to_string())?);
+    let bindings_path = out_dir.join("bindings.rs");
+    std::fs::write(
+        &bindings_path,
+        "// docs.rs stub — no FFI surface emitted.\n",
+    )
+    .map_err(|e| format!("failed to write docs.rs stub: {e}"))?;
+    Ok(())
+}

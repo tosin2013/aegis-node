@@ -124,42 +124,73 @@ jobs:
           # Bazelisk respects USE_BAZEL_VERSION too:
           echo "USE_BAZEL_VERSION=${{ inputs.bazel_version }}" >> "$GITHUB_ENV"
 
-      - name: Add Aegis overlay — cc_shared_library on top of //c:engine_cpu
+      - name: Add Aegis overlay — cc_binary(linkshared) on top of //c:engine_cpu
         run: |
           set -euo pipefail
           cd upstream
           # The upstream c/BUILD declares `engine_cpu` as a cc_library
           # (a static archive). We need a single shared library
           # consumable from outside Bazel — append a small overlay rule.
-          # Per Bazel's cc_shared_library: the `roots` attribute names
-          # the libraries to expose; transitive deps are linked in.
+          #
+          # First attempt used cc_shared_library (run 25234002154); that
+          # produced a .so with unresolved llg_* symbols at runtime
+          # because Bazel's cc_shared_library skips Rust-managed cc deps
+          # like @crate_index__llguidance-1.3.0//:llguidance_cc. The .so
+          # would load, but the first call into the constrained-decoding
+          # path (used by Gemma's tool-call decoder) failed with a
+          # symbol lookup error.
+          #
+          # cc_binary(linkshared=True, linkstatic=True) is the pattern
+          # upstream itself uses for python/litert_lm/litert_lm_ext.so —
+          # it bundles ALL transitive deps statically, including the
+          # llguidance Rust crate. Same linkopts upstream uses for
+          # parity (see python/litert_lm/BUILD):
+          #   -Wl,-Bsymbolic        — prefer in-binary symbols (avoids
+          #                           accidental shadowing by a host
+          #                           libllguidance if one exists).
+          #   -Wl,-rpath,'$ORIGIN'  — find sibling prebuilt .so files
+          #                           (libLiteRt, libGemma...) without
+          #                           needing LD_LIBRARY_PATH.
+          #   -Wl,-z,noexecstack    — non-executable stack (modern
+          #                           NX/SELinux compat, b/496655352).
           cat >> c/BUILD <<'EOF'
 
           # --- Aegis-Node overlay (added by litertlm-runtime-publish.yml) ---
-          # cc_shared_library that bundles engine_cpu's transitive deps
-          # into a single .so for distribution outside Bazel. The
-          # upstream c/BUILD's existing cc_library targets are
-          # static-archive-flavored.
-          cc_shared_library(
-              name = "engine_cpu_shared",
-              shared_lib_name = "libaegis_litertlm_engine_cpu.so",
+          # cc_binary(linkshared) that bundles engine_cpu's transitive
+          # deps — including the llguidance Rust crate — into a single
+          # .so for distribution outside Bazel. Mirrors upstream's
+          # python/litert_lm/litert_lm_ext.so pattern.
+          cc_binary(
+              name = "libaegis_litertlm_engine_cpu.so",
+              copts = [
+                  "-fexceptions",
+                  "-fvisibility=hidden",
+              ],
+              features = ["-use_header_modules"],
+              linkopts = [
+                  "-Wl,-Bsymbolic",
+                  "-Wl,-rpath,'$$ORIGIN'",
+                  "-Wl,-z,noexecstack",
+              ],
+              linkshared = True,
               deps = [":engine_cpu"],
               visibility = ["//visibility:public"],
           )
           EOF
           echo "--- appended overlay ---"
-          tail -12 c/BUILD
+          tail -22 c/BUILD
 
-      - name: Build //c:engine_cpu_shared
+      - name: Build //c:libaegis_litertlm_engine_cpu.so
         id: build
         run: |
           set -euo pipefail
           cd upstream
           # CPU-only build, optimized. -c opt is the release config.
-          bazel build -c opt //c:engine_cpu_shared
+          # cc_binary's name carries the .so extension explicitly so
+          # the produced file is exactly `libaegis_litertlm_engine_cpu.so`.
+          bazel build -c opt //c:libaegis_litertlm_engine_cpu.so
 
-          # Locate the built .so. Bazel writes it under
-          # bazel-bin/c/. cc_shared_library produces a single output.
+          # Locate the built .so under bazel-bin/c/.
           out=$(find bazel-bin/c -maxdepth 2 -name 'libaegis_litertlm_engine_cpu.so' -print -quit)
           if [[ -z "$out" || ! -f "$out" ]]; then
             echo "::error::Could not locate libaegis_litertlm_engine_cpu.so under bazel-bin/c/" >&2
@@ -170,17 +201,64 @@ jobs:
           # operate on a stable path.
           mkdir -p ../artifact
           cp "$out" ../artifact/libaegis_litertlm_engine_cpu.so
+
+          # Bundle ALL FOUR vendored prebuilts that the engine .so
+          # transitively pulls at runtime. Same set upstream itself
+          # ships with python/litert_lm's wheel (see
+          # _PREBUILT_LIBS in python/litert_lm/BUILD). The engine .so's
+          # rpath is set to `$ORIGIN` so the dynamic linker resolves
+          # them via the same staging directory at session-load time.
+          #   - libGemmaModelConstraintProvider.so — constrained-decoding
+          #     for Gemma's tool-call grammar.
+          #   - libLiteRt.so — the LiteRT (TFLite) Rust runtime.
+          #   - libLiteRtTopKWebGpuSampler.so — WebGPU sampler shim
+          #     (kept on Linux for symbol resolution; Phase 1 doesn't
+          #     activate the WebGPU path).
+          #   - libLiteRtWebGpuAccelerator.so — WebGPU accelerator
+          #     shim (same).
+          PREBUILTS="libGemmaModelConstraintProvider.so libLiteRt.so libLiteRtTopKWebGpuSampler.so libLiteRtWebGpuAccelerator.so"
+          for pb in $PREBUILTS; do
+            src=$(find prebuilt/linux_x86_64 -name "$pb" -print -quit 2>/dev/null || true)
+            if [[ -z "$src" || ! -f "$src" ]]; then
+              echo "::error::Could not locate $pb under upstream/prebuilt/linux_x86_64/ (LFS pull may have failed)." >&2
+              ls -la prebuilt/linux_x86_64/ || true
+              exit 2
+            fi
+            # Defense-in-depth: detect LFS pointer files vs real binaries.
+            if head -c 8 "$src" | grep -q 'version'; then
+              echo "::error::$src is an LFS pointer file, not the binary. Re-check actions/checkout's lfs:true setting." >&2
+              head -c 200 "$src" || true
+              exit 2
+            fi
+            cp "$src" "../artifact/$pb"
+          done
+
           echo "path=$(realpath ../artifact/libaegis_litertlm_engine_cpu.so)" >> "$GITHUB_OUTPUT"
+          echo "artifact_dir=$(realpath ../artifact)" >> "$GITHUB_OUTPUT"
           ls -lh ../artifact/
 
-      - name: Compute SHA-256 of the runtime .so
+      - name: Compute SHA-256s of every runtime .so
         id: sha
         run: |
           set -euo pipefail
-          path='${{ steps.build.outputs.path }}'
-          digest=$(sha256sum "$path" | awk '{print $1}')
-          echo "hex=${digest}" >> "$GITHUB_OUTPUT"
-          echo "Computed sha256: ${digest}"
+          artifact_dir='${{ steps.build.outputs.artifact_dir }}'
+          # Hardcoded (filename, output-key) pairs — auto-derivation
+          # from the filename via sed+tr was fragile against camelCase
+          # collapses (one prior run produced an empty
+          # sha_litertopkwebgpusampler annotation for unclear reasons,
+          # likely a TR locale mismatch). Hardcoding is unambiguous.
+          declare -A keys=(
+            [libaegis_litertlm_engine_cpu.so]=engine
+            [libGemmaModelConstraintProvider.so]=constraint_provider
+            [libLiteRt.so]=litert
+            [libLiteRtTopKWebGpuSampler.so]=litert_topk_webgpu_sampler
+            [libLiteRtWebGpuAccelerator.so]=litert_webgpu_accelerator
+          )
+          for f in "${!keys[@]}"; do
+            d=$(sha256sum "$artifact_dir/$f" | awk '{print $1}')
+            echo "${f}: ${d}"
+            echo "sha_${keys[$f]}=${d}" >> "$GITHUB_OUTPUT"
+          done
 
       - name: Capture build environment metadata
         id: env
@@ -229,30 +307,36 @@ jobs:
           echo "$ORAS_PASSWORD" | oras login ghcr.io --username "$ORAS_USERNAME" --password-stdin
 
           ref='${{ steps.target.outputs.ref }}'
-          path='${{ steps.build.outputs.path }}'
           # `oras push` refuses absolute paths in layer names; cd into
-          # the artifact dir.
-          artifact_dir="$(dirname "$path")"
-          file_name="$(basename "$path")"
+          # the artifact dir so the layer titles are bare filenames.
+          artifact_dir='${{ steps.build.outputs.artifact_dir }}'
           cd "$artifact_dir"
 
           oras push "$ref" \
             --artifact-type "application/vnd.aegis-node.litertlm-runtime.v1" \
             --annotation "org.opencontainers.image.source=https://github.com/google-ai-edge/LiteRT-LM" \
             --annotation "org.opencontainers.image.revision=${{ steps.upstream.outputs.commit }}" \
-            --annotation "org.opencontainers.image.title=${file_name}" \
+            --annotation "org.opencontainers.image.title=libaegis_litertlm_engine_cpu.so" \
             --annotation "dev.aegis-node.upstream=github" \
             --annotation "dev.aegis-node.upstream.repo=google-ai-edge/LiteRT-LM" \
             --annotation "dev.aegis-node.upstream.tag=${{ inputs.upstream_tag }}" \
             --annotation "dev.aegis-node.upstream.commit=${{ steps.upstream.outputs.commit }}" \
             --annotation "dev.aegis-node.bazel.version=${{ steps.env.outputs.bazel }}" \
-            --annotation "dev.aegis-node.bazel.target=//c:engine_cpu_shared" \
+            --annotation "dev.aegis-node.bazel.target=//c:libaegis_litertlm_engine_cpu.so" \
             --annotation "dev.aegis-node.glibc.target=${{ steps.env.outputs.glibc }}" \
-            --annotation "dev.aegis-node.runtime.so.sha256=${{ steps.sha.outputs.hex }}" \
+            --annotation "dev.aegis-node.runtime.so.sha256=${{ steps.sha.outputs.sha_engine }}" \
+            --annotation "dev.aegis-node.runtime.constraint_provider_so.sha256=${{ steps.sha.outputs.sha_constraint_provider }}" \
+            --annotation "dev.aegis-node.runtime.litert_so.sha256=${{ steps.sha.outputs.sha_litert }}" \
+            --annotation "dev.aegis-node.runtime.litert_topk_webgpu_sampler_so.sha256=${{ steps.sha.outputs.sha_litert_topk_webgpu_sampler }}" \
+            --annotation "dev.aegis-node.runtime.litert_webgpu_accelerator_so.sha256=${{ steps.sha.outputs.sha_litert_webgpu_accelerator }}" \
             --annotation "dev.aegis-node.runtime.header.sha256=${{ steps.env.outputs.header_sha }}" \
             --annotation "dev.aegis-node.runtime.platform=linux/amd64" \
             --annotation "dev.aegis-node.runtime.kind=cpu-only" \
-            "${file_name}:application/vnd.aegis-node.litertlm-runtime.v1"
+            "libaegis_litertlm_engine_cpu.so:application/vnd.aegis-node.litertlm-runtime.v1" \
+            "libGemmaModelConstraintProvider.so:application/vnd.aegis-node.litertlm-runtime-constraint-provider.v1" \
+            "libLiteRt.so:application/vnd.aegis-node.litertlm-runtime-litert.v1" \
+            "libLiteRtTopKWebGpuSampler.so:application/vnd.aegis-node.litertlm-runtime-litert-topk-webgpu.v1" \
+            "libLiteRtWebGpuAccelerator.so:application/vnd.aegis-node.litertlm-runtime-litert-webgpu.v1"
 
           desc=$(oras manifest fetch --descriptor "$ref")
           manifest_digest=$(echo "$desc" | jq -r '.digest')
@@ -280,15 +364,19 @@ jobs:
       - name: Print pinning info for ADR-023 + LiteRT-A
         run: |
           echo "::notice title=Published LiteRT-LM runtime artifact::"
-          echo "ref:                  ${{ steps.target.outputs.ref }}"
-          echo "manifest_digest:      ${{ steps.push.outputs.manifest_digest }}"
-          echo ".so sha256:           ${{ steps.sha.outputs.hex }}"
-          echo "header sha256:        ${{ steps.env.outputs.header_sha }}"
-          echo "upstream tag:         ${{ inputs.upstream_tag }}"
-          echo "upstream commit:      ${{ steps.upstream.outputs.commit }}"
-          echo "bazel:                ${{ steps.env.outputs.bazel }}"
-          echo "glibc target:         ${{ steps.env.outputs.glibc }}"
-          echo "platform:             linux/amd64 (cpu-only)"
+          echo "ref:                                ${{ steps.target.outputs.ref }}"
+          echo "manifest_digest:                    ${{ steps.push.outputs.manifest_digest }}"
+          echo "engine_cpu .so sha256:              ${{ steps.sha.outputs.sha_engine }}"
+          echo "constraint_provider .so sha256:     ${{ steps.sha.outputs.sha_constraint_provider }}"
+          echo "litert .so sha256:                  ${{ steps.sha.outputs.sha_litert }}"
+          echo "litert_topk_webgpu_sampler sha256:  ${{ steps.sha.outputs.sha_litert_topk_webgpu_sampler }}"
+          echo "litert_webgpu_accelerator sha256:   ${{ steps.sha.outputs.sha_litert_webgpu_accelerator }}"
+          echo "header sha256:                      ${{ steps.env.outputs.header_sha }}"
+          echo "upstream tag:                       ${{ inputs.upstream_tag }}"
+          echo "upstream commit:                    ${{ steps.upstream.outputs.commit }}"
+          echo "bazel:                              ${{ steps.env.outputs.bazel }}"
+          echo "glibc target:                       ${{ steps.env.outputs.glibc }}"
+          echo "platform:                           linux/amd64 (cpu-only)"
           echo
-          echo "Pin in ADR-023 §Update + crates/litertlm-sys/Cargo.toml:"
+          echo "Pin in ADR-023 §Update + crates/litertlm-sys/build.rs:"
           echo "  ${{ steps.target.outputs.ref }}@${{ steps.push.outputs.manifest_digest }}"

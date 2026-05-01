@@ -1,0 +1,98 @@
+name: LiteRT-LM backend
+
+# Builds + tests crates/litertlm-sys + crates/litertlm-backend — the
+# Rust FFI binding and safe wrapper around LiteRT-LM (per ADR-023,
+# LiteRT-A / issue #95). Kept as a separate job from `rust.yml`
+# because the build pulls a ~21 MB OCI artifact (the prebuilt
+# libaegis_litertlm_engine_cpu.so + libGemmaModelConstraintProvider.so
+# bundled by .github/workflows/litertlm-runtime-publish.yml) and runs
+# bindgen against the vendored c/engine.h. We don't want every
+# workspace PR to pay that cost — `rust.yml` excludes these crates
+# from its default workspace member set.
+#
+# Runs on ubuntu-24.04 because the published .so requires GLIBC_2.38+
+# (the runtime is built on ubuntu-latest, and as of dispatch time
+# ubuntu-latest = ubuntu-24.04 with glibc 2.39). Pinning the runner
+# label to 24.04 explicitly avoids a future `ubuntu-latest` migration
+# silently re-rolling to a newer glibc that the published .so doesn't
+# advertise compatibility with.
+#
+# Path filter narrows triggering to changes that could plausibly
+# affect the build: the two crates, the workspace Cargo.toml (where
+# the workspace's lints + members are declared), and this workflow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/litertlm-sys/**"
+      - "crates/litertlm-backend/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/litertlm.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/litertlm-sys/**"
+      - "crates/litertlm-backend/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/litertlm.yml"
+
+permissions:
+  contents: read
+  packages: read   # `oras pull` against ghcr.io public artifact
+
+jobs:
+  build:
+    name: cargo test (litertlm crates)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # bindgen needs libclang to parse c/engine.h. Cmake is unused
+      # here (LiteRT-LM is consumed as a prebuilt — no Bazel / cmake
+      # in this job) but listed for parity with llama.yml's image
+      # set, so the same cached layer can be reused.
+      - name: Install build deps (libclang)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev clang
+
+      # litertlm-sys's build.rs calls `oras pull` against the pinned
+      # OCI artifact. Install oras so the fetch path inside build.rs
+      # can succeed without requiring LITERT_LM_PREBUILT_SO to be
+      # pre-staged in the workflow.
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: litertlm-backend
+          cache-targets: "true"
+
+      - name: Format check
+        run: |
+          cargo fmt --package aegis-litertlm-sys -- --check
+          cargo fmt --package aegis-litertlm-backend -- --check
+
+      - name: Clippy
+        run: |
+          cargo clippy --package aegis-litertlm-sys --all-targets -- -D warnings
+          cargo clippy --package aegis-litertlm-backend --all-targets -- -D warnings
+
+      # `--all-targets` covers lib + tests/smoke. The smoke test that
+      # would actually load a real .litertlm is `#[ignore]`d unless
+      # `AEGIS_LITERTLM_TEST_MODEL` is set — the wrapper-API tests
+      # run unconditionally. Real-model coverage on CI lands in a
+      # follow-up PR once the Gemma 4 OCI fixture (LiteRT-C / #97)
+      # is available for caching.
+      - name: Test
+        run: |
+          cargo test --package aegis-litertlm-sys --all-targets
+          cargo test --package aegis-litertlm-backend --all-targets

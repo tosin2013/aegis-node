@@ -12,12 +12,15 @@ members = [
     "crates/approval-gate",
     "crates/mcp-client",
     "crates/llama-backend",
+    "crates/litertlm-sys",
+    "crates/litertlm-backend",
 ]
-# Default member set excludes `llama-backend` so the existing
+# Default member set excludes the FFI-bound backends (`llama-backend`,
+# `litertlm-sys`, `litertlm-backend`) so the existing
 # `cargo build --workspace` / `cargo test --workspace` paths in
-# `rust.yml` don't pay the ~50s C++/CMake build cost on every PR.
-# A dedicated `llama.yml` job builds and tests `aegis-llama-backend`
-# explicitly.
+# `rust.yml` don't pay the C++/Bazel/bindgen build cost on every PR.
+# Dedicated path-filtered jobs (`llama.yml`, `litertlm.yml`) build and
+# test those crates explicitly when their inputs change.
 default-members = [
     "crates/inference-engine",
     "crates/network-gate",
