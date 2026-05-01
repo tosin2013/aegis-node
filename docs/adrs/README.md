@@ -30,6 +30,7 @@ The decisions are anchored in the Architecture Principles (PRD §7) and the ten-
 | [020](020-recorded-demo-program.md) | Recorded Demo Program — VHS Tapes Driven by Real CPU-Bound Models | §1, §5 Phase 1 |
 | [021](021-huggingface-as-upstream-oci-as-trust-boundary.md) | HuggingFace as Canonical Upstream; OCI + cosign as Trust Boundary | §6.1 |
 | [022](022-trust-boundary-format-agnosticism.md) | Trust-Boundary Format Agnosticism — Verify Signed Claims, Don't Parse Files | §6.1, §7 |
+| [023](023-litertlm-as-second-inference-backend.md) | LiteRT-LM as Second Inference Backend (CPU + Greedy, Phase 1) | §5 Phase 1, §6.1 |
 
 ## Decision Coverage Matrix
 
