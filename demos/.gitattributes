@@ -1,0 +1,8 @@
+# GIFs are binary regenerable artifacts. Marking them as binary keeps
+# `git diff` quiet (it would otherwise try to diff the bytes line-by-
+# line) and keeps merges from corrupting the encoding. Per ADR-020 §
+# "Implementation plan" item 1.
+*.gif binary
+*.cast binary
+*.png binary
+*.mp4 binary

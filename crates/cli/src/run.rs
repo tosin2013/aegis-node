@@ -78,9 +78,22 @@ pub struct RunArgs {
     #[arg(long)]
     pub session_id: Option<String>,
 
-    /// JSON file with a fixed tool-call sequence.
-    #[arg(long)]
-    pub script: PathBuf,
+    /// JSON file with a fixed tool-call sequence (script-mode runs).
+    /// Mutually exclusive with `--prompt`: a session is driven by
+    /// either a deterministic script (no model) or a real model
+    /// (LLM-B `Session::run_turn`), never both.
+    #[arg(long, conflicts_with = "prompt")]
+    pub script: Option<PathBuf>,
+
+    /// User message to feed the LLM-B backend for one model-driven
+    /// turn. Requires the CLI to have been built with the `llama`
+    /// feature (per ADR-014, LLM-B). Mutually exclusive with
+    /// `--script`. The manifest's `inference.determinism` block (if
+    /// any) flows through to the sampler chain — pinning seed +
+    /// temperature 0.0 yields byte-identical output, which is what
+    /// the recorded demo program (ADR-020) depends on.
+    #[arg(long, conflicts_with = "script")]
+    pub prompt: Option<String>,
 }
 
 /// Result of an `aegis run` invocation. Used by tests to assert
@@ -142,6 +155,10 @@ fn default_protocol() -> String {
 }
 
 pub fn execute(args: RunArgs) -> Result<RunOutcome> {
+    if args.script.is_none() && args.prompt.is_none() {
+        anyhow::bail!("aegis run requires either --script <path> or --prompt <text>");
+    }
+
     let session_id = args
         .session_id
         .clone()
@@ -154,8 +171,6 @@ pub fn execute(args: RunArgs) -> Result<RunOutcome> {
         Some(p) => p.clone(),
         None => default_identity_dir()?,
     };
-
-    let script = load_script(&args.script)?;
 
     let cfg = BootConfig {
         session_id: session_id.clone(),
@@ -181,20 +196,13 @@ pub fn execute(args: RunArgs) -> Result<RunOutcome> {
         session = session.with_approval_channel(Box::new(channel));
     }
 
-    let mut halted = false;
-    let mut halt_reason: Option<String> = None;
-    for call in script.calls {
-        match dispatch(&mut session, call) {
-            Ok(()) => {}
-            Err(Halt::Continue) => {}
-            Err(Halt::Stop(reason)) => {
-                halted = true;
-                halt_reason = Some(reason);
-                break;
-            }
-            Err(Halt::Fatal(err)) => return Err(err),
-        }
-    }
+    let (halted, halt_reason) = match (args.prompt.as_ref(), args.script.as_ref()) {
+        (Some(prompt), _) => run_prompt(&mut session, &args, prompt)?,
+        (None, Some(script_path)) => run_script(&mut session, script_path)?,
+        // The if-bail above ruled out both-None; matched here for an
+        // exhaustive pattern that doesn't trip clippy::expect_used.
+        (None, None) => unreachable!(),
+    };
 
     let root_hash = session.shutdown().context("shutdown")?;
     let summary = aegis_ledger_writer::verify_file(&ledger_path).context("post-run verify")?;
@@ -207,6 +215,121 @@ pub fn execute(args: RunArgs) -> Result<RunOutcome> {
         halted,
         halt_reason,
     })
+}
+
+/// Drive a session via a fixed script (the original `aegis run` path —
+/// deterministic, no model required, no LLM-B backend needed).
+fn run_script(session: &mut Session, script_path: &Path) -> Result<(bool, Option<String>)> {
+    let script = load_script(script_path)?;
+    let mut halted = false;
+    let mut halt_reason: Option<String> = None;
+    for call in script.calls {
+        match dispatch(session, call) {
+            Ok(()) => {}
+            Err(Halt::Continue) => {}
+            Err(Halt::Stop(reason)) => {
+                halted = true;
+                halt_reason = Some(reason);
+                break;
+            }
+            Err(Halt::Fatal(err)) => return Err(err),
+        }
+    }
+    Ok((halted, halt_reason))
+}
+
+/// Drive a session via one model-driven turn (LLM-B `Session::run_turn`).
+/// Requires the `llama` Cargo feature; the no-`llama` build returns a
+/// typed error so the missing-feature case is loud, not silent.
+#[cfg(feature = "llama")]
+fn run_prompt(
+    session: &mut Session,
+    args: &RunArgs,
+    prompt: &str,
+) -> Result<(bool, Option<String>)> {
+    use aegis_inference_engine::{Backend as _, ToolCallResult};
+    use aegis_llama_backend::{
+        Backend as LlamaBackend, DeterminismKnobs, LlamaCppBackend, SessionOptions,
+    };
+    use std::sync::Arc;
+
+    // Construct LLM-A backend + LLM-B LlamaCppBackend wrapper. The
+    // FFI is process-global (per ADR-014); we hold it for the duration
+    // of this command and let it drop on exit.
+    let llama_backend = Arc::new(LlamaBackend::init().context("llama backend init")?);
+
+    // Resolve `inference.determinism` from the manifest. The Policy
+    // already parsed it; pull it back out via the public accessor.
+    let determinism = session
+        .policy()
+        .manifest()
+        .inference
+        .as_ref()
+        .and_then(|i| i.determinism.as_ref())
+        .map(DeterminismKnobs::from)
+        .unwrap_or_default();
+
+    let options = SessionOptions {
+        determinism,
+        ..SessionOptions::default()
+    };
+
+    let cpp_backend = LlamaCppBackend::new(llama_backend, options);
+    let loaded = cpp_backend
+        .load(&args.model)
+        .with_context(|| format!("loading model {}", args.model.display()))?;
+
+    // Plug the loaded model into the session for the duration of the
+    // turn. `set_loaded_model` is the &mut-self counterpart of
+    // `Session::with_loaded_model`.
+    session.set_loaded_model(loaded);
+
+    let outcome = session.run_turn(prompt).context("run_turn")?;
+
+    // Print the outcome for the user (and for the demo .tape recorder
+    // — these lines are what the GIF shows).
+    if let Some(text) = &outcome.assistant_text {
+        println!("# assistant");
+        println!("{text}");
+    }
+    for (i, call) in outcome.tool_calls.iter().enumerate() {
+        match &call.result {
+            ToolCallResult::Success(value) => {
+                println!("# tool[{i}] {} → success", call.name);
+                let pretty =
+                    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+                println!("{pretty}");
+            }
+            ToolCallResult::Denied(reason) => {
+                println!("# tool[{i}] {} → DENIED: {reason}", call.name);
+            }
+            ToolCallResult::RequiresApproval(reason) => {
+                println!("# tool[{i}] {} → REQUIRES_APPROVAL: {reason}", call.name);
+            }
+            ToolCallResult::Unroutable(reason) => {
+                println!("# tool[{i}] {} → UNROUTABLE: {reason}", call.name);
+            }
+        }
+    }
+
+    // The model-driven path doesn't surface a "halted" condition the
+    // way the script path does — denials and approval refusals are
+    // captured into the TurnOutcome rather than propagated. We return
+    // `halted: false` so the caller can still check the ledger for
+    // Violation entries via `aegis verify`.
+    Ok((false, None))
+}
+
+#[cfg(not(feature = "llama"))]
+fn run_prompt(
+    _session: &mut Session,
+    _args: &RunArgs,
+    _prompt: &str,
+) -> Result<(bool, Option<String>)> {
+    anyhow::bail!(
+        "aegis run --prompt requires the 'llama' feature; rebuild with \
+         `cargo install --path crates/cli --features llama` (per ADR-014)"
+    );
 }
 
 enum Halt {

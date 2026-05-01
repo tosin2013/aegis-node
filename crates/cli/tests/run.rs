@@ -41,7 +41,8 @@ fn args_for(
         instance: "inst-1".to_string(),
         ledger: Some(ledger),
         session_id: Some(session_id.to_string()),
-        script,
+        script: Some(script),
+        prompt: None,
     }
 }
 
@@ -287,12 +288,96 @@ tools: {}
         instance: "inst-1".to_string(),
         ledger: Some(work.path().join("ledger.jsonl")),
         session_id: Some("session-missing".to_string()),
-        script: work.path().join("does-not-exist.json"),
+        script: Some(work.path().join("does-not-exist.json")),
+        prompt: None,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("script") || msg.contains("does-not-exist"),
         "{msg}"
+    );
+}
+
+#[test]
+fn execute_with_neither_script_nor_prompt_errors_cleanly() {
+    // The CLI's --script / --prompt flags are mutually exclusive AND
+    // at least one is required. A library caller (or a malformed
+    // shell invocation that bypasses clap) hitting `execute` with
+    // both `None` should get a typed message — not a panic.
+    let work = tempfile::tempdir().unwrap();
+    let ca = tempfile::tempdir().unwrap();
+    write(
+        &work.path().join("manifest.yaml"),
+        r#"schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://aegis-node.local/agent/x/1" }
+tools: {}
+"#,
+    );
+    write(&work.path().join("model.gguf"), "x");
+    aegis_identity::LocalCa::init(ca.path(), "aegis-node.local").unwrap();
+
+    let args = RunArgs {
+        manifest: work.path().join("manifest.yaml"),
+        model: work.path().join("model.gguf"),
+        config: None,
+        chat_template_sidecar: None,
+        identity_dir: Some(ca.path().to_path_buf()),
+        workload: "research".to_string(),
+        instance: "inst-1".to_string(),
+        ledger: Some(work.path().join("ledger.jsonl")),
+        session_id: Some("session-neither".to_string()),
+        script: None,
+        prompt: None,
+    };
+    let err = execute(args).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("--script") && msg.contains("--prompt"),
+        "expected error to mention both flags, got: {msg}"
+    );
+}
+
+// `--prompt` requires the `llama` Cargo feature. The default-feature
+// CLI build returns a typed error rather than running the model. This
+// test runs *only* when `llama` is NOT enabled, so the workspace's
+// default `cargo test --workspace --exclude aegis-llama-backend`
+// (rust.yml) covers it; the dedicated `llama.yml` job runs the
+// llama-feature path separately.
+#[cfg(not(feature = "llama"))]
+#[test]
+fn execute_with_prompt_without_llama_feature_errors_cleanly() {
+    let work = tempfile::tempdir().unwrap();
+    let ca = tempfile::tempdir().unwrap();
+    write(
+        &work.path().join("manifest.yaml"),
+        r#"schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://aegis-node.local/agent/x/1" }
+tools: {}
+"#,
+    );
+    write(&work.path().join("model.gguf"), "x");
+    aegis_identity::LocalCa::init(ca.path(), "aegis-node.local").unwrap();
+
+    let args = RunArgs {
+        manifest: work.path().join("manifest.yaml"),
+        model: work.path().join("model.gguf"),
+        config: None,
+        chat_template_sidecar: None,
+        identity_dir: Some(ca.path().to_path_buf()),
+        workload: "research".to_string(),
+        instance: "inst-1".to_string(),
+        ledger: Some(work.path().join("ledger.jsonl")),
+        session_id: Some("session-no-feature".to_string()),
+        script: None,
+        prompt: Some("hello".to_string()),
+    };
+    let err = execute(args).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("'llama' feature"),
+        "expected feature-flag hint, got: {msg}"
     );
 }
