@@ -25,6 +25,29 @@ type Manifest struct {
 	// the F3 mTLS signed-API channel (ADR-005, ADR-003, issue #36). Empty
 	// or absent => mTLS approvals are refused outright.
 	ApprovalAuthorities []string `yaml:"approval_authorities,omitempty" json:"approval_authorities,omitempty"`
+	// Inference is the ADR-014 / LLM-C configuration block. Additive;
+	// nil means "backend defaults."
+	Inference *Inference `yaml:"inference,omitempty" json:"inference,omitempty"`
+}
+
+// Inference is the inference-time configuration block (per ADR-014,
+// LLM-C / issue #72). Currently carries determinism knobs only.
+type Inference struct {
+	Determinism *DeterminismKnobs `yaml:"determinism,omitempty" json:"determinism,omitempty"`
+}
+
+// DeterminismKnobs are the sampling-time knobs LLM-C surfaces through
+// the manifest. All fields are pointers so absence ("backend default
+// for that knob") and explicit zero values stay distinguishable.
+// Setting Seed and Temperature=0.0 together yields byte-identical
+// output across runs — the configuration auditors rely on for replay
+// verification.
+type DeterminismKnobs struct {
+	Seed           *uint32  `yaml:"seed,omitempty" json:"seed,omitempty"`
+	Temperature    *float32 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
+	TopP           *float32 `yaml:"top_p,omitempty" json:"top_p,omitempty"`
+	TopK           *uint32  `yaml:"top_k,omitempty" json:"top_k,omitempty"`
+	RepeatPenalty  *float32 `yaml:"repeat_penalty,omitempty" json:"repeat_penalty,omitempty"`
 }
 
 type Agent struct {

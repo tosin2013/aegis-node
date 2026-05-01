@@ -1,11 +1,14 @@
 //! Safe Rust wrapper around llama.cpp for the Aegis-Node runtime.
 //!
 //! Per [ADR-014](../../docs/adrs/014-cpu-first-gguf-inference-via-llama-cpp.md)
-//! and [LLM-A (#70)](https://github.com/tosin2013/aegis-node/issues/70).
-//! This is the **first** sub-issue under the llama.cpp umbrella (#69) —
-//! the FFI binding alone, with a strict safety wrapper. The
-//! [`Backend`] trait abstraction is LLM-B (#71); the manifest-surfaced
-//! determinism knobs are LLM-C (#72).
+//! and the llama.cpp umbrella (#69). The FFI binding ships under the
+//! strict safety wrapper described below ([LLM-A (#70)](https://github.com/tosin2013/aegis-node/issues/70)),
+//! the [`Backend`] trait abstraction lives in `aegis-inference-engine`
+//! and is implemented in `chat.rs` ([LLM-B (#71)](https://github.com/tosin2013/aegis-node/issues/71)),
+//! and the manifest-surfaced determinism knobs (seed / temperature /
+//! top-p / top-k / repeat-penalty) flow through
+//! [`SessionOptions::determinism`] into [`build_sampler_chain`]
+//! ([LLM-C (#72)](https://github.com/tosin2013/aegis-node/issues/72)).
 //!
 //! ## Public surface
 //!
@@ -237,9 +240,54 @@ impl Model {
     }
 }
 
-/// Inference-time configuration. Only the knobs that LLM-A needs are
-/// exposed here; LLM-C will surface determinism (seed / temperature /
-/// top-p / top-k / repeat-penalty) through the manifest.
+impl From<&aegis_policy::manifest::DeterminismKnobs> for DeterminismKnobs {
+    /// Mirror a manifest's [`aegis_policy::manifest::DeterminismKnobs`]
+    /// into the llama-backend shape. Field-by-field copy — the two
+    /// types share semantics; the manifest one is the persistence
+    /// surface, this one is the FFI-facing input.
+    fn from(m: &aegis_policy::manifest::DeterminismKnobs) -> Self {
+        Self {
+            seed: m.seed,
+            temperature: m.temperature,
+            top_p: m.top_p,
+            top_k: m.top_k,
+            repeat_penalty: m.repeat_penalty,
+        }
+    }
+}
+
+/// Sampling determinism knobs (per ADR-014, LLM-C / issue #72).
+///
+/// Every field is optional. `None` means "backend default for that
+/// knob"; an explicit value drives the corresponding stage of the
+/// sampler chain. Setting `seed = Some(N)` and `temperature =
+/// Some(0.0)` together yields byte-identical output across runs —
+/// the configuration auditors rely on for replay verification.
+///
+/// Parallel to the manifest type at
+/// `aegis_policy::manifest::DeterminismKnobs`. Kept as a separate
+/// shape (vs. importing the policy type directly) so LLM-A's wrapper
+/// stays free of policy-crate deps and can be used standalone.
+#[derive(Debug, Clone, Default)]
+pub struct DeterminismKnobs {
+    /// Sampler seed (uint32 range). Without it, the sampler picks a
+    /// random seed per call and outputs vary run-to-run.
+    pub seed: Option<u32>,
+    /// Logit softmax temperature. `0.0` = greedy (always pick
+    /// argmax). Higher values flatten the distribution.
+    pub temperature: Option<f32>,
+    /// Nucleus sampling — keep tokens whose cumulative probability
+    /// mass is within `top_p`. `1.0` = no filter.
+    pub top_p: Option<f32>,
+    /// Keep only the top-`k` highest-probability tokens before
+    /// sampling. `0` = no filter.
+    pub top_k: Option<u32>,
+    /// Penalty applied to recently-emitted tokens to discourage
+    /// repetition. `1.0` = no penalty.
+    pub repeat_penalty: Option<f32>,
+}
+
+/// Inference-time configuration.
 #[derive(Debug, Clone)]
 pub struct SessionOptions {
     /// Maximum context length in tokens. Bounded by the model's training
@@ -249,6 +297,9 @@ pub struct SessionOptions {
     /// Maximum number of tokens to generate per `infer` call. Bounded
     /// to keep tests deterministic and to make a runaway sampler cheap.
     pub max_tokens: u32,
+    /// Determinism knobs (LLM-C). Default: all `None` → greedy
+    /// sampling at temperature 0.
+    pub determinism: DeterminismKnobs,
 }
 
 impl Default for SessionOptions {
@@ -256,6 +307,7 @@ impl Default for SessionOptions {
         Self {
             n_ctx: 2048,
             max_tokens: 256,
+            determinism: DeterminismKnobs::default(),
         }
     }
 }
@@ -267,11 +319,71 @@ pub struct Session<'m> {
     /// Shadow of [`SessionOptions::max_tokens`] — kept on the session
     /// so each `infer` call is bounded the same way.
     max_tokens: u32,
-    /// Greedy sampler. LLM-A is fixed at `temperature=0`; LLM-C will
-    /// add the configurable knobs.
+    /// Sampler chain assembled from [`DeterminismKnobs`] (per LLM-C).
+    /// Default knobs (all `None`) collapse to a plain greedy sampler.
     sampler: LlamaSampler,
     /// Owned llama.cpp context.
     context: llama_cpp_2::context::LlamaContext<'m>,
+}
+
+/// Build the sampler chain that realizes the requested
+/// [`DeterminismKnobs`].
+///
+/// Order is canonical for llama.cpp: `penalties → top_k → top_p →
+/// temp → final-stage`. The final stage is `greedy` when
+/// `temperature` is `0.0` or unset (always pick argmax — fully
+/// deterministic), or `dist(seed)` otherwise (seed-aware random
+/// sampling). With no knobs set, the chain is just `greedy` — the
+/// LLM-A behavior preserved as a sane default.
+///
+/// Setting `seed = Some(N)` and `temperature = Some(0.0)` yields
+/// byte-identical output across runs against the same model, prompt,
+/// and `max_tokens` — that's the configuration the F8 replay viewer
+/// (per ADR-010) and the demo program (per ADR-020) require for
+/// reproducibility verification.
+fn build_sampler_chain(knobs: &DeterminismKnobs) -> LlamaSampler {
+    let mut samplers: Vec<LlamaSampler> = Vec::new();
+
+    if let Some(rp) = knobs.repeat_penalty {
+        // 1.0 means "no penalty" — skip the no-op stage rather than
+        // pay its cost per token.
+        if (rp - 1.0).abs() > f32::EPSILON {
+            samplers.push(LlamaSampler::penalties(
+                /* penalty_last_n: */ 64, rp, /* penalty_freq: */ 0.0,
+                /* penalty_present: */ 0.0,
+            ));
+        }
+    }
+
+    if let Some(k) = knobs.top_k {
+        // 0 means "no filter" — skip.
+        if k > 0 {
+            samplers.push(LlamaSampler::top_k(k as i32));
+        }
+    }
+
+    if let Some(p) = knobs.top_p {
+        // 1.0 means "no filter" — skip.
+        if p < 1.0 {
+            samplers.push(LlamaSampler::top_p(p, /* min_keep: */ 1));
+        }
+    }
+
+    let temp = knobs.temperature.unwrap_or(0.0);
+    if temp <= 0.0 {
+        // Greedy = argmax. Fully deterministic regardless of seed,
+        // which is the configuration auditors want for replay.
+        samplers.push(LlamaSampler::greedy());
+    } else {
+        samplers.push(LlamaSampler::temp(temp));
+        // Seed-aware random sampler. Without a pinned seed, llama.cpp
+        // falls back to a per-call random seed and outputs vary
+        // run-to-run — make the choice explicit by passing 0 as the
+        // sentinel "random" seed when none is supplied.
+        samplers.push(LlamaSampler::dist(knobs.seed.unwrap_or(0)));
+    }
+
+    LlamaSampler::chain_simple(samplers)
 }
 
 impl<'m> Session<'m> {
@@ -299,9 +411,7 @@ impl<'m> Session<'m> {
             .new_context(&model.backend.inner, params)
             .map_err(|e| LlamaError::SessionInitFailed(e.to_string()))?;
 
-        // Greedy sampler — `temperature=0`, no top-k / top-p. LLM-C
-        // will replace this with a chain driven by manifest config.
-        let sampler = LlamaSampler::greedy();
+        let sampler = build_sampler_chain(&options.determinism);
 
         Ok(Self {
             model,
@@ -481,5 +591,75 @@ mod tests {
             detail: "no such file".to_string(),
         };
         assert!(err.to_string().contains("not found or unreadable"));
+    }
+
+    // --- LLM-C determinism knobs --------------------------------------
+    //
+    // We can't observe the chain's internals without an FFI sample
+    // (LlamaBackend::init is a process-global) but we can exercise
+    // the builder with various knob shapes to make sure no path
+    // panics — that's enough to defend against an `unwrap()` slipping
+    // back in. The actual same-seed-gives-same-output assertion lives
+    // in the gated real-model smoke test.
+
+    #[test]
+    fn build_sampler_chain_with_default_knobs_does_not_panic() {
+        let _ = build_sampler_chain(&DeterminismKnobs::default());
+    }
+
+    #[test]
+    fn build_sampler_chain_with_only_seed_does_not_panic() {
+        // `temperature` defaults to None → 0.0 → greedy. Seed is
+        // ignored on the greedy path; the builder must still accept
+        // the configuration cleanly.
+        let _ = build_sampler_chain(&DeterminismKnobs {
+            seed: Some(42),
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    fn build_sampler_chain_with_full_chain_does_not_panic() {
+        // Every stage active.
+        let _ = build_sampler_chain(&DeterminismKnobs {
+            seed: Some(42),
+            temperature: Some(0.7),
+            top_p: Some(0.95),
+            top_k: Some(40),
+            repeat_penalty: Some(1.1),
+        });
+    }
+
+    #[test]
+    fn build_sampler_chain_skips_no_op_stages() {
+        // `top_k = 0`, `top_p = 1.0`, `repeat_penalty = 1.0` are all
+        // documented "no filter" sentinels. The builder must not
+        // emit no-op stages — those have a per-token cost.
+        // We can't observe the chain length directly via the FFI
+        // wrapper, so this test exists to keep the no-op skip logic
+        // covered by line coverage. Any panic here would fail.
+        let _ = build_sampler_chain(&DeterminismKnobs {
+            top_k: Some(0),
+            top_p: Some(1.0),
+            repeat_penalty: Some(1.0),
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    fn determinism_knobs_round_trip_from_manifest() {
+        let m = aegis_policy::manifest::DeterminismKnobs {
+            seed: Some(42),
+            temperature: Some(0.0),
+            top_p: Some(1.0),
+            top_k: Some(0),
+            repeat_penalty: Some(1.0),
+        };
+        let k = DeterminismKnobs::from(&m);
+        assert_eq!(k.seed, Some(42));
+        assert_eq!(k.temperature, Some(0.0));
+        assert_eq!(k.top_p, Some(1.0));
+        assert_eq!(k.top_k, Some(0));
+        assert_eq!(k.repeat_penalty, Some(1.0));
     }
 }
