@@ -43,6 +43,7 @@ fn args_for(
         session_id: Some(session_id.to_string()),
         script: Some(script),
         prompt: None,
+        backend: aegis_cli::run::BackendKind::Llama,
     }
 }
 
@@ -290,6 +291,7 @@ tools: {}
         session_id: Some("session-missing".to_string()),
         script: Some(work.path().join("does-not-exist.json")),
         prompt: None,
+        backend: aegis_cli::run::BackendKind::Llama,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err}");
@@ -330,6 +332,7 @@ tools: {}
         session_id: Some("session-neither".to_string()),
         script: None,
         prompt: None,
+        backend: aegis_cli::run::BackendKind::Llama,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err}");
@@ -373,11 +376,54 @@ tools: {}
         session_id: Some("session-no-feature".to_string()),
         script: None,
         prompt: Some("hello".to_string()),
+        backend: aegis_cli::run::BackendKind::Llama,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("'llama' feature"),
+        msg.contains("'llama' Cargo feature"),
+        "expected feature-flag hint, got: {msg}"
+    );
+}
+
+// Parallel test for the litertlm backend: `--backend litertlm`
+// without the `litertlm` feature errors with the matching hint.
+// Per LiteRT-B (#96) acceptance criterion: the missing-feature case
+// must be loud, not silent.
+#[cfg(not(feature = "litertlm"))]
+#[test]
+fn execute_with_litertlm_backend_without_litertlm_feature_errors_cleanly() {
+    let work = tempfile::tempdir().unwrap();
+    let ca = tempfile::tempdir().unwrap();
+    write(
+        &work.path().join("manifest.yaml"),
+        r#"schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://aegis-node.local/agent/x/1" }
+tools: {}
+"#,
+    );
+    write(&work.path().join("model.litertlm"), "x");
+    aegis_identity::LocalCa::init(ca.path(), "aegis-node.local").unwrap();
+
+    let args = RunArgs {
+        manifest: work.path().join("manifest.yaml"),
+        model: work.path().join("model.litertlm"),
+        config: None,
+        chat_template_sidecar: None,
+        identity_dir: Some(ca.path().to_path_buf()),
+        workload: "research".to_string(),
+        instance: "inst-1".to_string(),
+        ledger: Some(work.path().join("ledger.jsonl")),
+        session_id: Some("session-no-litertlm".to_string()),
+        script: None,
+        prompt: Some("hello".to_string()),
+        backend: aegis_cli::run::BackendKind::Litertlm,
+    };
+    let err = execute(args).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("'litertlm' Cargo feature"),
         "expected feature-flag hint, got: {msg}"
     );
 }

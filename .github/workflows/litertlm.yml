@@ -96,3 +96,16 @@ jobs:
         run: |
           cargo test --package aegis-litertlm-sys --all-targets
           cargo test --package aegis-litertlm-backend --all-targets
+
+      # Per LiteRT-B (#96), the CLI's `--prompt` path gates LiteRT-LM
+      # behind `aegis-cli`'s `litertlm` Cargo feature. Build + clippy
+      # the CLI in that mode here too — keeps the feature flag honest
+      # on every change to the workspace pin or the CLI.
+      - name: Build aegis-cli with --features litertlm
+        run: cargo build --package aegis-cli --features litertlm --all-targets
+
+      - name: Clippy aegis-cli with --features litertlm
+        run: cargo clippy --package aegis-cli --features litertlm --all-targets -- -D warnings
+
+      - name: Test aegis-cli with --features litertlm
+        run: cargo test --package aegis-cli --features litertlm --all-targets

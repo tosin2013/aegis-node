@@ -32,8 +32,27 @@ use std::path::{Path, PathBuf};
 use aegis_inference_engine::{BootConfig, Error as RtError, Session};
 use aegis_policy::NetworkProto;
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::Deserialize;
+
+/// Which inference backend `aegis run --prompt` uses for one
+/// model-driven turn. Both choices require their respective Cargo
+/// feature to be enabled at build time; selecting a backend whose
+/// feature is off bails with an explicit "rebuild with --features X"
+/// error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+#[value(rename_all = "lowercase")]
+pub enum BackendKind {
+    /// llama.cpp + GGUF model files (per ADR-014). Default for
+    /// backwards compatibility — pre-LiteRT-B `aegis run --prompt`
+    /// always used llama.cpp.
+    #[default]
+    Llama,
+    /// LiteRT-LM + `.litertlm` model files (per ADR-023). Phase 1
+    /// is CPU + greedy only; `temperature > 0.0` is refused at
+    /// session boot.
+    Litertlm,
+}
 
 #[derive(Debug, Args)]
 pub struct RunArgs {
@@ -86,14 +105,26 @@ pub struct RunArgs {
     pub script: Option<PathBuf>,
 
     /// User message to feed the LLM-B backend for one model-driven
-    /// turn. Requires the CLI to have been built with the `llama`
-    /// feature (per ADR-014, LLM-B). Mutually exclusive with
-    /// `--script`. The manifest's `inference.determinism` block (if
-    /// any) flows through to the sampler chain — pinning seed +
-    /// temperature 0.0 yields byte-identical output, which is what
-    /// the recorded demo program (ADR-020) depends on.
+    /// turn. Mutually exclusive with `--script`. The manifest's
+    /// `inference.determinism` block (if any) flows through to the
+    /// chosen backend's sampler — pinning seed + temperature 0.0
+    /// yields byte-identical output, which is what the recorded
+    /// demo program (ADR-020) depends on.
+    ///
+    /// Pair with `--backend` to pick the inference backend. The
+    /// CLI must have been built with the matching Cargo feature
+    /// (`llama` for the default `--backend llama`; `litertlm` for
+    /// `--backend litertlm`).
     #[arg(long, conflicts_with = "script")]
     pub prompt: Option<String>,
+
+    /// Inference backend used for `--prompt`. Default: `llama`
+    /// (preserves pre-LiteRT-B behavior). `litertlm` is the
+    /// LiteRT-LM backend per ADR-023; Phase 1 is CPU + greedy only,
+    /// so the manifest's `inference.determinism.temperature` must
+    /// be `0.0` (`omitted` is also fine — defaults to `0.0`).
+    #[arg(long, value_enum, default_value_t = BackendKind::default())]
+    pub backend: BackendKind,
 }
 
 /// Result of an `aegis run` invocation. Used by tests to assert
@@ -239,45 +270,21 @@ fn run_script(session: &mut Session, script_path: &Path) -> Result<(bool, Option
 }
 
 /// Drive a session via one model-driven turn (LLM-B `Session::run_turn`).
-/// Requires the `llama` Cargo feature; the no-`llama` build returns a
-/// typed error so the missing-feature case is loud, not silent.
-#[cfg(feature = "llama")]
+/// Dispatches on `args.backend` to either the llama.cpp wrapper
+/// (ADR-014) or the LiteRT-LM wrapper (ADR-023). Each is gated on
+/// its respective Cargo feature; choosing a backend whose feature
+/// is off bails with an explicit "rebuild with --features X" error.
 fn run_prompt(
     session: &mut Session,
     args: &RunArgs,
     prompt: &str,
 ) -> Result<(bool, Option<String>)> {
-    use aegis_inference_engine::{Backend as _, ToolCallResult};
-    use aegis_llama_backend::{
-        Backend as LlamaBackend, DeterminismKnobs, LlamaCppBackend, SessionOptions,
+    use aegis_inference_engine::ToolCallResult;
+
+    let loaded = match args.backend {
+        BackendKind::Llama => load_llama_backend(session, &args.model)?,
+        BackendKind::Litertlm => load_litertlm_backend(session, &args.model)?,
     };
-    use std::sync::Arc;
-
-    // Construct LLM-A backend + LLM-B LlamaCppBackend wrapper. The
-    // FFI is process-global (per ADR-014); we hold it for the duration
-    // of this command and let it drop on exit.
-    let llama_backend = Arc::new(LlamaBackend::init().context("llama backend init")?);
-
-    // Resolve `inference.determinism` from the manifest. The Policy
-    // already parsed it; pull it back out via the public accessor.
-    let determinism = session
-        .policy()
-        .manifest()
-        .inference
-        .as_ref()
-        .and_then(|i| i.determinism.as_ref())
-        .map(DeterminismKnobs::from)
-        .unwrap_or_default();
-
-    let options = SessionOptions {
-        determinism,
-        ..SessionOptions::default()
-    };
-
-    let cpp_backend = LlamaCppBackend::new(llama_backend, options);
-    let loaded = cpp_backend
-        .load(&args.model)
-        .with_context(|| format!("loading model {}", args.model.display()))?;
 
     // Plug the loaded model into the session for the duration of the
     // turn. `set_loaded_model` is the &mut-self counterpart of
@@ -320,15 +327,98 @@ fn run_prompt(
     Ok((false, None))
 }
 
+#[cfg(feature = "llama")]
+fn load_llama_backend(
+    session: &Session,
+    model_path: &Path,
+) -> Result<Box<dyn aegis_inference_engine::LoadedModel>> {
+    use aegis_inference_engine::Backend as _;
+    use aegis_llama_backend::{
+        Backend as LlamaBackend, DeterminismKnobs, LlamaCppBackend, SessionOptions,
+    };
+    use std::sync::Arc;
+
+    // Construct LLM-A backend + LLM-B LlamaCppBackend wrapper. The
+    // FFI is process-global (per ADR-014); we hold it for the duration
+    // of this command and let it drop on exit.
+    let llama_backend = Arc::new(LlamaBackend::init().context("llama backend init")?);
+
+    // Resolve `inference.determinism` from the manifest. The Policy
+    // already parsed it; pull it back out via the public accessor.
+    let determinism = session
+        .policy()
+        .manifest()
+        .inference
+        .as_ref()
+        .and_then(|i| i.determinism.as_ref())
+        .map(DeterminismKnobs::from)
+        .unwrap_or_default();
+
+    let options = SessionOptions {
+        determinism,
+        ..SessionOptions::default()
+    };
+
+    let cpp_backend = LlamaCppBackend::new(llama_backend, options);
+    cpp_backend
+        .load(model_path)
+        .with_context(|| format!("loading model {}", model_path.display()))
+}
+
 #[cfg(not(feature = "llama"))]
-fn run_prompt(
-    _session: &mut Session,
-    _args: &RunArgs,
-    _prompt: &str,
-) -> Result<(bool, Option<String>)> {
+fn load_llama_backend(
+    _session: &Session,
+    _model_path: &Path,
+) -> Result<Box<dyn aegis_inference_engine::LoadedModel>> {
     anyhow::bail!(
-        "aegis run --prompt requires the 'llama' feature; rebuild with \
+        "aegis run --backend llama requires the 'llama' Cargo feature; rebuild with \
          `cargo install --path crates/cli --features llama` (per ADR-014)"
+    );
+}
+
+#[cfg(feature = "litertlm")]
+fn load_litertlm_backend(
+    session: &Session,
+    model_path: &Path,
+) -> Result<Box<dyn aegis_inference_engine::LoadedModel>> {
+    use aegis_inference_engine::Backend as _;
+    use aegis_litertlm_backend::{DeterminismKnobs, LiteRtLmBackend, SessionOptions};
+
+    // Resolve `inference.determinism` from the manifest, same shape
+    // as the llama path. The two backends share the manifest schema
+    // (per ADR-023 §"Determinism + replay") so the conversion is a
+    // straight `From` impl.
+    let determinism = session
+        .policy()
+        .manifest()
+        .inference
+        .as_ref()
+        .and_then(|i| i.determinism.as_ref())
+        .map(DeterminismKnobs::from)
+        .unwrap_or_default();
+
+    let options = SessionOptions {
+        determinism,
+        ..SessionOptions::default()
+    };
+
+    // LiteRT-LM doesn't require a process-global init step (unlike
+    // llama.cpp); the backend wrapper is constructed and loaded in
+    // one go.
+    let backend = LiteRtLmBackend::new(options);
+    backend
+        .load(model_path)
+        .with_context(|| format!("loading model {}", model_path.display()))
+}
+
+#[cfg(not(feature = "litertlm"))]
+fn load_litertlm_backend(
+    _session: &Session,
+    _model_path: &Path,
+) -> Result<Box<dyn aegis_inference_engine::LoadedModel>> {
+    anyhow::bail!(
+        "aegis run --backend litertlm requires the 'litertlm' Cargo feature; rebuild with \
+         `cargo install --path crates/cli --features litertlm` (per ADR-023)"
     );
 }
 
