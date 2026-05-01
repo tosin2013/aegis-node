@@ -70,7 +70,9 @@ pub enum LiteRtError {
     /// ABI returns `NULL` on failure without an out-parameter for the
     /// reason; we surface the path so the operator can correlate with
     /// upstream logs (controlled via [`set_min_log_level`]).
-    #[error("LiteRT-LM engine creation failed for {path:?} (set min_log_level=0 for upstream logs)")]
+    #[error(
+        "LiteRT-LM engine creation failed for {path:?} (set min_log_level=0 for upstream logs)"
+    )]
     EngineCreationFailed {
         /// Path the caller supplied.
         path: String,
@@ -306,9 +308,8 @@ impl Engine {
         // "cpu" is the only sampler-deterministic backend in v0.10.2.
         // Hard-coded so a misconfigured manifest can't accidentally
         // pick a non-deterministic GPU path. See ADR-023 §"Phase 1 scope".
-        let backend_c = CString::new("cpu").map_err(|e| {
-            LiteRtError::InteriorNul(format!("backend literal contains NUL: {e}"))
-        })?;
+        let backend_c = CString::new("cpu")
+            .map_err(|e| LiteRtError::InteriorNul(format!("backend literal contains NUL: {e}")))?;
 
         // SAFETY-INVARIANT: `litert_lm_engine_settings_create` takes
         // four nul-terminated C strings; we hold both `path_c` and
@@ -324,8 +325,7 @@ impl Engine {
                 std::ptr::null(),
             )
         };
-        let settings = NonNull::new(settings_raw)
-            .ok_or(LiteRtError::EngineSettingsAllocFailed)?;
+        let settings = NonNull::new(settings_raw).ok_or(LiteRtError::EngineSettingsAllocFailed)?;
 
         // RAII guard so we never leak engine settings even on the
         // engine_create error path below.
@@ -346,11 +346,14 @@ impl Engine {
         // Returns NULL on failure; we surface that via the typed error
         // and Drop on `_guard` releases the settings.
         let engine_raw = unsafe { sys::litert_lm_engine_create(settings.as_ptr()) };
-        let handle = NonNull::new(engine_raw).ok_or_else(|| {
-            LiteRtError::EngineCreationFailed { path: path.display().to_string() }
+        let handle = NonNull::new(engine_raw).ok_or_else(|| LiteRtError::EngineCreationFailed {
+            path: path.display().to_string(),
         })?;
 
-        Ok(Self { handle, _not_thread_safe: std::marker::PhantomData })
+        Ok(Self {
+            handle,
+            _not_thread_safe: std::marker::PhantomData,
+        })
     }
 }
 
@@ -405,8 +408,7 @@ impl<'e> Session<'e> {
         // no arguments and returns either a valid pointer or NULL
         // (allocation failure). We check for NULL.
         let config_raw = unsafe { sys::litert_lm_session_config_create() };
-        let config = NonNull::new(config_raw)
-            .ok_or(LiteRtError::SessionConfigAllocFailed)?;
+        let config = NonNull::new(config_raw).ok_or(LiteRtError::SessionConfigAllocFailed)?;
 
         struct ConfigGuard(NonNull<sys::LiteRtLmSessionConfig>);
         impl Drop for ConfigGuard {
@@ -483,9 +485,8 @@ impl<'e> Session<'e> {
     /// 3. The response candidate is not valid UTF-8 — we refuse the
     ///    whole response rather than return broken text.
     pub fn infer(&mut self, prompt: &str) -> Result<String, LiteRtError> {
-        let prompt_c = CString::new(prompt).map_err(|e| {
-            LiteRtError::InteriorNul(format!("prompt contains interior NUL: {e}"))
-        })?;
+        let prompt_c = CString::new(prompt)
+            .map_err(|e| LiteRtError::InteriorNul(format!("prompt contains interior NUL: {e}")))?;
         let prompt_bytes = prompt_c.as_bytes(); // excludes NUL terminator
 
         let inputs = [sys::InputData {
@@ -529,9 +530,8 @@ impl<'e> Session<'e> {
         // returned C string is owned by the responses object — valid
         // for the lifetime of `_guard`. We copy it out before
         // dropping.
-        let text_ptr = unsafe {
-            sys::litert_lm_responses_get_response_text_at(responses.as_ptr(), 0)
-        };
+        let text_ptr =
+            unsafe { sys::litert_lm_responses_get_response_text_at(responses.as_ptr(), 0) };
         if text_ptr.is_null() {
             return Err(LiteRtError::NoCandidates);
         }
@@ -615,9 +615,8 @@ fn path_to_cstring(path: &Path) -> Result<CString, LiteRtError> {
             path: path.display().to_string(),
             detail: "path is not valid UTF-8".to_string(),
         })?;
-    CString::new(s).map_err(|e| {
-        LiteRtError::InteriorNul(format!("model path contains interior NUL: {e}"))
-    })
+    CString::new(s)
+        .map_err(|e| LiteRtError::InteriorNul(format!("model path contains interior NUL: {e}")))
 }
 
 #[cfg(test)]
@@ -733,8 +732,7 @@ mod tests {
         // Engine::load short-circuits on missing path so we can
         // exercise its error path without the FFI initialized.
         let err = Engine::load(Path::new("/definitely/does/not/exist.litertlm"))
-            .err()
-            .expect("missing path must error");
+            .expect_err("missing path must error");
         match err {
             LiteRtError::ModelFileUnreadable { detail, .. } => {
                 assert!(detail.contains("does not exist"));

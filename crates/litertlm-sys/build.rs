@@ -1,34 +1,39 @@
 //! Build script for `aegis-litertlm-sys`.
 //!
-//! Two responsibilities:
+//! Three responsibilities:
 //!
 //! 1. Verify the vendored `c/engine.h` header against the SHA pinned at
 //!    the top of this file, then run `bindgen` against it.
-//! 2. Locate and SHA-verify the prebuilt
-//!    `libaegis_litertlm_engine_cpu.so`, then emit the dynamic-link
-//!    directives so downstream crates can call into it.
+//! 2. Locate the prebuilt LiteRT-LM runtime — either via the
+//!    `LITERT_LM_PREBUILT_SO` env-var override, or by `oras pull`'ing
+//!    the pinned OCI artifact. SHA-verify both `.so` files (the engine
+//!    and the constraint-provider sidekick it `DT_NEEDED`s) against
+//!    in-tree pins.
+//! 3. Emit the dynamic-link directives so downstream crates can call
+//!    into the engine `.so`.
 //!
-//! Both pins (header SHA-256 and `.so` SHA-256) match the OCI artifact
-//! published by `.github/workflows/litertlm-runtime-publish.yml` and
-//! recorded in
+//! All three pins (header SHA, engine `.so` SHA, constraint-provider
+//! `.so` SHA) match the OCI artifact published by
+//! `.github/workflows/litertlm-runtime-publish.yml` and recorded in
 //! [ADR-023](../../docs/adrs/023-litertlm-as-second-inference-backend.md)
-//! §"Published artifact (first pin)":
+//! §"Published artifact (current pin)":
 //!
 //! ```text
 //! ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64
-//!   @sha256:75ac8138f882d0aac93541d1c354863910cdb712620712f97e3d761a8fe1090d
+//!   @sha256:e2296f314976f0f9eb1c3e2ef1cc4ab6114ce96ba34f238a3ddbb2d5659e511f
 //! ```
 //!
-//! The `build.rs` does **not** perform the network fetch itself —
-//! intentionally. Pulling an OCI artifact from inside `build.rs` would
-//! either bootstrap-circle on the `aegis` CLI (which itself depends on
-//! this crate via the `Backend` trait wiring) or duplicate `oras`'s
-//! pull/verify logic in pure Rust. Instead, the caller (CI workflow,
-//! local dev script, or a release pipeline) materializes the `.so`
-//! ahead of time via `oras pull` or `aegis pull` and exports
-//! `LITERT_LM_PREBUILT_SO` pointing at it. The build script verifies
-//! the SHA-256 matches the pin below — so a tampered or wrong-version
-//! file fails the build with a typed error rather than silently
+//! Resolution policy:
+//! - **`LITERT_LM_PREBUILT_SO`** set → use that path, skip network.
+//!   Air-gapped contributors and CI staging steps take this path.
+//! - **`oras` on PATH** → pull the pinned digest into `OUT_DIR`. CI
+//!   uses this path; the canonical recipe.
+//! - Neither → build error pointing the operator at the exact
+//!   `oras pull` invocation.
+//!
+//! Either way the SHA-256 of every materialized file is verified
+//! before bindgen runs — a tampered or wrong-version artifact fails
+//! the build with a precise actionable error rather than silently
 //! linking against the wrong runtime.
 
 use std::env;
@@ -49,8 +54,7 @@ const EXPECTED_HEADER_SHA: &str =
 /// publish run for tag v0.10.2. Recorded in the OCI artifact's
 /// `dev.aegis-node.runtime.so.sha256` annotation. Bumping the upstream
 /// pin is an explicit, reviewed change to this constant.
-const EXPECTED_SO_SHA: &str =
-    "216451eb3726b3326dbadbdc08ec2eda44d45d3035167d8613f45e08eb80a012";
+const EXPECTED_SO_SHA: &str = "216451eb3726b3326dbadbdc08ec2eda44d45d3035167d8613f45e08eb80a012";
 
 /// SHA-256 of `libGemmaModelConstraintProvider.so` — the
 /// constrained-decoding sidekick `engine_cpu_shared` has a `DT_NEEDED`
@@ -70,18 +74,11 @@ const EXPECTED_GEMMA_CONSTRAINT_PROVIDER_SO_SHA: &str =
 /// Pinned OCI reference of the LiteRT-LM runtime artifact this build
 /// script expects. Recorded so error messages can point operators at
 /// the exact `oras pull` / `aegis pull` invocation that materializes
-/// the `.so` files.
-///
-/// **Note:** the manifest digest below is updated by the
-/// `litertlm-runtime-publish.yml` re-dispatch on this branch (the
-/// first published artifact only contained one .so; the rebundled
-/// artifact contains both). Until the rebundled run completes, this
-/// constant points at the placeholder — `oras pull` against it will
-/// fail and the build script's error message tells the operator to
-/// override via `LITERT_LM_PREBUILT_SO`.
-const PINNED_OCI_REF: &str =
-    "ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64\
-     @sha256:75ac8138f882d0aac93541d1c354863910cdb712620712f97e3d761a8fe1090d";
+/// the `.so` files. The artifact carries two layers — the engine
+/// `.so` and `libGemmaModelConstraintProvider.so` — both verified
+/// against the SHA constants above.
+const PINNED_OCI_REF: &str = "ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64\
+     @sha256:e2296f314976f0f9eb1c3e2ef1cc4ab6114ce96ba34f238a3ddbb2d5659e511f";
 
 /// Filename of the engine `.so` (used for the
 /// `cargo:rustc-link-lib=dylib=...` directive — name strips the `lib`
@@ -127,9 +124,8 @@ fn run() -> Result<(), String> {
         env::var("CARGO_MANIFEST_DIR")
             .map_err(|_| "CARGO_MANIFEST_DIR unset (cargo bug?)".to_string())?,
     );
-    let out_dir = PathBuf::from(
-        env::var("OUT_DIR").map_err(|_| "OUT_DIR unset (cargo bug?)".to_string())?,
-    );
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|_| "OUT_DIR unset (cargo bug?)".to_string())?);
 
     let header_path = manifest_dir.join("c").join("engine.h");
     verify_sha256(&header_path, EXPECTED_HEADER_SHA, "vendored c/engine.h")?;
@@ -154,10 +150,7 @@ fn run() -> Result<(), String> {
     // run` find the .so without requiring LD_LIBRARY_PATH gymnastics.
     println!("cargo:rustc-link-search=native={}", so_dir.display());
     println!("cargo:rustc-link-lib=dylib={LINK_LIB_NAME}");
-    println!(
-        "cargo:rustc-link-arg=-Wl,-rpath,{}",
-        so_dir.display()
-    );
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", so_dir.display());
 
     let bindings = bindgen::Builder::default()
         .header(
@@ -178,9 +171,12 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("bindgen failed against c/engine.h: {e}"))?;
 
     let bindings_path = out_dir.join("bindings.rs");
-    bindings
-        .write_to_file(&bindings_path)
-        .map_err(|e| format!("failed to write bindings to {}: {e}", bindings_path.display()))?;
+    bindings.write_to_file(&bindings_path).map_err(|e| {
+        format!(
+            "failed to write bindings to {}: {e}",
+            bindings_path.display()
+        )
+    })?;
 
     Ok(())
 }
@@ -243,7 +239,10 @@ fn locate_and_verify_so() -> Result<PathBuf, String> {
 /// whether the failure is fatal.
 fn try_oras_pull(staging: &PathBuf) -> Option<PathBuf> {
     if let Err(e) = std::fs::create_dir_all(staging) {
-        println!("cargo:warning=could not create oras staging dir {}: {e}", staging.display());
+        println!(
+            "cargo:warning=could not create oras staging dir {}: {e}",
+            staging.display()
+        );
         return None;
     }
 
@@ -334,9 +333,8 @@ fn verify_sha256(path: &PathBuf, expected_hex: &str, label: &str) -> Result<(), 
 /// only to extract its public surface; it never executes any FFI
 /// call, so a syntactically valid empty stub is enough.
 fn write_docs_rs_stub() -> Result<(), String> {
-    let out_dir = PathBuf::from(
-        env::var("OUT_DIR").map_err(|_| "OUT_DIR unset (cargo bug?)".to_string())?,
-    );
+    let out_dir =
+        PathBuf::from(env::var("OUT_DIR").map_err(|_| "OUT_DIR unset (cargo bug?)".to_string())?);
     let bindings_path = out_dir.join("bindings.rs");
     std::fs::write(
         &bindings_path,

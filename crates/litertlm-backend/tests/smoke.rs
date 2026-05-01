@@ -29,7 +29,7 @@
 use std::path::PathBuf;
 
 use aegis_litertlm_backend::{
-    DeterminismKnobs, Engine, LiteRtError, Session, SessionOptions, set_min_log_level,
+    set_min_log_level, DeterminismKnobs, Engine, LiteRtError, Session, SessionOptions,
 };
 
 const ENV_KEY: &str = "AEGIS_LITERTLM_TEST_MODEL";
