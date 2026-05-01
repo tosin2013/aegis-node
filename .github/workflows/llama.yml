@@ -16,6 +16,11 @@ on:
     branches: [main]
     paths:
       - "crates/llama-backend/**"
+      # The CLI's `--prompt` path lives behind `aegis-cli`'s `llama`
+      # feature and is exercised here; CLI / inference-engine changes
+      # need to keep this build green.
+      - "crates/cli/**"
+      - "crates/inference-engine/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/llama.yml"
@@ -23,6 +28,8 @@ on:
     branches: [main]
     paths:
       - "crates/llama-backend/**"
+      - "crates/cli/**"
+      - "crates/inference-engine/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/llama.yml"
@@ -67,3 +74,13 @@ jobs:
       # PR once the GGUF fixture caching infrastructure is in place.
       - name: Test
         run: cargo test --package aegis-llama-backend --all-targets
+
+      # Per ADR-014 / ADR-020 the demo program (`aegis run --prompt`)
+      # is gated behind `aegis-cli`'s `llama` Cargo feature. Build
+      # the CLI in that mode here too — keeps the model-driven path
+      # honest on every change to the workspace pin or the CLI.
+      - name: Build aegis-cli with --features llama
+        run: cargo build --package aegis-cli --features llama --all-targets
+
+      - name: Test aegis-cli with --features llama
+        run: cargo test --package aegis-cli --features llama --all-targets

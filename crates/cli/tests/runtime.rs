@@ -113,7 +113,8 @@ fn runtime_conformance_golden() {
         instance: "inst-1".to_string(),
         ledger: Some(ledger_path.clone()),
         session_id: Some(SESSION_ID.to_string()),
-        script: script_path,
+        script: Some(script_path),
+        prompt: None,
     };
 
     let outcome = execute(args).expect("aegis run");

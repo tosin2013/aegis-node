@@ -1,0 +1,26 @@
+schemaVersion: "1"
+agent:
+  name: "demo-template"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/demo-template/inst-001"
+
+# Define the tool catalog for this demo. See
+# `schemas/manifest/v1/examples/` for richer fixtures.
+tools:
+  filesystem:
+    read:
+      - "/data"
+  network:
+    outbound: deny
+
+# REQUIRED for demos (per ADR-020): pinned seed + temperature 0
+# yields byte-identical model output across runs, so `make all`
+# regenerates the same GIF and CI's SHA-256 gate stays green.
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

@@ -17,11 +17,22 @@ path = "src/lib.rs"
 name = "aegis"
 path = "src/main.rs"
 
+[features]
+# By default the CLI builds without llama.cpp — `aegis run --prompt`
+# is unavailable, but `aegis run --script` and every other subcommand
+# work and the workspace `cargo build --workspace` (which `rust.yml`
+# uses) doesn't pay the ~50s cmake/llama.cpp build cost. Build with
+# `--features llama` to enable model-driven mode (per ADR-014). The
+# dedicated `llama.yml` CI job exercises this path.
+default = []
+llama = ["dep:aegis-llama-backend"]
+
 [dependencies]
 aegis-approval-gate = { path = "../approval-gate" }
 aegis-identity = { path = "../identity" }
 aegis-inference-engine = { path = "../inference-engine" }
 aegis-ledger-writer = { path = "../ledger-writer" }
+aegis-llama-backend = { path = "../llama-backend", optional = true }
 aegis-policy = { path = "../policy" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

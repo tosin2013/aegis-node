@@ -262,6 +262,15 @@ impl Session {
         self
     }
 
+    /// `&mut self` form of [`Self::with_loaded_model`]. Useful when
+    /// the session was already booted (e.g., by the CLI's `aegis run`
+    /// path) and the caller wants to plug in a backend without
+    /// consuming the session value. Replaces any previously-attached
+    /// model.
+    pub fn set_loaded_model(&mut self, model: Box<dyn crate::backend::LoadedModel>) {
+        self.loaded_model = Some(model);
+    }
+
     /// Wall-clock anchor for time-bounded write_grants — set once at boot.
     pub fn session_start(&self) -> DateTime<Utc> {
         self.session_start
