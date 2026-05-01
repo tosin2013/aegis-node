@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64
-//!   @sha256:e2296f314976f0f9eb1c3e2ef1cc4ab6114ce96ba34f238a3ddbb2d5659e511f
+//!   @sha256:6add795dada783a61aeaf59892be7d249515ccf5cd13f0146b34eca2b841cbb4
 //! ```
 //!
 //! Resolution policy:
@@ -37,7 +37,7 @@
 //! linking against the wrong runtime.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sha2::{Digest, Sha256};
@@ -50,11 +50,19 @@ use sha2::{Digest, Sha256};
 const EXPECTED_HEADER_SHA: &str =
     "cacee1d18aa9e2c22aeb8da2fc1576b25c03d7104e5319a0352c64a57bb691e9";
 
-/// SHA-256 of `libaegis_litertlm_engine_cpu.so` produced by the LiteRT-0
-/// publish run for tag v0.10.2. Recorded in the OCI artifact's
-/// `dev.aegis-node.runtime.so.sha256` annotation. Bumping the upstream
-/// pin is an explicit, reviewed change to this constant.
-const EXPECTED_SO_SHA: &str = "216451eb3726b3326dbadbdc08ec2eda44d45d3035167d8613f45e08eb80a012";
+/// SHA-256 of `libaegis_litertlm_engine_cpu.so` produced by the
+/// LiteRT-A publish run for tag v0.10.2. Recorded in the OCI
+/// artifact's `dev.aegis-node.runtime.so.sha256` annotation. Bumping
+/// the upstream pin is an explicit, reviewed change to this constant.
+///
+/// Built via `cc_binary(linkshared=True, linkstatic=True)` per the
+/// publish workflow's overlay rule (mirror of upstream's
+/// `python/litert_lm/litert_lm_ext.so`). Bundles the `llguidance`
+/// Rust crate statically so `llg_*` symbols resolve at runtime
+/// without needing a separate libllguidance.so. Resulting `.so` is
+/// ~43.8 MB (cf. ~21.4 MB for the earlier `cc_shared_library` output
+/// which had unresolved `llg_*` symbols at runtime).
+const EXPECTED_SO_SHA: &str = "82d8f96c91ad28c6d3257b8235d88c6603660d2f2bd817241d1f86e4f45dd1e4";
 
 /// SHAs of the four upstream-vendored prebuilt `.so` files the engine
 /// `.so` `DT_NEEDED`s (or transitively pulls via the constraint
@@ -95,11 +103,13 @@ const EXPECTED_PREBUILT_SHAS: &[(&str, &str)] = &[
 /// Pinned OCI reference of the LiteRT-LM runtime artifact this build
 /// script expects. Recorded so error messages can point operators at
 /// the exact `oras pull` / `aegis pull` invocation that materializes
-/// the `.so` files. The artifact carries two layers — the engine
-/// `.so` and `libGemmaModelConstraintProvider.so` — both verified
-/// against the SHA constants above.
+/// the `.so` files. The artifact carries five layers — the engine
+/// `.so` plus four upstream-vendored prebuilt sidekicks
+/// (`libGemmaModelConstraintProvider`, `libLiteRt`,
+/// `libLiteRtTopKWebGpuSampler`, `libLiteRtWebGpuAccelerator`) — all
+/// verified against the SHA constants above.
 const PINNED_OCI_REF: &str = "ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64\
-     @sha256:e2296f314976f0f9eb1c3e2ef1cc4ab6114ce96ba34f238a3ddbb2d5659e511f";
+     @sha256:6add795dada783a61aeaf59892be7d249515ccf5cd13f0146b34eca2b841cbb4";
 
 /// Filename of the engine `.so` (used for the
 /// `cargo:rustc-link-lib=dylib=...` directive — name strips the `lib`
@@ -301,7 +311,7 @@ fn try_oras_pull(staging: &PathBuf) -> Option<PathBuf> {
 /// If any file is missing or its SHA-256 doesn't match the pin,
 /// surface a precise error message that names the missing/bad file
 /// and the recovery recipe.
-fn verify_prebuilt_sidekicks(so_dir: &PathBuf) -> Result<(), String> {
+fn verify_prebuilt_sidekicks(so_dir: &Path) -> Result<(), String> {
     for &(filename, expected_sha) in EXPECTED_PREBUILT_SHAS {
         let path = so_dir.join(filename);
         if !path.is_file() {
@@ -325,7 +335,7 @@ fn verify_prebuilt_sidekicks(so_dir: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-fn verify_sha256(path: &PathBuf, expected_hex: &str, label: &str) -> Result<(), String> {
+fn verify_sha256(path: &Path, expected_hex: &str, label: &str) -> Result<(), String> {
     let bytes = std::fs::read(path)
         .map_err(|e| format!("could not read {label} at {}: {e}", path.display()))?;
     let mut hasher = Sha256::new();

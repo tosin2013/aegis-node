@@ -271,40 +271,72 @@ runtime artifacts.
 #### Published artifact (current pin)
 
 The [`litertlm-runtime-publish.yml`](../../.github/workflows/litertlm-runtime-publish.yml)
-workflow ships a two-blob OCI artifact: the engine `.so` plus the
-constraint-provider sidekick that the engine `DT_NEEDED`s
-(`libGemmaModelConstraintProvider.so` — LiteRT-LM's grammar-constrained
-sampler, used by Gemma's tool-call decoder). Both files SHA-verify
-at build time inside `litertlm-sys/build.rs`.
+workflow ships a five-blob OCI artifact:
+
+1. **`libaegis_litertlm_engine_cpu.so`** — the C ABI we bind, built
+   via `cc_binary(linkshared=True, linkstatic=True)` against
+   `//c:engine_cpu`. Mirror of upstream's
+   `python/litert_lm/litert_lm_ext.so` pattern. Bundles all
+   transitive cc_library + Rust crate archives — including
+   `@crate_index__llguidance//:llguidance_cc` — statically into one
+   `.so`. Linkopts: `-Wl,-Bsymbolic`, `-Wl,-rpath,'$ORIGIN'`,
+   `-Wl,-z,noexecstack`.
+
+2. **`libGemmaModelConstraintProvider.so`**, **`libLiteRt.so`**,
+   **`libLiteRtTopKWebGpuSampler.so`**,
+   **`libLiteRtWebGpuAccelerator.so`** — upstream-vendored,
+   LFS-tracked under `prebuilt/linux_x86_64/`. Same set
+   `python/litert_lm/BUILD`'s `_PREBUILT_LIBS` ships with the
+   official Python wheel. The engine `.so` resolves them at
+   session-load time via `rpath = $ORIGIN`.
+
+All five files SHA-verify at build time inside
+`litertlm-sys/build.rs` against the pinned constants below.
 
 - **Reference:** `ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64:latest`
-- **Manifest digest:** `sha256:e2296f314976f0f9eb1c3e2ef1cc4ab6114ce96ba34f238a3ddbb2d5659e511f`
-- **engine `.so` SHA-256:** `216451eb3726b3326dbadbdc08ec2eda44d45d3035167d8613f45e08eb80a012` (~21.4 MB)
-- **constraint-provider `.so` SHA-256:** `b30101a057a69d2c877266ac7373023864816ccaed7d9413d97b98ae12842009` (~22.8 MB)
+- **Manifest digest:** `sha256:6add795dada783a61aeaf59892be7d249515ccf5cd13f0146b34eca2b841cbb4`
+- **engine `.so` SHA-256:** `82d8f96c91ad28c6d3257b8235d88c6603660d2f2bd817241d1f86e4f45dd1e4` (~43.8 MB)
+- **`libGemmaModelConstraintProvider.so` SHA-256:** `b30101a057a69d2c877266ac7373023864816ccaed7d9413d97b98ae12842009` (~22.8 MB)
+- **`libLiteRt.so` SHA-256:** `e9844d634dbb69dbeb0bc51a71f7035bb7ba523e876384ff58192955b1da63e4` (~10.0 MB)
+- **`libLiteRtTopKWebGpuSampler.so` SHA-256:** `f44b2eaded0a5b2e015c88a4eb6af960811c5a5df140f9101f84d845e8aff0ca` (~4.2 MB)
+- **`libLiteRtWebGpuAccelerator.so` SHA-256:** `9523c6fd38f661599b904908f87d22448c2ff2c8da54291782e0c23fcf988863` (~17.6 MB)
 - **`c/engine.h` SHA-256:** `cacee1d18aa9e2c22aeb8da2fc1576b25c03d7104e5319a0352c64a57bb691e9`
 - **Upstream:** `google-ai-edge/LiteRT-LM` tag `v0.10.2`, commit `476c0bd49429569b2a4685c4db7a657d531d4b6e`
-- **Bazel target:** `//c:engine_cpu_shared` (Aegis overlay rule on top of `engine_cpu`'s `cc_library`)
+- **Bazel target:** `//c:libaegis_litertlm_engine_cpu.so` (Aegis overlay)
 - **Bazel version:** 7.6.1
 - **glibc target:** 2.39 (ubuntu-latest at build time)
 - **Platform / kind:** linux/amd64 / cpu-only
 - **Signed by:** `litertlm-runtime-publish.yml` workflow via Sigstore keyless
 
-History: the [first run](https://github.com/tosin2013/aegis-node/actions/runs/25223166187)
-(post the LFS-checkout fix in PR #110) published a single-blob
-artifact at digest `sha256:75ac8138...` — but that only contained
-the engine `.so`, and at session-load time the dynamic linker
-failed to resolve `libGemmaModelConstraintProvider.so`. The
-[rebundling run on the LiteRT-A branch](https://github.com/tosin2013/aegis-node/actions/runs/25234002154)
-re-published with both files (digest `sha256:e2296f31...`); the
-engine `.so` digest stayed reproducible across the two builds (Bazel
-hermetic build), only the manifest digest changed because the
-layer set grew from one to two.
+History — three publish iterations on this PR landed the right
+shape:
+
+1. [run 25223166187](https://github.com/tosin2013/aegis-node/actions/runs/25223166187)
+   (post PR #110's LFS fix) — single-blob artifact at
+   `sha256:75ac8138...`, engine `.so` only. The engine `.so`'s
+   `DT_NEEDED` for `libGemmaModelConstraintProvider.so` couldn't
+   resolve at session-load.
+2. [run 25234002154](https://github.com/tosin2013/aegis-node/actions/runs/25234002154)
+   — two-blob artifact at `sha256:e2296f31...` adding the
+   constraint-provider. The `.so` loaded but failed at the first
+   constrained-decoding call with `undefined symbol: llg_new_tokenizer`
+   — `cc_shared_library` skips Bazel's Rust-managed cc deps, so
+   the `llguidance` crate wasn't bundled.
+3. [run 25234553974](https://github.com/tosin2013/aegis-node/actions/runs/25234553974)
+   — the current artifact at `sha256:6add795d...`. Switched to
+   `cc_binary(linkshared=True, linkstatic=True)` (mirroring
+   `python/litert_lm/litert_lm_ext.so`) so the linker pulls all
+   transitive archives, including `llguidance`, into one `.so`.
+   Bundled the full `_PREBUILT_LIBS` set (all 4 prebuilts upstream's
+   Python wheel ships). Confirmed via `nm`: `llg_*` symbols defined,
+   no remaining external references beyond
+   `libGemmaModelConstraintProvider.so` and system libs.
 
 LiteRT-A's `litertlm-sys/build.rs` pins the current digest. Verified
 end-to-end:
 
 ```bash
-cosign verify ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64@sha256:e2296f314976f0f9eb1c3e2ef1cc4ab6114ce96ba34f238a3ddbb2d5659e511f \
+cosign verify ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64@sha256:6add795dada783a61aeaf59892be7d249515ccf5cd13f0146b34eca2b841cbb4 \
   --certificate-identity-regexp '^https://github\.com/tosin2013/aegis-node/\.github/workflows/litertlm-runtime-publish\.yml@.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

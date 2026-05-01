@@ -242,20 +242,22 @@ jobs:
         run: |
           set -euo pipefail
           artifact_dir='${{ steps.build.outputs.artifact_dir }}'
-          # All five files are content-pinned. Print + capture each.
-          for f in libaegis_litertlm_engine_cpu.so \
-                   libGemmaModelConstraintProvider.so \
-                   libLiteRt.so \
-                   libLiteRtTopKWebGpuSampler.so \
-                   libLiteRtWebGpuAccelerator.so; do
+          # Hardcoded (filename, output-key) pairs — auto-derivation
+          # from the filename via sed+tr was fragile against camelCase
+          # collapses (one prior run produced an empty
+          # sha_litertopkwebgpusampler annotation for unclear reasons,
+          # likely a TR locale mismatch). Hardcoding is unambiguous.
+          declare -A keys=(
+            [libaegis_litertlm_engine_cpu.so]=engine
+            [libGemmaModelConstraintProvider.so]=constraint_provider
+            [libLiteRt.so]=litert
+            [libLiteRtTopKWebGpuSampler.so]=litert_topk_webgpu_sampler
+            [libLiteRtWebGpuAccelerator.so]=litert_webgpu_accelerator
+          )
+          for f in "${!keys[@]}"; do
             d=$(sha256sum "$artifact_dir/$f" | awk '{print $1}')
             echo "${f}: ${d}"
-            # Convert filename to a GITHUB_OUTPUT key: dashes/dots/case
-            # → underscores; strip the leading lib and trailing .so.
-            key=$(echo "$f" | sed -e 's/^lib//' -e 's/\.so$//' \
-                                  -e 's/[^A-Za-z0-9]/_/g' \
-                                  | tr 'A-Z' 'a-z')
-            echo "sha_${key}=${d}" >> "$GITHUB_OUTPUT"
+            echo "sha_${keys[$f]}=${d}" >> "$GITHUB_OUTPUT"
           done
 
       - name: Capture build environment metadata
@@ -322,11 +324,11 @@ jobs:
             --annotation "dev.aegis-node.bazel.version=${{ steps.env.outputs.bazel }}" \
             --annotation "dev.aegis-node.bazel.target=//c:libaegis_litertlm_engine_cpu.so" \
             --annotation "dev.aegis-node.glibc.target=${{ steps.env.outputs.glibc }}" \
-            --annotation "dev.aegis-node.runtime.so.sha256=${{ steps.sha.outputs.sha_aegis_litertlm_engine_cpu }}" \
-            --annotation "dev.aegis-node.runtime.constraint_provider_so.sha256=${{ steps.sha.outputs.sha_gemmamodelconstraintprovider }}" \
+            --annotation "dev.aegis-node.runtime.so.sha256=${{ steps.sha.outputs.sha_engine }}" \
+            --annotation "dev.aegis-node.runtime.constraint_provider_so.sha256=${{ steps.sha.outputs.sha_constraint_provider }}" \
             --annotation "dev.aegis-node.runtime.litert_so.sha256=${{ steps.sha.outputs.sha_litert }}" \
-            --annotation "dev.aegis-node.runtime.litert_topk_webgpu_sampler_so.sha256=${{ steps.sha.outputs.sha_litertopkwebgpusampler }}" \
-            --annotation "dev.aegis-node.runtime.litert_webgpu_accelerator_so.sha256=${{ steps.sha.outputs.sha_litertwebgpuaccelerator }}" \
+            --annotation "dev.aegis-node.runtime.litert_topk_webgpu_sampler_so.sha256=${{ steps.sha.outputs.sha_litert_topk_webgpu_sampler }}" \
+            --annotation "dev.aegis-node.runtime.litert_webgpu_accelerator_so.sha256=${{ steps.sha.outputs.sha_litert_webgpu_accelerator }}" \
             --annotation "dev.aegis-node.runtime.header.sha256=${{ steps.env.outputs.header_sha }}" \
             --annotation "dev.aegis-node.runtime.platform=linux/amd64" \
             --annotation "dev.aegis-node.runtime.kind=cpu-only" \
@@ -364,11 +366,11 @@ jobs:
           echo "::notice title=Published LiteRT-LM runtime artifact::"
           echo "ref:                                ${{ steps.target.outputs.ref }}"
           echo "manifest_digest:                    ${{ steps.push.outputs.manifest_digest }}"
-          echo "engine_cpu .so sha256:              ${{ steps.sha.outputs.sha_aegis_litertlm_engine_cpu }}"
-          echo "constraint_provider .so sha256:     ${{ steps.sha.outputs.sha_gemmamodelconstraintprovider }}"
+          echo "engine_cpu .so sha256:              ${{ steps.sha.outputs.sha_engine }}"
+          echo "constraint_provider .so sha256:     ${{ steps.sha.outputs.sha_constraint_provider }}"
           echo "litert .so sha256:                  ${{ steps.sha.outputs.sha_litert }}"
-          echo "litert_topk_webgpu_sampler sha256:  ${{ steps.sha.outputs.sha_litertopkwebgpusampler }}"
-          echo "litert_webgpu_accelerator sha256:   ${{ steps.sha.outputs.sha_litertwebgpuaccelerator }}"
+          echo "litert_topk_webgpu_sampler sha256:  ${{ steps.sha.outputs.sha_litert_topk_webgpu_sampler }}"
+          echo "litert_webgpu_accelerator sha256:   ${{ steps.sha.outputs.sha_litert_webgpu_accelerator }}"
           echo "header sha256:                      ${{ steps.env.outputs.header_sha }}"
           echo "upstream tag:                       ${{ inputs.upstream_tag }}"
           echo "upstream commit:                    ${{ steps.upstream.outputs.commit }}"
