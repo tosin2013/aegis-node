@@ -52,18 +52,47 @@ const EXPECTED_HEADER_SHA: &str =
 const EXPECTED_SO_SHA: &str =
     "216451eb3726b3326dbadbdc08ec2eda44d45d3035167d8613f45e08eb80a012";
 
+/// SHA-256 of `libGemmaModelConstraintProvider.so` — the
+/// constrained-decoding sidekick `engine_cpu_shared` has a `DT_NEEDED`
+/// entry for. Vendored, LFS-tracked in the upstream repo at
+/// `prebuilt/linux_x86_64/libGemmaModelConstraintProvider.so` (size
+/// ~22.76 MB). The publish workflow ships both files in the same OCI
+/// artifact so the dynamic linker can find the constraint provider via
+/// the engine's rpath.
+///
+/// SHA captured from the upstream LFS pointer at tag v0.10.2:
+/// `oid sha256:b30101a057a69d2c877266ac7373023864816ccaed7d9413d97b98ae12842009`.
+/// Recorded in the OCI artifact's
+/// `dev.aegis-node.runtime.constraint_provider_so.sha256` annotation.
+const EXPECTED_GEMMA_CONSTRAINT_PROVIDER_SO_SHA: &str =
+    "b30101a057a69d2c877266ac7373023864816ccaed7d9413d97b98ae12842009";
+
 /// Pinned OCI reference of the LiteRT-LM runtime artifact this build
 /// script expects. Recorded so error messages can point operators at
 /// the exact `oras pull` / `aegis pull` invocation that materializes
-/// the `.so`.
+/// the `.so` files.
+///
+/// **Note:** the manifest digest below is updated by the
+/// `litertlm-runtime-publish.yml` re-dispatch on this branch (the
+/// first published artifact only contained one .so; the rebundled
+/// artifact contains both). Until the rebundled run completes, this
+/// constant points at the placeholder — `oras pull` against it will
+/// fail and the build script's error message tells the operator to
+/// override via `LITERT_LM_PREBUILT_SO`.
 const PINNED_OCI_REF: &str =
     "ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64\
      @sha256:75ac8138f882d0aac93541d1c354863910cdb712620712f97e3d761a8fe1090d";
 
-/// Filename the publish workflow produces. Used for the
-/// `cargo:rustc-link-lib=dylib=...` directive (without the `lib` prefix
-/// or `.so` suffix).
+/// Filename of the engine `.so` (used for the
+/// `cargo:rustc-link-lib=dylib=...` directive — name strips the `lib`
+/// prefix and `.so` suffix).
 const SO_FILENAME: &str = "libaegis_litertlm_engine_cpu.so";
+
+/// Filename of the constraint-provider `.so`. Not link-cited (only
+/// loaded transitively via the engine's `DT_NEEDED`), but verified
+/// and placed alongside the engine `.so` in the staging dir so the
+/// dynamic linker finds it via rpath.
+const GEMMA_SO_FILENAME: &str = "libGemmaModelConstraintProvider.so";
 
 /// Library name passed to `cargo:rustc-link-lib=dylib=`.
 const LINK_LIB_NAME: &str = "aegis_litertlm_engine_cpu";
@@ -108,7 +137,16 @@ fn run() -> Result<(), String> {
     let so_path = locate_and_verify_so()?;
     let so_dir = so_path
         .parent()
-        .ok_or_else(|| format!("LITERT_LM_PREBUILT_SO has no parent: {}", so_path.display()))?;
+        .ok_or_else(|| format!("LITERT_LM_PREBUILT_SO has no parent: {}", so_path.display()))?
+        .to_path_buf();
+
+    // The engine .so has a DT_NEEDED entry for libGemmaModelConstraintProvider.so —
+    // verify that file is present in the same staging dir and matches
+    // its SHA-256 pin. The dynamic linker resolves it through the
+    // engine .so's rpath at session-load time, so the file must sit
+    // beside the engine .so we just verified.
+    let gemma_so_path = so_dir.join(GEMMA_SO_FILENAME);
+    verify_gemma_constraint_provider(&gemma_so_path)?;
 
     // Emit cargo directives so downstream crates pick up the dylib at
     // link time and at runtime (rpath). Adding the directory to both
@@ -238,6 +276,40 @@ fn try_oras_pull(staging: &PathBuf) -> Option<PathBuf> {
             None
         }
     }
+}
+
+/// Locate and verify the constraint-provider sidekick that
+/// `libaegis_litertlm_engine_cpu.so` `DT_NEEDED`s.
+///
+/// The publish workflow bundles it as a second blob in the OCI
+/// artifact; `oras pull` materializes both files into the same
+/// staging directory. If the file is missing (e.g. the operator
+/// pointed `LITERT_LM_PREBUILT_SO` at a hand-built engine .so without
+/// staging the constraint provider next to it), surface a precise
+/// error message that names the missing file and the SHA they need.
+fn verify_gemma_constraint_provider(path: &PathBuf) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!(
+            "{GEMMA_SO_FILENAME} not found at {}\n\
+             \n\
+             The engine .so has a DT_NEEDED entry for this file (LiteRT-LM's\n\
+             grammar-constrained sampler — used by Gemma's tool-call decoder).\n\
+             It must sit in the same directory as {SO_FILENAME} so the dynamic\n\
+             linker resolves it via rpath at session-load time.\n\
+             \n\
+             Materialize it via `oras pull` against the rebundled artifact:\n\
+             \n\
+                 oras pull {PINNED_OCI_REF} -o /tmp/litertlm-runtime\n\
+             \n\
+             (Expected SHA-256: {EXPECTED_GEMMA_CONSTRAINT_PROVIDER_SO_SHA})",
+            path.display()
+        ));
+    }
+    verify_sha256(
+        path,
+        EXPECTED_GEMMA_CONSTRAINT_PROVIDER_SO_SHA,
+        "libGemmaModelConstraintProvider.so",
+    )
 }
 
 fn verify_sha256(path: &PathBuf, expected_hex: &str, label: &str) -> Result<(), String> {
