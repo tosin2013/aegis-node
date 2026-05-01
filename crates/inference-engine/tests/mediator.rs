@@ -881,3 +881,259 @@ fn mcp_disallowed_tool_on_allowed_server_emits_violation() {
         "mcp://fs-helper/delete_everything"
     );
 }
+
+// ---------------------------------------------------------------------------
+// ADR-024-B: per-tool pre-validation pass.
+//
+// Manifest declares an `allowed_tools` entry in object form with a
+// `pre_validate` clause; the mediator extracts the named arg from the
+// tool-call payload and runs it through the corresponding policy gate
+// before dispatching to the MCP client.
+//
+// 5 paths covered (per LiteRT-024-B acceptance criteria):
+//   - allowed-by-pre-validate (path inside tools.filesystem.read)
+//   - denied-by-pre-validate (path NOT inside tools.filesystem.read)
+//   - denied-by-pre-validate-array (one element of arg_array denied)
+//   - no-pre-validate (string-shape allowed_tool keeps current behavior)
+//   - malformed-arg (clause names a missing field) → typed error
+
+const PRE_VALIDATE_FS_YAML: &str = r#"schemaVersion: "1"
+agent: { name: "m", version: "1.0.0" }
+identity: { spiffeId: "spiffe://mediator.local/agent/research/inst-1" }
+tools:
+  filesystem:
+    read: ["/data"]
+  mcp:
+    - server_name: "fs"
+      server_uri: "stdio:/bin/true"
+      allowed_tools:
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        # Shorthand-string entry: no pre_validate clause, dispatch
+        # proceeds without the extra check (parity with pre-ADR-024
+        # behavior).
+        - "list_allowed_directories"
+"#;
+
+#[test]
+fn mcp_pre_validate_allows_when_path_in_filesystem_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "pv-allow", PRE_VALIDATE_FS_YAML);
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({"contents": "ok"}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    let result = s
+        .mediate_mcp_tool_call(
+            "fs",
+            "read_text_file",
+            json!({"path": "/data/note.txt"}),
+            None,
+        )
+        .unwrap();
+    assert_eq!(result, json!({"contents": "ok"}));
+    s.shutdown().unwrap();
+
+    // Client was reached → Access entry, no Violation.
+    let entries = read_lines(&ledger);
+    assert_eq!(calls.lock().unwrap().len(), 1, "client must be invoked");
+    assert_eq!(entries[1]["entryType"], "access");
+    assert_eq!(entries[1]["accessType"], "mcp_tool_call");
+    assert_eq!(entries[1]["resourceUri"], "mcp://fs/read_text_file");
+}
+
+#[test]
+fn mcp_pre_validate_denies_when_path_outside_filesystem_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "pv-deny", PRE_VALIDATE_FS_YAML);
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    let err = s
+        .mediate_mcp_tool_call("fs", "read_text_file", json!({"path": "/etc/passwd"}), None)
+        .unwrap_err();
+    assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
+    s.shutdown().unwrap();
+
+    // Pre-validate caught it before dispatch → no client invocation,
+    // and the Violation's resource_uri uses the mcp-prevalidate://
+    // scheme so an auditor can tell which layer refused.
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "client must NOT be invoked when pre_validate denies"
+    );
+    let entries = read_lines(&ledger);
+    let violation = entries
+        .iter()
+        .find(|e| e["entryType"] == "violation")
+        .expect("violation entry");
+    assert_eq!(violation["accessType"], "mcp_pre_validate");
+    let uri = violation["resourceUri"].as_str().unwrap();
+    assert!(
+        uri.starts_with("mcp-prevalidate://fs/read_text_file?path="),
+        "expected mcp-prevalidate URI, got {uri}"
+    );
+    assert!(
+        uri.contains("/etc/passwd"),
+        "uri should carry the value: {uri}"
+    );
+}
+
+#[test]
+fn mcp_pre_validate_arg_array_denies_on_first_disallowed_element() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let (s, ledger) = boot(dir.path(), ca_dir.path(), "pv-array", PRE_VALIDATE_FS_YAML);
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    // First path is allowed, second is not → whole call is denied.
+    let err = s
+        .mediate_mcp_tool_call(
+            "fs",
+            "read_multiple_files",
+            json!({"paths": ["/data/a.txt", "/etc/passwd"]}),
+            None,
+        )
+        .unwrap_err();
+    assert!(matches!(err, Error::Denied { .. }), "got {err:?}");
+    s.shutdown().unwrap();
+
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "client must NOT be invoked when any array element is denied"
+    );
+    let entries = read_lines(&ledger);
+    let violation = entries
+        .iter()
+        .find(|e| e["entryType"] == "violation")
+        .expect("violation entry");
+    let uri = violation["resourceUri"].as_str().unwrap();
+    assert!(
+        uri.contains("paths=/etc/passwd"),
+        "uri should name the offending element: {uri}"
+    );
+}
+
+#[test]
+fn mcp_pre_validate_string_shorthand_keeps_one_layer_behavior() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let (s, ledger) = boot(
+        dir.path(),
+        ca_dir.path(),
+        "pv-shorthand",
+        PRE_VALIDATE_FS_YAML,
+    );
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({"directories": ["/data"]}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    // list_allowed_directories is the bare-name shorthand entry —
+    // no pre_validate clause, so the call dispatches without extra
+    // checking even though we pass an arg the policy would reject
+    // if it were checked.
+    let result = s
+        .mediate_mcp_tool_call(
+            "fs",
+            "list_allowed_directories",
+            json!({"unused_path": "/etc/passwd"}),
+            None,
+        )
+        .unwrap();
+    assert_eq!(result, json!({"directories": ["/data"]}));
+    s.shutdown().unwrap();
+
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        1,
+        "string-shorthand entry must dispatch (one-layer enforcement only)"
+    );
+    let entries = read_lines(&ledger);
+    assert_eq!(entries[1]["entryType"], "access");
+    assert_eq!(entries[1]["accessType"], "mcp_tool_call");
+}
+
+#[test]
+fn mcp_pre_validate_missing_arg_returns_typed_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca_dir = tempfile::tempdir().unwrap();
+    init_ca(ca_dir.path());
+
+    let (s, ledger) = boot(
+        dir.path(),
+        ca_dir.path(),
+        "pv-malformed",
+        PRE_VALIDATE_FS_YAML,
+    );
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let client = MockMcpClient {
+        response: json!({}),
+        calls: calls.clone(),
+    };
+    let mut s = s.with_mcp_client(Box::new(client));
+
+    // Clause says `arg: path` but the payload has no `path` field.
+    let err = s
+        .mediate_mcp_tool_call(
+            "fs",
+            "read_text_file",
+            json!({"oops": "/data/note.txt"}),
+            None,
+        )
+        .unwrap_err();
+    match err {
+        Error::McpPreValidateMalformedArg {
+            server, tool, arg, ..
+        } => {
+            assert_eq!(server, "fs");
+            assert_eq!(tool, "read_text_file");
+            assert_eq!(arg, "path");
+        }
+        other => panic!("wrong error variant: {other:?}"),
+    }
+    s.shutdown().unwrap();
+
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "client must NOT be invoked on malformed-arg error"
+    );
+    // Note: the malformed-arg path is currently surfaced as the
+    // typed error without emitting a Violation — symmetric with the
+    // existing `no mcp client configured` branch, which also
+    // short-circuits before any ledger entry. The default ledger
+    // sequence here is start + network_attestation + end (3
+    // entries; no violation/access for this call).
+    let entries = read_lines(&ledger);
+    assert_eq!(entries.len(), 3, "{entries:#?}");
+}
