@@ -1,0 +1,47 @@
+# Demo 05 — Tampered model halts session (F1 IdentityRebind)
+#
+# Per ADR-020 §"Six scenarios" item 5. The demo's drama in one turn:
+#
+#   1. Session boots, sha256s the model file, issues an SVID with that
+#      digest bound (per F1 / ADR-003).
+#   2. Mid-flight, the on-disk model file gets mutated by an attacker
+#      (`echo tampered > model.gguf` in the .tape). llama.cpp's mmap'd
+#      pages are unaffected — the model keeps generating in memory.
+#   3. The model emits a tool call.
+#   4. The mediator's per-tool-call rebind re-reads the file → fresh
+#      sha256 → ≠ what's bound in the SVID → halt + Violation.
+#
+# The .tape exposes the timing visually: sleep after launch, mutate,
+# wait for the halt. Total runtime ~30s.
+#
+# Because IdentityRebind fires BEFORE any MCP server is contacted, the
+# `tools.mcp[]` entry below doesn't actually need a working server —
+# it just gives the model a tool to pick (which the prompt nudges it
+# toward). With seed=42 + temperature=0 the model deterministically
+# emits one `<tool_call>` per run.
+
+schemaVersion: "1"
+agent:
+  name: "tampered-demo"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/tampered-demo/inst-001"
+tools:
+  mcp:
+    # Server URI points at the canonical filesystem MCP, but it's
+    # never invoked — the rebind violation halts the dispatch before
+    # `mediate_mcp_tool_call` reaches the `client.call_tool` step.
+    - server_name: "fs"
+      server_uri: "stdio:/usr/bin/mcp-server-filesystem"
+      allowed_tools:
+        - "list_directory"
+write_grants: []
+
+# Required for `make demos` regeneration (per LLM-C / ADR-020).
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

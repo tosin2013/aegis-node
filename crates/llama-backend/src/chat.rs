@@ -222,7 +222,7 @@ pub(crate) fn parse_response(raw: &str) -> InferResponse {
         };
         let body = &raw[body_start..body_start + close_rel];
 
-        if let Ok(parsed) = serde_json::from_str::<ToolCallBody>(body.trim()) {
+        if let Some(parsed) = parse_tool_call_body(body) {
             tool_calls.push(ToolCall {
                 name: parsed.name,
                 arguments: parsed.arguments.unwrap_or(serde_json::Value::Null),
@@ -253,6 +253,78 @@ pub(crate) fn parse_response(raw: &str) -> InferResponse {
         tool_calls,
         assistant_text,
     }
+}
+
+/// Parse the body of a `<tool_call>` block, tolerant of common
+/// small-model quirks. Order:
+///
+/// 1. **Strict pass.** `serde_json::from_str` on the trimmed body.
+///    Modern instruct GGUFs (Qwen2.5 7B+, Llama 3 8B+, etc.) emit
+///    well-formed JSON here.
+/// 2. **Outer-brace fallback.** Some 1.5B-class Q4 models (Qwen2.5
+///    1.5B-Q4 is the case observed in the demo program) hallucinate
+///    an extra wrapping brace pair: `{{"name":...,"arguments":...}}`.
+///    If the strict pass fails AND the body is `{{...}}` AND the
+///    one-brace-stripped inner parses cleanly, accept that. This is
+///    a real-world tolerance fix, not a hack — small models
+///    occasionally double-wrap and the runtime should not lose a
+///    structurally-valid tool call to one extra brace.
+/// 3. **Substring scan.** Last resort: find the first `{` followed
+///    by `"name":` and the matching close brace, parse that. Catches
+///    bodies with leading/trailing prose around the JSON.
+///
+/// Returns `None` only when none of the three strategies recover a
+/// valid `ToolCallBody`. The caller treats `None` as "preserve the
+/// raw text as reasoning" so an auditor can still see what the model
+/// emitted.
+fn parse_tool_call_body(body: &str) -> Option<ToolCallBody> {
+    let trimmed = body.trim();
+    if let Ok(parsed) = serde_json::from_str::<ToolCallBody>(trimmed) {
+        return Some(parsed);
+    }
+    // Outer-brace fallback (Qwen-1.5B-Q4 quirk).
+    if trimmed.starts_with("{{") && trimmed.ends_with("}}") && trimmed.len() >= 4 {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        if let Ok(parsed) = serde_json::from_str::<ToolCallBody>(inner.trim()) {
+            return Some(parsed);
+        }
+    }
+    // Substring scan: find a `{` whose object contains `"name"`.
+    if let Some(name_pos) = trimmed.find("\"name\"") {
+        // Walk back to find the `{` that opens this object.
+        let mut open = None;
+        for (i, c) in trimmed[..name_pos].char_indices().rev() {
+            if c == '{' {
+                open = Some(i);
+                break;
+            }
+        }
+        if let Some(start) = open {
+            // Walk forward, brace-counting, to find the matching `}`.
+            let mut depth = 0i32;
+            let mut end = None;
+            for (i, c) in trimmed[start..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(start + i + 1);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(stop) = end {
+                let candidate = &trimmed[start..stop];
+                if let Ok(parsed) = serde_json::from_str::<ToolCallBody>(candidate) {
+                    return Some(parsed);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,6 +408,39 @@ mod tests {
         assert_eq!(parsed.tool_calls[1].name, "b");
         assert_eq!(parsed.reasoning, "");
         assert_eq!(parsed.assistant_text, None);
+    }
+
+    #[test]
+    fn parse_response_recovers_doubled_outer_brace_qwen_quirk() {
+        // Real-world quirk observed with Qwen2.5 1.5B Q4_K_M: emits
+        // an extra wrapping brace pair around the tool_call body.
+        // The runtime should still extract the call rather than lose
+        // it to one stray brace.
+        let raw = concat!(
+            r#"<tool_call>"#,
+            "\n",
+            r#"{{"name": "fs__list_directory", "arguments": {"path": "/data"}}}"#,
+            "\n",
+            r#"</tool_call>"#
+        );
+        let parsed = parse_response(raw);
+        assert_eq!(parsed.tool_calls.len(), 1, "{parsed:?}");
+        assert_eq!(parsed.tool_calls[0].name, "fs__list_directory");
+        assert_eq!(
+            parsed.tool_calls[0].arguments,
+            serde_json::json!({"path": "/data"})
+        );
+    }
+
+    #[test]
+    fn parse_response_recovers_tool_call_with_surrounding_prose() {
+        // Variant: small model emits the tool_call inline with prose
+        // inside the <tool_call> block. The substring-scan fallback
+        // should recover it.
+        let raw = r#"<tool_call>I will use {"name": "weather.get", "arguments": {"city": "Paris"}} now</tool_call>"#;
+        let parsed = parse_response(raw);
+        assert_eq!(parsed.tool_calls.len(), 1, "{parsed:?}");
+        assert_eq!(parsed.tool_calls[0].name, "weather.get");
     }
 
     #[test]
