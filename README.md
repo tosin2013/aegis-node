@@ -44,7 +44,7 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 
 ## Documentation
 
-- **[Architectural Decision Records](docs/adrs/)** — 23 ADRs covering the security primitives, runtime architecture, supply chain, dev environment, agent ↔ tool protocol (MCP), write-grant precedence, the recorded demo program, HuggingFace-as-upstream model distribution, trust-boundary format agnosticism, and LiteRT-LM as a second inference backend.
+- **[Architectural Decision Records](docs/adrs/)** — 24 ADRs covering the security primitives, runtime architecture, supply chain, dev environment, agent ↔ tool protocol (MCP) plus the second-layer MCP arg pre-validation, write-grant precedence, the recorded demo program, HuggingFace-as-upstream model distribution, trust-boundary format agnosticism, and LiteRT-LM as a second inference backend.
 - **[Compatibility Charter](docs/COMPATIBILITY_CHARTER.md)** — what the project promises not to break across versions (manifest, ledger, IPC).
 - **[Supply Chain Verification](docs/SUPPLY_CHAIN.md)** — `cosign verify` / `oras pull` flow for the signed devbox image and model artifacts.
 - **[Model Mirroring](docs/MODEL_MIRRORING.md)** — operator workflow for publishing a HuggingFace model to your internal OCI registry, signed with your org's cosign trust root (per ADR-013 + ADR-021).
