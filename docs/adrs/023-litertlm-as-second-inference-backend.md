@@ -228,6 +228,113 @@ The AEGIS011 lint rule (per LLM-C) applies identically — manifests
 that gate writes through F3 approvals but don't pin a seed get the
 same warning.
 
+## Update — 2026-05-01: Prebuilt path doesn't exist; Aegis publishes its own
+
+The original §"Decision" item 2 above commits to "prebuilt binary
+distribution, not source build" on the strength of the research
+agent's claim that "every release ships `litert_lm_main.linux_x86_64`
+as a release asset." **That claim is wrong.** Verified while starting
+the LiteRT-A implementation:
+
+- v0.10.2 (latest stable as of 2026-05-01) carries **zero release
+  assets** on its [GitHub release page](https://github.com/google-ai-edge/LiteRT-LM/releases/tag/v0.10.2).
+  Every prior release is the same.
+- The PyPI wheel `litert-lm` is **30 KB of Python launcher scripts**
+  — a Bazel orchestrator that invokes `bazel build` inside an internal
+  venv. No bundled `.so`.
+- [`docs/getting-started/build-and-run.md`](https://github.com/google-ai-edge/LiteRT-LM/blob/main/docs/getting-started/build-and-run.md)
+  confirms: Linux x86_64 users **build from source via Bazel**
+  (`bazel build //runtime/engine:litert_lm_main`).
+
+That removes the cheap path. Three options at this point:
+
+1. **Source-build via Bazel** inside `litertlm-sys/build.rs`. 3+
+   weeks of fragile work; permanent ABI burden; `cargo build`
+   becomes a 30-minute Bazel + TF + abseil + flatbuffers compile.
+2. **Aegis maintains its own prebuilt** via the existing supply-chain
+   pipeline. Aegis publishes a Linux x86_64 `.so` to GHCR, signed
+   under our cosign keyless identity, exactly like the model
+   artifacts shipped under [ADR-013](013-oci-artifacts-for-model-distribution.md)
+   / [ADR-021](021-huggingface-as-upstream-oci-as-trust-boundary.md)
+   / [ADR-022](022-trust-boundary-format-agnosticism.md). Eat our
+   own dogfood.
+3. **File issue with upstream**, pause LiteRT work, ship more demos
+   on Qwen meanwhile. Unbounded delay.
+
+### Decision (amendment): option 2.
+
+Aegis-Node becomes the canonical upstream-of-upstream for LiteRT-LM
+Linux x86_64 binaries used by the Aegis runtime. The same supply-chain
+machinery that publishes signed model artifacts publishes signed
+runtime artifacts.
+
+**New OCI artifact-type:**
+`application/vnd.aegis-node.litertlm-runtime.v1`. Same cosign keyless
+identity (the publish workflow's GitHub OIDC token), same `aegis pull`
+verification flow, same chat-template-style annotations capturing the
+upstream commit + Bazel toolchain version + `.so` SHA-256.
+
+**New CI workflow:** `.github/workflows/litertlm-runtime-publish.yml`,
+manual-dispatch only (per ADR-021's precedent). Inputs: upstream
+LiteRT-LM tag (e.g., `v0.10.2`) + Bazel version. The workflow:
+
+1. Checks out `google-ai-edge/LiteRT-LM` at the pinned tag.
+2. Installs Bazel + clang + the upstream's transitive deps.
+3. Runs `bazel build //c:engine` (or whatever target produces the
+   shared library — the workflow probes the upstream BUILD files).
+4. SHA-256s the resulting `.so`.
+5. `oras push` to
+   `ghcr.io/tosin2013/aegis-node-runtime/litertlm-linux-amd64`
+   with `--artifact-type application/vnd.aegis-node.litertlm-runtime.v1`,
+   plus annotations for the upstream commit + Bazel version + glibc
+   target + abseil/protobuf ABI version.
+6. `cosign sign` keyless via Sigstore.
+7. Print the manifest digest for pinning.
+
+**`litertlm-sys/build.rs`:** at build time, invokes `aegis pull`
+against the pinned digest (CI runs in a working tree where `aegis`
+is on PATH; non-CI / air-gapped contributors set
+`LITERT_LM_RUNTIME_PATH` to a pre-staged `.so`). The SHA-256 sidecar
+that `aegis pull` writes is verified before linking.
+
+**Reproducibility.** A future contributor (or a security reviewer)
+can rebuild the artifact from source via the published workflow:
+the workflow file is the recipe, the input tag pins the upstream
+state, the cosign signature ties the published bytes to the run
+that produced them. Same audit posture as the model artifacts.
+
+### Sub-issues (work order)
+
+The original LiteRT-A scope splits into a new **LiteRT-0** (the
+publish pipeline) plus a refined LiteRT-A (FFI wrapper that
+*consumes* the published artifact):
+
+| # | Issue | What | Status |
+|---|---|---|---|
+| LiteRT-0 (new) | TBD | `litertlm-runtime-publish.yml` workflow + first published runtime artifact (signed `.so` for `v0.10.2` against Bazel pin) | open |
+| [#95 LiteRT-A](https://github.com/tosin2013/aegis-node/issues/95) | scope refined | `litertlm-sys`'s `build.rs` consumes the runtime artifact via `aegis pull`; `litertlm-backend` safe wrapper unchanged from original scope | open |
+| [#96 LiteRT-B](https://github.com/tosin2013/aegis-node/issues/96) | unchanged | Backend / LoadedModel impl + CLI wiring | open |
+| [#97 LiteRT-C](https://github.com/tosin2013/aegis-node/issues/97) | unchanged | `models-publish.yml` extension + first published Gemma 4 model | open |
+| [#98](https://github.com/tosin2013/aegis-node/issues/98) | umbrella update | Track LiteRT-0 + the refined work order | open |
+
+Total estimate revised: **~3–4 weeks** (was 2–3) of focused work
+across the four sub-PRs. Most of the new week is LiteRT-0's CI
+workflow + the first publish run; LiteRT-A's wrapper effort
+*shrinks* once the artifact is in hand.
+
+### What this amendment doesn't change
+
+- The trait abstraction reuse (item 4).
+- CPU + greedy sampling Phase 1 (item 3).
+- C ABI only (item 1).
+- Manifest annotation reuse for `.litertlm` chat templates (item 5).
+- The Phase 2 deferred work (GPU/NPU when upstream determinism PR
+  #2081 lands).
+- Determinism semantics in §"Determinism + replay".
+
+The amendment is purely a build-supply-chain change — the runtime
+contract the rest of the ADR commits to is unchanged.
+
 ## Related
 
 - [ADR-014 CPU-First GGUF Inference via llama.cpp](014-cpu-first-gguf-inference-via-llama-cpp.md) —
@@ -236,7 +343,7 @@ same warning.
   the upstream-source policy this ADR extends to LiteRT-LM models.
 - [ADR-022 Trust-Boundary Format Agnosticism](022-trust-boundary-format-agnosticism.md) —
   the manifest-annotation pattern this ADR reuses for `.litertlm`
-  chat-template hashing.
+  chat-template hashing AND the runtime artifact's annotations.
 - LiteRT-LM upstream:
   [github.com/google-ai-edge/LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM)
   (Apache-2.0).
