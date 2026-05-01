@@ -2,17 +2,23 @@
 # Anthropic filesystem MCP server (@modelcontextprotocol/server-filesystem)
 # in read-only mode.
 #
-# Per ADR-018 (F2-MCP-D / issue #46). Demonstrates the layered enforcement
-# Aegis-Node provides for MCP tool calls:
+# Per ADR-018 (F2-MCP-D / issue #46) + ADR-024 (MCP arg pre-validation).
+# Demonstrates the two-layer enforcement Aegis-Node provides for MCP
+# tool calls:
 #
 #   1. tools.mcp[] gates the *call* — closed-by-default per server + tool.
-#   2. The MCP server's underlying side effects (e.g. read_text_file
-#      issuing a real fs read) flow through Session::mediate_filesystem_*
-#      and are authorized by tools.filesystem.read separately.
+#   2. Per ADR-024-A, allowed_tools entries may declare `pre_validate`
+#      clauses naming which arg the mediator should extract and check
+#      against tools.filesystem.* / tools.network.* policy *before*
+#      dispatching to the MCP server. This is the layer that catches
+#      e.g. read_text_file({path: "/etc/passwd"}) when /etc isn't in
+#      tools.filesystem.read — even though the MCP allowlist permits
+#      read_text_file.
 #
-# Both layers must permit the operation. The MCP allowlist is not a
-# replacement for the syscall gate; it's an additional check that names
-# the protocol-level intent.
+# The mediator that consumes `pre_validate` is ADR-024-B (forthcoming);
+# this example manifest lights up both shapes (string shorthand for
+# tools whose args don't carry side-effect-shaped paths, object form
+# for tools that do) so cross-language conformance covers the union.
 #
 # Real-world launch (out of band of the manifest):
 #
@@ -47,13 +53,42 @@ tools:
       # (write_file, edit_file, move_file, create_directory) are
       # deliberately omitted — closed-by-default keeps them denied
       # regardless of what the upstream server advertises.
+      #
+      # Tools whose args carry filesystem-shaped paths use the object
+      # form to declare a pre_validate clause; tools whose args don't
+      # (list_allowed_directories, get_file_info on a known path) stay
+      # on the string shorthand for terseness.
       allowed_tools:
-        - "read_text_file"
-        - "read_multiple_files"
-        - "list_directory"
-        - "list_directory_with_sizes"
-        - "directory_tree"
-        - "search_files"
-        - "get_file_info"
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        - name: "list_directory"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "list_directory_with_sizes"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "directory_tree"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "search_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "get_file_info"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        # Bare-name shorthand: returns the configured allowed roots,
+        # no path argument to pre-validate. The MCP allowlist still
+        # gates the call.
         - "list_allowed_directories"
 write_grants: []

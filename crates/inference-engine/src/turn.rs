@@ -235,9 +235,13 @@ impl Session {
             });
         }
 
-        // MCP catalog entries.
+        // MCP catalog entries. Per ADR-024, allowed_tools is now a
+        // union — entries may be bare strings or objects with
+        // pre_validate clauses; the catalog only surfaces names so
+        // we ask each entry for its name regardless of shape.
         for server in &manifest.tools.mcp {
-            for tool_name in &server.allowed_tools {
+            for entry in &server.allowed_tools {
+                let tool_name = entry.name();
                 decls.push(ToolDecl {
                     name: format_mcp_name(&server.server_name, tool_name),
                     description: format!(

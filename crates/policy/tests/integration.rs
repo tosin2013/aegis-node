@@ -289,9 +289,89 @@ tools:
     assert_eq!(mcp.len(), 2);
     assert_eq!(mcp[0].server_name, "fs-helper");
     assert_eq!(mcp[0].server_uri, "stdio:/usr/local/bin/mcp-fs");
-    assert_eq!(mcp[0].allowed_tools, vec!["read_file", "list_dir"]);
+    // Both shorthand entries deserialize as AllowedTool::Name; the
+    // accessor lets call sites stay name-only when they don't care
+    // about pre_validate clauses (which are absent here).
+    let names: Vec<&str> = mcp[0].allowed_tools.iter().map(|t| t.name()).collect();
+    assert_eq!(names, vec!["read_file", "list_dir"]);
+    for entry in &mcp[0].allowed_tools {
+        assert!(
+            entry.pre_validate().is_empty(),
+            "shorthand should have no clauses"
+        );
+    }
     assert_eq!(mcp[1].server_name, "web-search");
     assert!(mcp[1].allowed_tools.is_empty());
+}
+
+/// Per ADR-024-A. The object form of an `allowed_tools` entry
+/// declares per-tool pre-validation clauses. Both shapes can coexist
+/// in the same array (one entry as a bare name, another as an
+/// object) — the union deserializes via `#[serde(untagged)]`.
+#[test]
+fn mcp_allowed_tools_accepts_pre_validate_object_form() {
+    use aegis_policy::manifest::{AllowedTool, PreValidateKind};
+
+    let yaml = br#"
+schemaVersion: "1"
+agent: { name: "x", version: "1.0.0" }
+identity: { spiffeId: "spiffe://td/agent/x/1" }
+tools:
+  mcp:
+    - server_name: "fs"
+      server_uri: "stdio:/usr/local/bin/mcp-fs"
+      allowed_tools:
+        - "list_directory"
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        - name: "write_file"
+          pre_validate:
+            - kind: filesystem_write
+              arg: path
+"#;
+    let p = Policy::from_yaml_bytes(yaml).unwrap();
+    let entries = &p.manifest().tools.mcp[0].allowed_tools;
+    assert_eq!(entries.len(), 4);
+
+    // Mixed shapes coexist in the array.
+    match &entries[0] {
+        AllowedTool::Name(n) => assert_eq!(n, "list_directory"),
+        other => panic!("expected shorthand, got {other:?}"),
+    }
+    match &entries[1] {
+        AllowedTool::WithPreValidate { name, pre_validate } => {
+            assert_eq!(name, "read_text_file");
+            assert_eq!(pre_validate.len(), 1);
+            assert_eq!(pre_validate[0].kind, PreValidateKind::FilesystemRead);
+            assert_eq!(pre_validate[0].arg.as_deref(), Some("path"));
+            assert_eq!(pre_validate[0].arg_array, None);
+        }
+        other => panic!("expected object form, got {other:?}"),
+    }
+
+    // arg_array variant.
+    match &entries[2] {
+        AllowedTool::WithPreValidate { name, pre_validate } => {
+            assert_eq!(name, "read_multiple_files");
+            assert_eq!(pre_validate[0].kind, PreValidateKind::FilesystemRead);
+            assert_eq!(pre_validate[0].arg, None);
+            assert_eq!(pre_validate[0].arg_array.as_deref(), Some("paths"));
+        }
+        other => panic!("expected object form, got {other:?}"),
+    }
+
+    // The MCP allowlist check still uses the name — pre_validate
+    // clauses don't affect the allow/deny decision (per the
+    // ADR-024-B mediator pass which runs separately).
+    assert!(p.check_mcp_tool("fs", "read_text_file").is_allow());
+    assert!(p.check_mcp_tool("fs", "list_directory").is_allow());
+    assert!(p.check_mcp_tool("fs", "delete_file").is_deny());
 }
 
 /// Per ADR-018 / issue #43. Malformed entry (missing `server_uri`) is rejected.

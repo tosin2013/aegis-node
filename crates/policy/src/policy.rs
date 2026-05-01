@@ -216,7 +216,12 @@ impl Policy {
                 ));
             }
         };
-        if !server.allowed_tools.iter().any(|t| t == tool_name) {
+        // ADR-024: allowed_tools is now a Vec<AllowedTool> union
+        // (string shorthand or object with pre_validate clauses).
+        // The MCP-allowlist check still only cares about the name —
+        // the per-tool pre_validate clauses are consumed by the
+        // mediator (ADR-024-B) after this allow/deny decision.
+        if !server.allowed_tools.iter().any(|t| t.name() == tool_name) {
             return Decision::deny(format!(
                 "mcp tool call {server_name:?}/{tool_name:?} not granted: tool not in allowed_tools",
             ));

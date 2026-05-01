@@ -162,7 +162,121 @@ pub struct ApiGrant {
 pub struct McpServerGrant {
     pub server_name: String,
     pub server_uri: String,
-    pub allowed_tools: Vec<String>,
+    pub allowed_tools: Vec<AllowedTool>,
+}
+
+/// One entry in [`McpServerGrant::allowed_tools`]. Two shapes are
+/// accepted (per ADR-024 §"Decision" item 1):
+///
+/// 1. **String shorthand** — `"read_text_file"` — interpreted as
+///    "no pre-validation; one-layer enforcement," preserving the
+///    pre-ADR-024 behavior.
+/// 2. **Object form** — `{ name, pre_validate }` — declares
+///    side-effect clauses the mediator runs against
+///    `tools.filesystem.*` / `tools.network.*` policy before
+///    dispatching to the MCP server.
+///
+/// Both shapes deserialize via `#[serde(untagged)]` — serde tries
+/// each variant in order and picks the first that matches. The
+/// JSON Schema `oneOf` in
+/// [`schemas/manifest/v1/manifest.schema.json`](../../../../schemas/manifest/v1/manifest.schema.json)
+/// pins the cross-language contract.
+///
+/// Helper accessors keep call sites that only need the name terse:
+///
+/// ```ignore
+/// for entry in &grant.allowed_tools {
+///     if entry.name() == requested {
+///         for clause in entry.pre_validate() { /* ... */ }
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AllowedTool {
+    /// Bare tool name — legacy/short-form. The mediator only enforces
+    /// the MCP allowlist for this entry; the underlying tool call's
+    /// side-effects are left to the MCP server's own discretion.
+    Name(String),
+    /// Object form with per-tool pre-validation clauses. The mediator
+    /// runs each clause against the corresponding `tools.filesystem.*`
+    /// / `tools.network.*` gate before dispatching to the MCP server.
+    WithPreValidate {
+        /// Tool name (matches the MCP server's tool catalog).
+        name: String,
+        /// Side-effect clauses the mediator pre-validates. Empty / absent
+        /// `pre_validate` is equivalent to the [`AllowedTool::Name`]
+        /// shorthand — one-layer MCP enforcement only.
+        #[serde(default)]
+        pre_validate: Vec<PreValidateClause>,
+    },
+}
+
+impl AllowedTool {
+    /// Tool name, regardless of which form the manifest uses.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            AllowedTool::Name(s) => s,
+            AllowedTool::WithPreValidate { name, .. } => name,
+        }
+    }
+
+    /// Pre-validation clauses declared for this tool. Empty for the
+    /// string-shorthand form — i.e., one-layer MCP enforcement only.
+    #[must_use]
+    pub fn pre_validate(&self) -> &[PreValidateClause] {
+        match self {
+            AllowedTool::Name(_) => &[],
+            AllowedTool::WithPreValidate { pre_validate, .. } => pre_validate,
+        }
+    }
+}
+
+/// One side-effect-shaped pre-validation clause for an [`AllowedTool`]
+/// object form. The mediator extracts the named argument from the MCP
+/// tool call's payload and runs the corresponding `policy.check_*`
+/// method before dispatching the call (per ADR-024 §"Decision" item 2).
+///
+/// Phase 1 covers `filesystem_{read,write,delete}` + `network_outbound`;
+/// `exec_run` is intentionally out of scope (exec via MCP is rare and
+/// the path-extraction shape differs).
+///
+/// Exactly one of [`Self::arg`] / [`Self::arg_array`] must be set —
+/// the JSON Schema enforces this via `oneOf` and the Rust deserializer
+/// surfaces a typed error if both or neither are present.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PreValidateClause {
+    /// Which side-effect family to gate against.
+    pub kind: PreValidateKind,
+    /// Name of the scalar argument carrying the path or URL the
+    /// mediator should extract and check. Mutually exclusive with
+    /// [`Self::arg_array`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arg: Option<String>,
+    /// Name of an array-of-strings argument; the mediator extracts
+    /// each element and runs the check on it. Mutually exclusive with
+    /// [`Self::arg`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arg_array: Option<String>,
+}
+
+/// Side-effect family a [`PreValidateClause`] gates against. Adding a
+/// new family requires a corresponding `policy.check_*` method, a JSON
+/// Schema enum bump, and parity in the Go union type.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PreValidateKind {
+    /// Path extracted from the named arg; checked via `policy.check_filesystem_read`.
+    FilesystemRead,
+    /// Path extracted from the named arg; checked via `policy.check_filesystem_write`.
+    FilesystemWrite,
+    /// Path extracted from the named arg; checked via `policy.check_filesystem_delete`.
+    FilesystemDelete,
+    /// Host + port parsed from the named arg (URL or host:port);
+    /// checked via `policy.check_network_outbound`.
+    NetworkOutbound,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

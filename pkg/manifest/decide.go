@@ -147,8 +147,13 @@ func (m *Manifest) decideMCPTool(server, tool string) Decision {
 		if s.ServerName != server {
 			continue
 		}
+		// ADR-024: AllowedTools entries are now AllowedTool (union of
+		// string shorthand + object form with pre_validate clauses).
+		// The MCP-allowlist check still only cares about the name —
+		// the per-tool pre_validate clauses are consumed by the
+		// mediator (ADR-024-B) after this allow/deny decision.
 		for _, t := range s.AllowedTools {
-			if t == tool {
+			if t.Name == tool {
 				return allowDecision()
 			}
 		}
