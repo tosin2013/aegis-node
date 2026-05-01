@@ -64,6 +64,23 @@ use thiserror::Error;
 /// `aegis pull` enforces that in `extract_chat_template_annotation`.
 pub const MODEL_GGUF_MEDIA_TYPE: &str = "application/vnd.aegis-node.model.gguf.v1";
 
+/// OCI media type for a single-blob `.litertlm` model artifact (the
+/// LiteRT-LM family — Gemma 4 etc., per ADR-023 §"Implementation
+/// plan" item 3 and LiteRT-C / [#97](https://github.com/tosin2013/aegis-node/issues/97)).
+/// Same publisher-side annotation requirement as
+/// [`MODEL_GGUF_MEDIA_TYPE`]: the
+/// `dev.aegis-node.chat-template.sha256` annotation is mandatory and
+/// `aegis pull` enforces it in `extract_chat_template_annotation`.
+pub const MODEL_LITERTLM_MEDIA_TYPE: &str = "application/vnd.aegis-node.model.litertlm.v1";
+
+/// All OCI artifact-types `aegis pull` recognizes as **model**
+/// artifacts (i.e., subject to the chat-template annotation
+/// requirement). Adding a new family requires (a) a new constant
+/// here, (b) a corresponding `format` branch in `models-publish.yml`,
+/// and (c) the F1 boot path in `aegis-inference-engine` honoring the
+/// extracted SHA the same way as for GGUF.
+pub const MODEL_ARTIFACT_TYPES: &[&str] = &[MODEL_GGUF_MEDIA_TYPE, MODEL_LITERTLM_MEDIA_TYPE];
+
 /// OCI manifest annotation carrying the SHA-256 of the GGUF's
 /// `tokenizer.chat_template` bytes. Defends against template-only
 /// poisoning per ADR-013 §"Decision" item 4 and ADR-022 §"Decision":
@@ -81,15 +98,21 @@ pub struct PulledArtifact {
     pub blob_path: PathBuf,
     /// SHA-256 digest of the blob, lowercase hex.
     pub sha256_hex: String,
-    /// SHA-256 of the GGUF's `tokenizer.chat_template` bytes, lowercase
-    /// hex — read from the cosign-covered manifest annotation
+    /// SHA-256 of the model's chat template, lowercase hex — read
+    /// from the cosign-covered manifest annotation
     /// `dev.aegis-node.chat-template.sha256`. `None` for non-model
-    /// artifacts (e.g., the devbox image). Required for artifacts whose
-    /// media type is `MODEL_GGUF_MEDIA_TYPE`. Defends against
-    /// template-only poisoning per ADR-013 §"Decision" item 4. The
-    /// runtime never parses the GGUF itself (per ADR-022): we trust the
-    /// publisher's signed claim, defended in depth by llama.cpp's own
-    /// parser at inference time.
+    /// artifacts (e.g., the devbox image). Required for artifacts
+    /// whose media type is in [`MODEL_ARTIFACT_TYPES`] (currently
+    /// GGUF + `.litertlm`). Defends against template-only poisoning
+    /// per ADR-013 §"Decision" item 4. The runtime never parses the
+    /// model bytes (per ADR-022): we trust the publisher's signed
+    /// claim, defended in depth by the backend's own parser at
+    /// inference time. For GGUF the publisher reads
+    /// `tokenizer.chat_template` from the model itself; for
+    /// `.litertlm` the publisher hashes the sibling
+    /// `chat_template.jinja` file in the HF repo (the same content
+    /// embedded in the .litertlm flatbuffer's
+    /// `LlmMetadata.jinja_prompt_template` field).
     pub chat_template_sha256_hex: Option<String>,
 }
 
@@ -476,9 +499,10 @@ fn run_oras_manifest_fetch(parsed: &ParsedRef) -> Result<serde_json::Value> {
 /// Pull the chat-template SHA-256 annotation out of an OCI manifest.
 /// Returns `None` for non-model artifacts (devbox image, third-party
 /// images that don't follow this convention). For artifacts whose
-/// `artifactType` (or top-level `mediaType`) is `MODEL_GGUF_MEDIA_TYPE`,
-/// the annotation is required and a missing or malformed value is a
-/// hard refusal.
+/// `artifactType` (or top-level `mediaType`) is in
+/// [`MODEL_ARTIFACT_TYPES`] — i.e., one of the formats Aegis-Node's
+/// `models-publish.yml` produces — the annotation is **required** and
+/// a missing or malformed value is a hard refusal.
 fn extract_chat_template_annotation(manifest: &serde_json::Value) -> Result<Option<String>> {
     // OCI 1.1+ manifests use `artifactType` for the artifact's purpose;
     // older single-blob artifacts ("config-as-content") put the same
@@ -494,7 +518,7 @@ fn extract_chat_template_annotation(manifest: &serde_json::Value) -> Result<Opti
                 .and_then(|v| v.as_str())
         })
         .unwrap_or("");
-    let is_model = artifact_type == MODEL_GGUF_MEDIA_TYPE;
+    let is_model = MODEL_ARTIFACT_TYPES.contains(&artifact_type);
 
     let annotation_value = manifest
         .get("annotations")
