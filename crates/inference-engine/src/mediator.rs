@@ -30,7 +30,11 @@ use aegis_access_log::{
 };
 use aegis_approval_gate::{ApprovalOutcome, ApprovalRequest, DEFAULT_TIMEOUT};
 use aegis_ledger_writer::{Entry, EntryType};
-use aegis_policy::{check_identity_binding, Decision, NetworkProto};
+use aegis_policy::{
+    check_identity_binding,
+    manifest::{PreValidateClause, PreValidateKind},
+    Decision, NetworkProto,
+};
 use chrono::Utc;
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -293,7 +297,7 @@ impl Session {
                 return Err(Error::RequireApproval { reason });
             }
         }
-        let server_uri = match self
+        let server_grant = match self
             .policy()
             .manifest()
             .tools
@@ -301,7 +305,7 @@ impl Session {
             .iter()
             .find(|s| s.server_name == server_name)
         {
-            Some(s) => s.server_uri.clone(),
+            Some(s) => s,
             None => {
                 let reason = format!(
                     "mcp tool call to server {server_name:?} not granted: server not in tools.mcp[]",
@@ -310,6 +314,33 @@ impl Session {
                 return Err(Error::Denied { reason });
             }
         };
+        let server_uri = server_grant.server_uri.clone();
+
+        // ADR-024-B: per-tool pre-validation. After the MCP allowlist
+        // check passes (above), look up this tool's `allowed_tools`
+        // entry. If it's an object form with `pre_validate` clauses,
+        // run each clause against the matching `policy.check_*` gate
+        // before dispatching to the MCP server. The shorthand-string
+        // form has no clauses → behavior is unchanged (one-layer
+        // enforcement). Denials surface as Violation entries with a
+        // distinguishable `mcp-prevalidate://server/tool?arg=value`
+        // resource_uri so an auditor can tell which layer refused.
+        let pre_validate_clauses: Vec<PreValidateClause> = server_grant
+            .allowed_tools
+            .iter()
+            .find(|t| t.name() == tool_name)
+            .map(|t| t.pre_validate().to_vec())
+            .unwrap_or_default();
+        if !pre_validate_clauses.is_empty() {
+            self.run_mcp_pre_validate(
+                server_name,
+                tool_name,
+                &args,
+                &pre_validate_clauses,
+                reasoning_step_id,
+            )?;
+        }
+
         let mut client = match self.mcp_client.take() {
             Some(c) => c,
             None => {
@@ -333,6 +364,82 @@ impl Session {
             reasoning_step_id,
         )?;
         Ok(value)
+    }
+
+    /// ADR-024-B: run the manifest-declared `pre_validate` clauses
+    /// for an MCP tool call between the allowlist check and the
+    /// dispatch to the MCP server.
+    ///
+    /// On the first denial: emit a Violation entry with a
+    /// `mcp-prevalidate://<server>/<tool>?<arg>=<value>` resource_uri
+    /// (so an auditor can distinguish "MCP allowlist denied" from
+    /// "filesystem gate denied via MCP pre-validation"), then return
+    /// [`Error::Denied`]. Subsequent clauses on the same call do not
+    /// run — the call is refused as a whole.
+    ///
+    /// On a malformed arg (clause names a field that's missing or
+    /// the wrong shape), return [`Error::McpPreValidateMalformedArg`].
+    /// The model's tool call gets denied — better than dispatching
+    /// against an undefined arg or crashing the session.
+    fn run_mcp_pre_validate(
+        &mut self,
+        server_name: &str,
+        tool_name: &str,
+        args: &Value,
+        clauses: &[PreValidateClause],
+        _reasoning_step_id: Option<&str>,
+    ) -> Result<()> {
+        for clause in clauses {
+            let values = extract_clause_values(args, server_name, tool_name, clause)?;
+            // Capture session_start before any &mut self call below
+            // so we don't conflict with the immutable policy() borrow.
+            let session_start = self.session_start();
+            for value in values {
+                let arg_name = clause
+                    .arg
+                    .as_deref()
+                    .or(clause.arg_array.as_deref())
+                    .unwrap_or("?");
+                let decision = match clause.kind {
+                    PreValidateKind::FilesystemRead => {
+                        self.policy().check_filesystem_read(Path::new(&value))
+                    }
+                    PreValidateKind::FilesystemWrite => {
+                        let now = Utc::now();
+                        self.policy()
+                            .check_filesystem_write(Path::new(&value), now, session_start)
+                    }
+                    PreValidateKind::FilesystemDelete => {
+                        let now = Utc::now();
+                        self.policy()
+                            .check_filesystem_delete(Path::new(&value), now, session_start)
+                    }
+                    PreValidateKind::NetworkOutbound => {
+                        let (host, port) =
+                            parse_pre_validate_url(&value, server_name, tool_name, arg_name)?;
+                        self.policy()
+                            .check_network_outbound(&host, port, NetworkProto::Tcp)
+                    }
+                };
+                match decision {
+                    Decision::Allow => continue,
+                    Decision::Deny { reason } => {
+                        let resource_uri = format!(
+                            "mcp-prevalidate://{server_name}/{tool_name}?{arg_name}={value}"
+                        );
+                        self.emit_deny(&resource_uri, "mcp_pre_validate", &reason)?;
+                        return Err(Error::Denied { reason });
+                    }
+                    Decision::RequireApproval { reason } => {
+                        // Phase 1 — approvals over MCP pre-validate
+                        // not yet wired (parity with the existing
+                        // mediate_mcp_tool_call branch).
+                        return Err(Error::RequireApproval { reason });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Exec a program with full mediation. Returns the captured Output.
@@ -633,6 +740,181 @@ fn file_uri(path: &Path) -> String {
 
 fn mcp_uri(server_name: &str, tool_name: &str) -> String {
     format!("mcp://{server_name}/{tool_name}")
+}
+
+/// Extract the value(s) a [`PreValidateClause`] points at from the
+/// MCP tool-call payload (which is a free-form `serde_json::Value`).
+///
+/// - `arg: <key>` — `args[key]` must be a JSON string. Returns one
+///   element.
+/// - `arg_array: <key>` — `args[key]` must be a JSON array of
+///   strings. Returns one element per array entry.
+/// - Both unset / both set → schema bug (the JSON Schema's `oneOf`
+///   normally catches this; we fail closed if it slips through).
+///
+/// Errors map to [`Error::McpPreValidateMalformedArg`] — the model's
+/// tool call gets denied with a typed reason rather than crashing
+/// the session.
+fn extract_clause_values(
+    args: &Value,
+    server_name: &str,
+    tool_name: &str,
+    clause: &PreValidateClause,
+) -> Result<Vec<String>> {
+    let make_err = |arg: &str, reason: String| Error::McpPreValidateMalformedArg {
+        server: server_name.to_string(),
+        tool: tool_name.to_string(),
+        arg: arg.to_string(),
+        reason,
+    };
+
+    match (clause.arg.as_deref(), clause.arg_array.as_deref()) {
+        (Some(key), None) => {
+            let v = args.get(key).ok_or_else(|| {
+                make_err(
+                    key,
+                    "required by pre_validate clause but missing from tool args".to_string(),
+                )
+            })?;
+            let s = v
+                .as_str()
+                .ok_or_else(|| {
+                    make_err(
+                        key,
+                        format!("expected JSON string, got {}", json_type_name(v)),
+                    )
+                })?
+                .to_string();
+            Ok(vec![s])
+        }
+        (None, Some(key)) => {
+            let v = args.get(key).ok_or_else(|| {
+                make_err(
+                    key,
+                    "required by pre_validate clause but missing from tool args".to_string(),
+                )
+            })?;
+            let arr = v.as_array().ok_or_else(|| {
+                make_err(
+                    key,
+                    format!(
+                        "expected JSON array (arg_array clause), got {}",
+                        json_type_name(v)
+                    ),
+                )
+            })?;
+            let mut out = Vec::with_capacity(arr.len());
+            for (i, elem) in arr.iter().enumerate() {
+                let s = elem.as_str().ok_or_else(|| {
+                    make_err(
+                        key,
+                        format!(
+                            "array element {i} is {}, expected string",
+                            json_type_name(elem)
+                        ),
+                    )
+                })?;
+                out.push(s.to_string());
+            }
+            Ok(out)
+        }
+        (Some(_), Some(_)) => Err(make_err(
+            "<both>",
+            "pre_validate clause has both `arg` and `arg_array` set; schema oneOf is supposed to refuse this".to_string(),
+        )),
+        (None, None) => Err(make_err(
+            "<neither>",
+            "pre_validate clause has neither `arg` nor `arg_array`; schema oneOf is supposed to require one".to_string(),
+        )),
+    }
+}
+
+/// Friendly JSON type name for error messages.
+fn json_type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Parse a URL-shaped string into `(host, port)` for the
+/// `network_outbound` pre-validate clause. Phase 1 supports:
+///
+/// - Full URL (`https://api.example.com:8443/foo`) → host +
+///   explicit port if present, otherwise the scheme's default
+///   (80 / 443) for `http` / `https`.
+/// - Bare `host:port` (no scheme) — common when an MCP tool's
+///   `target` arg is a host:port pair.
+///
+/// Anything else is a malformed-arg error. We refuse rather than
+/// guessing — the manifest declared `kind: network_outbound`, so
+/// the caller should be passing something parseable.
+fn parse_pre_validate_url(
+    raw: &str,
+    server_name: &str,
+    tool_name: &str,
+    arg_name: &str,
+) -> Result<(String, u16)> {
+    let make_err = |reason: String| Error::McpPreValidateMalformedArg {
+        server: server_name.to_string(),
+        tool: tool_name.to_string(),
+        arg: arg_name.to_string(),
+        reason,
+    };
+
+    // Strip a leading scheme if present.
+    let (default_port, after_scheme) = if let Some(rest) = raw.strip_prefix("https://") {
+        (Some(443u16), rest)
+    } else if let Some(rest) = raw.strip_prefix("http://") {
+        (Some(80u16), rest)
+    } else if raw.contains("://") {
+        // Some other scheme — refuse rather than misinterpret.
+        return Err(make_err(format!(
+            "unsupported URL scheme in {raw:?} (Phase 1 supports http/https or bare host:port)"
+        )));
+    } else {
+        (None, raw)
+    };
+
+    // Split off path / query / fragment so they don't leak into the
+    // host parser.
+    let host_port = after_scheme
+        .split_once('/')
+        .map(|(hp, _)| hp)
+        .unwrap_or(after_scheme);
+    let host_port = host_port
+        .split_once('?')
+        .map(|(hp, _)| hp)
+        .unwrap_or(host_port);
+
+    if host_port.is_empty() {
+        return Err(make_err(format!("empty host in {raw:?}")));
+    }
+
+    if let Some((host, port_str)) = host_port.rsplit_once(':') {
+        let port: u16 = port_str.parse().map_err(|_| {
+            make_err(format!(
+                "port component {port_str:?} in {raw:?} is not a valid u16"
+            ))
+        })?;
+        if host.is_empty() {
+            return Err(make_err(format!("empty host before port in {raw:?}")));
+        }
+        Ok((host.to_string(), port))
+    } else {
+        // No `:port` — only valid for the http/https schemes where
+        // a default exists.
+        let port = default_port.ok_or_else(|| {
+            make_err(format!(
+                "no port in {raw:?} and no scheme to imply a default (try host:port)"
+            ))
+        })?;
+        Ok((host_port.to_string(), port))
+    }
 }
 
 fn network_uri(host: &str, port: u16, proto: NetworkProto) -> String {

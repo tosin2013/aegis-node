@@ -63,6 +63,24 @@ pub enum Error {
     #[error("access-log: {0}")]
     AccessLog(#[from] aegis_access_log::Error),
 
+    /// An ADR-024-A `pre_validate` clause names an arg that's missing
+    /// from the tool call's payload, or is the wrong shape (e.g. clause
+    /// declared `arg: path` but the payload has no `path` field, or
+    /// the field is not a string). Surfaced as a denial — the model's
+    /// tool call gets a Violation entry rather than crashing the
+    /// session or silently dispatching.
+    #[error("pre_validate clause for mcp tool {server:?}/{tool:?} arg {arg:?}: {reason}")]
+    McpPreValidateMalformedArg {
+        /// MCP server name from `tools.mcp[]`.
+        server: String,
+        /// Tool name from `allowed_tools`.
+        tool: String,
+        /// Arg name the clause referenced.
+        arg: String,
+        /// What's wrong (missing, not-a-string, not-an-array, etc.).
+        reason: String,
+    },
+
     #[error("denied: {reason}")]
     Denied { reason: String },
 
