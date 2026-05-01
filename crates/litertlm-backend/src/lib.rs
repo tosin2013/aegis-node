@@ -48,6 +48,9 @@ use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::ptr::NonNull;
 
+pub mod chat;
+pub use chat::{LiteRtLmBackend, LiteRtLmLoadedModel};
+
 use aegis_litertlm_sys as sys;
 use thiserror::Error;
 
@@ -270,19 +273,26 @@ fn build_sampler_params(knobs: &DeterminismKnobs) -> sys::LiteRtLmSamplerParams 
 /// coexist in the same process (the C ABI does not require a
 /// process-global init step).
 ///
-/// `Engine` is intentionally `!Send + !Sync`. The LiteRT-LM C ABI's
-/// engine handle is owned by the calling thread that created it;
-/// upstream documentation does not promise thread-safety on the
-/// engine pointer. We enforce that at compile time via the
-/// `_not_thread_safe` `PhantomData<*const ()>` field — flipping it
-/// to a `Send`-bearing marker requires re-reading this comment.
+/// `Engine` is `Send` but `!Sync`. The LiteRT-LM C ABI's engine
+/// handle can move between threads (upstream's Python and JNI
+/// bindings rely on this) but concurrent calls on the same handle
+/// are not documented as safe. The `Backend` trait in
+/// `aegis-inference-engine` requires `LoadedModel: Send`, so the
+/// LiteRtLmBackend impl in `chat.rs` needs `Engine: Send`.
 pub struct Engine {
     /// Owned engine handle. Non-null for the entire lifetime of the
     /// `Engine` — released by `Drop`.
     handle: NonNull<sys::LiteRtLmEngine>,
-    /// Marker that disables the `Send + Sync` auto-traits.
-    _not_thread_safe: std::marker::PhantomData<*const ()>,
 }
+
+// SAFETY-INVARIANT: the LiteRT-LM C ABI's engine handle is a thread-
+// movable opaque pointer — upstream's Python and JNI bindings move
+// the handle across threads as a matter of course. Concurrent calls
+// against the same handle are NOT documented as safe; we therefore
+// withhold `Sync` (the absence of an `unsafe impl Sync for Engine`
+// below). `infer` takes `&mut self` on the wrapping `LoadedModel` so
+// the borrow checker enforces single-threaded use.
+unsafe impl Send for Engine {}
 
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -350,10 +360,7 @@ impl Engine {
             path: path.display().to_string(),
         })?;
 
-        Ok(Self {
-            handle,
-            _not_thread_safe: std::marker::PhantomData,
-        })
+        Ok(Self { handle })
     }
 }
 

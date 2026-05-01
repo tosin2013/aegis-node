@@ -115,6 +115,7 @@ fn runtime_conformance_golden() {
         session_id: Some(SESSION_ID.to_string()),
         script: Some(script_path),
         prompt: None,
+        backend: aegis_cli::run::BackendKind::Llama,
     };
 
     let outcome = execute(args).expect("aegis run");

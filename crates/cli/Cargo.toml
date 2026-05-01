@@ -18,14 +18,19 @@ name = "aegis"
 path = "src/main.rs"
 
 [features]
-# By default the CLI builds without llama.cpp — `aegis run --prompt`
-# is unavailable, but `aegis run --script` and every other subcommand
-# work and the workspace `cargo build --workspace` (which `rust.yml`
-# uses) doesn't pay the ~50s cmake/llama.cpp build cost. Build with
-# `--features llama` to enable model-driven mode (per ADR-014). The
-# dedicated `llama.yml` CI job exercises this path.
+# By default the CLI builds without any inference backend —
+# `aegis run --prompt` is unavailable, but `aegis run --script` and
+# every other subcommand work and the workspace
+# `cargo build --workspace` (which `rust.yml` uses) doesn't pay the
+# ~50s cmake/llama.cpp build cost or the LiteRT-LM `.so`
+# materialization. Build with `--features llama` for the
+# GGUF / llama.cpp backend (per ADR-014; the `llama.yml` CI job
+# exercises it) or `--features litertlm` for the LiteRT-LM backend
+# (per ADR-023; the `litertlm.yml` CI job exercises it). Both can be
+# enabled together; `--backend <llama|litertlm>` picks at run time.
 default = []
 llama = ["dep:aegis-llama-backend"]
+litertlm = ["dep:aegis-litertlm-backend"]
 
 [dependencies]
 aegis-approval-gate = { path = "../approval-gate" }
@@ -33,6 +38,7 @@ aegis-identity = { path = "../identity" }
 aegis-inference-engine = { path = "../inference-engine" }
 aegis-ledger-writer = { path = "../ledger-writer" }
 aegis-llama-backend = { path = "../llama-backend", optional = true }
+aegis-litertlm-backend = { path = "../litertlm-backend", optional = true }
 aegis-policy = { path = "../policy" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
