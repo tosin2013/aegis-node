@@ -79,6 +79,15 @@ jobs:
           # We need to capture the resolved commit SHA for the OCI
           # annotation; fetch enough history to read it.
           fetch-depth: 1
+          # `prebuilt/<platform>/libGemmaModelConstraintProvider.so`
+          # (vendored binary used by the constrained-decoding feature
+          # — Gemma's tool-call grammar enforcer) is Git-LFS-tracked.
+          # Without LFS, the checkout writes a pointer file (~130
+          # bytes of text starting with `version https://git-lfs.../v1`)
+          # which lld then misreads as a linker version script,
+          # exploding the build with `unknown directive: version`.
+          # First-dispatch postmortem: run 25221781498.
+          lfs: true
 
       - name: Resolve upstream commit SHA
         id: upstream
