@@ -1,23 +1,29 @@
 name: Publish LiteRT-LM runtime OCI artifact
 
-# Per ADR-023 (Update — 2026-05-01: prebuilt path doesn't exist; Aegis
-# publishes its own). Manual-dispatch only — no scheduled runs, no
-# implicit fetches. Each invocation:
+# Per ADR-023 + LiteRT-D (#119) — manual-dispatch publish of the
+# LiteRT-LM runtime `.so`. Each invocation:
 #
-#   1. Checks out google-ai-edge/LiteRT-LM at the pinned tag.
+#   1. Checks out the LiteRT-LM source at `<upstream_owner>/<upstream_repo>@<upstream_tag>`.
+#      Default owner/repo is `google-ai-edge/LiteRT-LM`; the inputs
+#      let an operator point at a fork (e.g. `tosin2013/LiteRT-LM`)
+#      that carries Aegis-side patches against upstream-broken
+#      paths — the bridge we use for upstream gaps Google hasn't
+#      addressed yet, e.g. the CPU decode crash on Gemma 4 we filed
+#      as `google-ai-edge/LiteRT-LM#2149`.
 #   2. Installs Bazel + clang.
-#   3. Patches the upstream `c/BUILD` with a small overlay
-#      (`engine_cpu_shared`) — Bazel doesn't expose a shared-library
-#      target by default, only the `cc_library` static archives.
-#      The overlay is one cc_shared_library rule that links engine_cpu's
-#      transitive deps into a single .so we can ship outside Bazel.
-#   4. Runs `bazel build //c:engine_cpu_shared` (CPU-only — Phase 1
-#      per ADR-023 §"Decision" item 3).
-#   5. Computes SHA-256 of the resulting .so.
-#   6. `oras push` to GHCR with the new
-#      `application/vnd.aegis-node.litertlm-runtime.v1` artifact-type
-#      + annotations capturing the upstream commit / Bazel version /
-#      glibc target / C ABI source SHA.
+#   3. Appends the Aegis overlay to upstream's `c/BUILD` — a
+#      `cc_binary(linkshared=True, linkstatic=True)` mirror of
+#      upstream's own `python/litert_lm/litert_lm_ext.so` rule that
+#      bundles `engine_cpu`'s transitive deps (incl. the Rust
+#      `llguidance` crate) into a single `.so` consumable from
+#      outside Bazel.
+#   4. Runs `bazel build //c:libaegis_litertlm_engine_cpu.so`
+#      (CPU-only — Phase 1 per ADR-023 §"Decision" item 3).
+#   5. Bundles the four upstream-vendored prebuilt sidekicks
+#      (`libGemmaModelConstraintProvider`, `libLiteRt`,
+#      `libLiteRtTopKWebGpuSampler`, `libLiteRtWebGpuAccelerator`).
+#   6. Computes SHA-256s and pushes via `oras` to GHCR with the
+#      `application/vnd.aegis-node.litertlm-runtime.v1` artifact-type.
 #   7. `cosign sign --yes` keyless via Sigstore Fulcio + Rekor.
 #   8. Prints pinning info for the ADR-023 amendment + LiteRT-A
 #      (#95)'s `litertlm-sys/build.rs`.
@@ -29,8 +35,18 @@ name: Publish LiteRT-LM runtime OCI artifact
 on:
   workflow_dispatch:
     inputs:
+      upstream_owner:
+        description: "GitHub owner of the LiteRT-LM source (default upstream; override to fork — e.g. tosin2013 — when shipping Aegis-side patches against upstream-broken paths per LiteRT-D / #119)"
+        required: false
+        default: "google-ai-edge"
+        type: string
+      upstream_repo:
+        description: "Repo name of the LiteRT-LM source (rarely changed; left as input for forks that rename)"
+        required: false
+        default: "LiteRT-LM"
+        type: string
       upstream_tag:
-        description: "LiteRT-LM upstream tag (e.g. v0.10.2)"
+        description: "Tag (or branch) to build (e.g. v0.10.2 or aegis/v0.10.2-base when building from a fork)"
         required: true
         default: "v0.10.2"
         type: string
@@ -64,16 +80,20 @@ jobs:
       - name: Validate upstream_tag shape
         run: |
           tag='${{ inputs.upstream_tag }}'
-          # Accept v<semver> or v<semver>-rc.N
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?$ ]]; then
-            echo "::error::upstream_tag must look like v<semver> or v<semver>-rc[.N] (got '$tag')." >&2
+          # Accept v<semver>, v<semver>-rc.N, or aegis/* fork
+          # branches (per LiteRT-D #119 — the fork-branch path lets
+          # operators dispatch against patched branches like
+          # aegis/v0.10.2-base while the upstream tag itself is
+          # still the canonical reference for cosign annotations).
+          if [[ ! "$tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+(-rc(\.[0-9]+)?)?|aegis/.+)$ ]]; then
+            echo "::error::upstream_tag must look like v<semver>, v<semver>-rc[.N], or aegis/<branch> (got '$tag')." >&2
             exit 2
           fi
 
-      - name: Checkout LiteRT-LM upstream at pinned tag
+      - name: Checkout LiteRT-LM source at pinned tag
         uses: actions/checkout@v4
         with:
-          repository: google-ai-edge/LiteRT-LM
+          repository: ${{ inputs.upstream_owner }}/${{ inputs.upstream_repo }}
           ref: ${{ inputs.upstream_tag }}
           path: upstream
           # We need to capture the resolved commit SHA for the OCI
@@ -314,11 +334,11 @@ jobs:
 
           oras push "$ref" \
             --artifact-type "application/vnd.aegis-node.litertlm-runtime.v1" \
-            --annotation "org.opencontainers.image.source=https://github.com/google-ai-edge/LiteRT-LM" \
+            --annotation "org.opencontainers.image.source=https://github.com/${{ inputs.upstream_owner }}/${{ inputs.upstream_repo }}" \
             --annotation "org.opencontainers.image.revision=${{ steps.upstream.outputs.commit }}" \
             --annotation "org.opencontainers.image.title=libaegis_litertlm_engine_cpu.so" \
             --annotation "dev.aegis-node.upstream=github" \
-            --annotation "dev.aegis-node.upstream.repo=google-ai-edge/LiteRT-LM" \
+            --annotation "dev.aegis-node.upstream.repo=${{ inputs.upstream_owner }}/${{ inputs.upstream_repo }}" \
             --annotation "dev.aegis-node.upstream.tag=${{ inputs.upstream_tag }}" \
             --annotation "dev.aegis-node.upstream.commit=${{ steps.upstream.outputs.commit }}" \
             --annotation "dev.aegis-node.bazel.version=${{ steps.env.outputs.bazel }}" \
