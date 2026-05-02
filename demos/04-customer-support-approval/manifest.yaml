@@ -1,0 +1,53 @@
+# Demo 04 — Customer-support agent with F3 approval gate.
+# Per ADR-020 §"Six scenarios" item 4.
+#
+# The agent reads a customer's case file and proposes a refund-
+# letter draft. The write of the draft requires F3 approval —
+# the F3 file-channel pre-approval (per ADR-005 + the v0.8.0
+# implementation) gates the dispatch.
+#
+# Three states are demonstrable in one recording:
+#   1. Agent reads the case (Allow path)
+#   2. Agent attempts to write the draft (RequireApproval)
+#   3. Approval is granted via the file channel → write proceeds
+#
+# Backend: LiteRT-LM with Gemma 4 E2B (per ADR-020 §"Decision" item 8).
+# Customer-support narrative reads better with a realistic agent
+# voice; E2B keeps the per-turn budget tight.
+
+schemaVersion: "1"
+agent:
+  name: "support-agent"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/support-agent/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/cases"
+    # Broad write coverage to /drafts — narrowed by the explicit
+    # write_grant below with approval_required: true.
+    write:
+      - "/drafts"
+  network:
+    outbound: deny
+    inbound: deny
+
+# Explicit write grant requiring approval. Per ADR-005 / F3:
+# `approval_required: true` upgrades the policy decision from
+# Allow to RequireApproval, which the mediator routes through
+# the F3 channel (file / TTY / web / signed-API).
+write_grants:
+  - resource: "/drafts/refund-letter.md"
+    actions: ["write"]
+    duration: "PT1H"
+    approval_required: true
+
+# REQUIRED for demos: pinned seed + temperature 0.
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

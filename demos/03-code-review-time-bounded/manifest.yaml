@@ -1,0 +1,63 @@
+# Demo 03 — Code review agent with time-bounded write grant.
+# Per ADR-020 §"Six scenarios" item 3.
+#
+# The agent gets just enough to do a code review:
+#
+#   - Read access to /repo (the source it reviews)
+#   - Exec grant for git (so it can run `git diff` to find changes)
+#   - Time-bounded write grant for /data/review.md (the review
+#     it produces — explicit-grant via ADR-019; valid for 1 hour
+#     after session start)
+#   - Deny-by-default network
+#
+# Outside the time window, the same write_grant entry still exists
+# in the manifest but check_filesystem_write returns Deny (per
+# ADR-009 + ADR-019 + the F7 time-bounded extension in PR #38).
+# Auditors can see in the ledger which window the write happened
+# in, and the manifest itself documents the policy intent.
+#
+# Backend: LiteRT-LM with Gemma 4 E4B (per ADR-020 §"Decision" item 8).
+# Code-shaped reasoning benefits from the bigger model.
+
+schemaVersion: "1"
+agent:
+  name: "code-reviewer"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/code-reviewer/inst-001"
+tools:
+  # Read the source under review.
+  filesystem:
+    read:
+      - "/repo"
+    # No broad write coverage — the explicit write_grant below is
+    # the *only* path that authorizes a write. Per ADR-019,
+    # explicit grants take precedence; closed-by-default keeps
+    # everything else denied.
+  # Network closed.
+  network:
+    outbound: deny
+    inbound: deny
+
+# Time-bounded write grant. Valid for 1 hour after session start.
+# `duration: PT1H` is the ISO 8601 form aegis-policy parses (per
+# ADR-009 + the F7 extension at #38).
+write_grants:
+  - resource: "/data/review.md"
+    actions: ["write"]
+    duration: "PT1H"
+
+# git is the only exec the agent may run. Pinned to the canonical
+# Linux path; AEGIS003 refuses bare basenames (any /git on PATH
+# would match — security risk).
+exec_grants:
+  - program: "/usr/bin/git"
+
+# REQUIRED for demos: pinned seed + temperature 0.
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

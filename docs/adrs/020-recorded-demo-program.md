@@ -178,9 +178,30 @@ which caps the model size we can use without the recording feeling slow.
      --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
    ```
 
-   E4B (`gemma-4-E4B-it.litertlm`, ~3.7 GB) is published the same way
-   when a demo's per-turn budget can absorb the larger model — same
-   workflow inputs, just a different `litertlm_filename`.
+   **Published OCI artifact — Gemma 4 E4B (LiteRT-LM)** (per
+   [ADR-021](021-huggingface-as-upstream-oci-as-trust-boundary.md) §"License scope" amendment + [ADR-023](023-litertlm-as-second-inference-backend.md)):
+
+   - **Reference:** `ghcr.io/tosin2013/aegis-node-models/gemma-4-e4b-it:latest`
+   - **Manifest digest:** `sha256:de89d03b650a86410d1c9f48ee2239fdf7d5f8895ad00621e20b9c2ed195f931`
+   - **Blob SHA-256:** `f335f2bfd1b758dc6476db16c0f41854bd6237e2658d604cbe566bcefd00a7bc` (~3.65 GB)
+   - **Chat-template SHA-256:** `02b3091acf53c0b722e3db0c7a1b4980363edcc2d85549dafa339ff5dbfff629` (same `chat_template.jinja` as E2B — Google ships one canonical template across the Gemma 4 instruct family)
+   - **Upstream:** [`litert-community/gemma-4-E4B-it-litert-lm`](https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm) · file `gemma-4-E4B-it.litertlm` · revision `55b6eef9e490da991fe6bc5fec1834106927b727`
+   - **License:** Gemma Terms of Use (per ADR-021 §"License scope")
+   - **Backend:** LiteRT-LM (`aegis run --backend litertlm`)
+   - **Signed by:** `models-publish.yml` workflow ([run 25240337859](https://github.com/tosin2013/aegis-node/actions/runs/25240337859)) via Sigstore keyless. Carries `dev.aegis-node.chat-template.sha256` per [ADR-022](022-trust-boundary-format-agnosticism.md).
+
+   Demos pull this artifact at boot via:
+
+   ```bash
+   aegis pull ghcr.io/tosin2013/aegis-node-models/gemma-4-e4b-it@sha256:de89d03b650a86410d1c9f48ee2239fdf7d5f8895ad00621e20b9c2ed195f931 \
+     --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
+     --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
+   ```
+
+   Demos 2 + 3 (`02-read-only-research`, `03-code-review-time-bounded`)
+   are recorded against E4B per the per-demo selection table above.
+   Demo 4 (`04-customer-support-approval`) uses E2B for the tighter
+   per-turn budget; the model selection is per-demo, not per-program.
 
 ## Why these decisions
 
