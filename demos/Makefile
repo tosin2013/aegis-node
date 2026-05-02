@@ -35,6 +35,10 @@ $(notdir $(patsubst %/,%,$(dir $(TAPES)))): %: %/demo.gif
 
 %.gif: %.tape
 	@echo "==> rendering $<"
+	@if [ -x $(dir $<)setup.sh ]; then \
+		echo "==> running $(dir $<)setup.sh"; \
+		$(dir $<)setup.sh; \
+	fi
 	cd $(dir $<) && $(VHS) $(notdir $<)
 
 clean:

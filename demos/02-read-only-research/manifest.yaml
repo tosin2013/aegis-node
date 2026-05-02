@@ -19,11 +19,13 @@ agent:
 identity:
   spiffeId: "spiffe://aegis-node.local/agent/research-readonly/inst-001"
 tools:
-  # Read-only access to /data — that's where the research notes
-  # live. The agent has no other I/O surface.
+  # Read-only access to the demo's workdir-local data directory
+  # (per the setup.sh + demo.tape convention — keeps the demo
+  # self-contained under /tmp/aegis-demo-02/ so no root-of-FS
+  # paths are required to run it).
   filesystem:
     read:
-      - "/data"
+      - "/tmp/aegis-demo-02/data"
   # Deny-by-default outbound. Catches any attempt at exfiltration
   # via F6 NetworkAttestation at session shutdown.
   network:

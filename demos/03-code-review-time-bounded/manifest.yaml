@@ -26,10 +26,10 @@ agent:
 identity:
   spiffeId: "spiffe://aegis-node.local/agent/code-reviewer/inst-001"
 tools:
-  # Read the source under review.
+  # Read the source under review (workdir-local, staged by setup.sh).
   filesystem:
     read:
-      - "/repo"
+      - "/tmp/aegis-demo-03/repo"
     # No broad write coverage — the explicit write_grant below is
     # the *only* path that authorizes a write. Per ADR-019,
     # explicit grants take precedence; closed-by-default keeps
@@ -41,9 +41,10 @@ tools:
 
 # Time-bounded write grant. Valid for 1 hour after session start.
 # `duration: PT1H` is the ISO 8601 form aegis-policy parses (per
-# ADR-009 + the F7 extension at #38).
+# ADR-009 + the F7 extension at #38). The review file lives in the
+# demo's workdir-local data dir.
 write_grants:
-  - resource: "/data/review.md"
+  - resource: "/tmp/aegis-demo-03/data/review.md"
     actions: ["write"]
     duration: "PT1H"
 

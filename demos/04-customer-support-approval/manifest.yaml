@@ -24,11 +24,12 @@ identity:
 tools:
   filesystem:
     read:
-      - "/cases"
-    # Broad write coverage to /drafts — narrowed by the explicit
-    # write_grant below with approval_required: true.
+      - "/tmp/aegis-demo-04/cases"
+    # Broad write coverage to the workdir-local drafts dir —
+    # narrowed by the explicit write_grant below with
+    # approval_required: true.
     write:
-      - "/drafts"
+      - "/tmp/aegis-demo-04/drafts"
   network:
     outbound: deny
     inbound: deny
@@ -38,7 +39,7 @@ tools:
 # Allow to RequireApproval, which the mediator routes through
 # the F3 channel (file / TTY / web / signed-API).
 write_grants:
-  - resource: "/drafts/refund-letter.md"
+  - resource: "/tmp/aegis-demo-04/drafts/refund-letter.md"
     actions: ["write"]
     duration: "PT1H"
     approval_required: true

@@ -1,15 +1,16 @@
 # Demo 02 — Read-only research assistant.
 # Per ADR-020 §"Six scenarios" item 2.
 #
-# The agent gets read access to /data plus deny-by-default network.
-# No writes, no exec, no MCP. Every other I/O attempt would land
-# as an F2 Violation.
+# The agent gets read access to the demo's workdir-local data
+# directory plus deny-by-default network. No writes, no exec, no
+# MCP. Every other I/O attempt would land as an F2 Violation.
 #
 # Backend: LiteRT-LM with Gemma 4 E4B (per ADR-020 §"Decision" item 8).
 #
-# Workdir setup (auto-prepared by `make 02-read-only-research`):
-#   /tmp/aegis-demo-02/{model.litertlm, chat_template.sha256.txt}
-#   /data/research-notes.txt
+# The .tape runs from /tmp/aegis-demo-02/, prepared by setup.sh
+# (auto-invoked by `make 02-read-only-research` per the
+# demos/Makefile %/demo.gif rule). Everything the .tape touches is
+# inside the workdir — no `/data/` or other root-of-FS paths.
 
 Output demo.gif
 
@@ -29,8 +30,10 @@ Type "cd /tmp/aegis-demo-02 && rm -f ledger-*.jsonl"
 Enter
 Sleep 600ms
 
-# Show the manifest's read-only posture at a glance.
-Type "grep -A4 'tools:' /root/aegis-node/demos/02-read-only-research/manifest.yaml | head -8"
+# Show the manifest's read-only posture at a glance. The setup.sh
+# symlinked manifest.yaml into the workdir so we can reference it
+# without a $checkout-prefix.
+Type "grep -A4 'tools:' manifest.yaml | head -8"
 Enter
 Sleep 3s
 
@@ -38,13 +41,13 @@ Sleep 3s
 # summary across re-renders.
 Type "aegis run --backend litertlm \"
 Enter
-Type "    --manifest /root/aegis-node/demos/02-read-only-research/manifest.yaml \"
+Type "    --manifest manifest.yaml \"
 Enter
 Type "    --model model.litertlm --chat-template-sidecar chat_template.sha256.txt \"
 Enter
 Type "    --session-id demo-02 \"
 Enter
-Type "    --prompt 'Read /data/research-notes.txt and write a one-paragraph summary of the key findings. Quote one specific number from the source. Do not access any other files.'"
+Type "    --prompt 'Read /tmp/aegis-demo-02/data/research-notes.txt and write a one-paragraph summary of the key findings. Quote one specific number from the source. Do not access any other files.'"
 Enter
 Sleep 25s
 

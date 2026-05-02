@@ -32,22 +32,37 @@ is closed-by-default at the manifest layer.
 ## Run locally
 
 ```bash
-# 1) Pull the cosign-verified Gemma 4 E4B artifact
+make -C demos 02-read-only-research
+```
+
+That's it. The Makefile invokes `setup.sh` which `aegis pull`s the
+cosign-verified Gemma 4 E4B artifact, mkdirs `/tmp/aegis-demo-02/`,
+symlinks the model + chat-template-sidecar in, and writes the
+research-notes sample data the agent reads. Then VHS runs the
+recording. Idempotent — re-running `make` after a successful
+render is a no-op (oras + aegis cache hits, then VHS re-renders).
+
+### What `setup.sh` does (in case you want to do it by hand)
+
+```bash
+# 1) Pull the cosign-verified Gemma 4 E4B artifact (one-time per machine)
 aegis pull \
   ghcr.io/tosin2013/aegis-node-models/gemma-4-e4b-it@sha256:de89d03b650a86410d1c9f48ee2239fdf7d5f8895ad00621e20b9c2ed195f931 \
   --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
   --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
 
-# 2) Stage the demo workdir
-mkdir -p /tmp/aegis-demo-02 /data
-cp ~/.cache/aegis/models/<gemma-4-e4b-blob-sha>/blob.bin \
-   /tmp/aegis-demo-02/model.litertlm
-ln -sf ~/.cache/aegis/models/<gemma-4-e4b-blob-sha>/chat_template.sha256.txt \
-   /tmp/aegis-demo-02/chat_template.sha256.txt
-echo "Q3 2025: revenue $147M, EBITDA $42M, headcount 380." > /data/research-notes.txt
+# 2) Stage the workdir under /tmp (no root-of-FS paths required)
+mkdir -p /tmp/aegis-demo-02/data
+ln -sf ~/.cache/aegis/models/de89d03b650a86410d1c9f48ee2239fdf7d5f8895ad00621e20b9c2ed195f931/blob.bin \
+       /tmp/aegis-demo-02/model.litertlm
+ln -sf ~/.cache/aegis/models/de89d03b650a86410d1c9f48ee2239fdf7d5f8895ad00621e20b9c2ed195f931/chat_template.sha256.txt \
+       /tmp/aegis-demo-02/chat_template.sha256.txt
+ln -sf "$PWD/demos/02-read-only-research/manifest.yaml" \
+       /tmp/aegis-demo-02/manifest.yaml
+echo "Q3 2025: revenue \$147M, EBITDA \$42M, headcount 380. Customer churn 4.2%, NPS 62." > /tmp/aegis-demo-02/data/research-notes.txt
 
 # 3) Render
-make -C demos 02-read-only-research
+cd demos/02-read-only-research && vhs demo.tape
 ```
 
 ## Glibc requirement
