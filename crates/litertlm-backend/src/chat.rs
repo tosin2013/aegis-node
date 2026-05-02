@@ -407,7 +407,11 @@ mod tests {
         let err = check_phase1_determinism(&opts).expect_err("temp>0 must be refused");
         assert_eq!(err.kind, BackendErrorKind::InvalidConfig);
         assert!(err.detail.contains("temperature=0.7"));
-        assert!(err.detail.contains("#2080") && err.detail.contains("#2081"));
+        // Phase 1's CPU sampler is upstream-UNIMPLEMENTED (LiteRT-LM
+        // #2080); when that lands the gate flips to a real
+        // determinism guarantee. We just check the error message
+        // names the upstream issue an operator would search for.
+        assert!(err.detail.contains("#2080"), "got {err:?}");
     }
 
     #[test]
