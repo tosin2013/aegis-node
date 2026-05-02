@@ -1,52 +1,47 @@
 //! `LiteRtLmBackend` — the LiteRT-LM impl of [`aegis_inference_engine::Backend`].
 //!
-//! Per LiteRT-B / [issue #96](https://github.com/tosin2013/aegis-node/issues/96)
-//! and [ADR-023](../../docs/adrs/023-litertlm-as-second-inference-backend.md)
-//! §"Implementation plan" item 2. The trait + chat-time types
-//! ([`InferRequest`], [`ToolCall`], etc.) live in
-//! `aegis-inference-engine` so the runtime trust boundary doesn't
-//! drag LiteRT-LM's C++ surface; this module is the only place that
-//! bridges the two.
+//! Per LiteRT-B / [issue #96](https://github.com/tosin2013/aegis-node/issues/96),
+//! LiteRT-D / [issue #119](https://github.com/tosin2013/aegis-node/issues/119),
+//! and [ADR-023](../../docs/adrs/023-litertlm-as-second-inference-backend.md).
+//! The trait + chat-time types ([`InferRequest`], [`ToolCall`],
+//! etc.) live in `aegis-inference-engine` so the runtime trust
+//! boundary doesn't drag LiteRT-LM's C++ surface; this module is
+//! the only place that bridges the two.
 //!
 //! Scope:
 //!
-//! - Format incoming [`InferRequest`] messages + tools into a flat
-//!   prompt (Phase 1 — see "Conversation API future" below for the
-//!   production-quality path).
-//! - Run the prompt through [`Session::infer`] (LiteRT-A's wrapper).
-//! - Parse `<tool_call>{...}</tool_call>` JSON blocks out of the raw
-//!   output. Same convention modern instruct models emit; reused
-//!   from the llama-backend so audit reasoning doesn't fork.
+//! - Split [`InferRequest::messages`] into the system prompt,
+//!   history messages, and the latest user message that drives the
+//!   turn (see [`split_messages`]).
+//! - Open a [`crate::Conversation`] — the higher-level LiteRT-LM
+//!   chat surface that applies the model's bundled chat template
+//!   and threads `tools_json` through the upstream constrained-
+//!   decoder.
+//! - Send the latest user message via
+//!   `litert_lm_conversation_send_message` and parse the structured
+//!   JSON response into [`InferResponse`] with reasoning + parsed
+//!   tool calls.
 //!
-//! Determinism (per ADR-023 §"Determinism + replay") is wired
-//! through [`SessionOptions::determinism`] — the manifest's
-//! `inference.determinism` block translates to those knobs and the
-//! sampler param chain in [`crate::Session::new`] honors them.
-//! `temperature > 0.0` is **refused at boot** with
-//! [`BackendErrorKind::InvalidConfig`] until upstream's
-//! `LiteRT-LM #2080` / `#2081` GPU sampler-determinism fix lands;
-//! Phase 1 is CPU + greedy only.
+//! Pre-LiteRT-D, this module used a flat-prompt path through
+//! [`crate::Session::infer`] that bypassed Gemma 4's chat template
+//! entirely; the model emitted empty output. Switching to the
+//! Conversation API closes that gap.
 //!
-//! ## Conversation API future
-//!
-//! Upstream offers a higher-level Conversation API
-//! (`litert_lm_conversation_send_message` with structured
-//! tools_json + messages_json + constrained-decoding) that yields
-//! pre-parsed tool calls. The flat-prompt path here is a placeholder:
-//! it works for any text-in/text-out instruct model but doesn't
-//! exploit Gemma 4's grammar-constrained tool-call decoder. Once
-//! LiteRT-C ships a real Gemma 4 fixture and we have a runnable
-//! smoke test, swap [`infer`] over to the Conversation API in a
-//! follow-up — see the issue tracker.
+//! Determinism (per ADR-023 §"Determinism + replay") is still wired
+//! through [`SessionOptions::determinism`]; `temperature > 0.0` is
+//! refused at boot. The actual byte-determinism guarantee is
+//! upstream-blocked on LiteRT-LM #2080 (CPU sampler) — the gate
+//! here documents intent and keeps cross-backend manifest
+//! declaration consistent.
 
 use std::path::Path;
 
 use aegis_inference_engine::{
-    Backend as RuntimeBackend, BackendError, BackendErrorKind, InferRequest, InferResponse,
-    LoadedModel, ToolCall, ToolDecl,
+    Backend as RuntimeBackend, BackendError, BackendErrorKind, ChatRole, InferRequest,
+    InferResponse, LoadedModel, ToolCall, ToolDecl,
 };
 
-use crate::{Engine, LiteRtError, Session, SessionOptions};
+use crate::{Conversation, Engine, LiteRtError, SessionOptions};
 
 /// LiteRT-LM implementation of [`aegis_inference_engine::Backend`].
 /// Wraps the LiteRT-A safe-wrapper crate and produces
@@ -116,12 +111,232 @@ impl std::fmt::Debug for LiteRtLmLoadedModel {
 
 impl LoadedModel for LiteRtLmLoadedModel {
     fn infer(&mut self, request: InferRequest) -> Result<InferResponse, BackendError> {
-        let prompt = format_chat_prompt(&request)?;
+        // Per LiteRT-D (#119): use the Conversation API so the
+        // model's bundled chat template applies and the upstream
+        // constrained-decoder produces structured tool calls. The
+        // earlier flat-prompt path elicited empty output from
+        // Gemma 4 because it bypassed Gemma's specific turn-marker
+        // tokens.
 
-        let mut session = Session::new(&self.engine, self.options.clone()).map_err(map_err)?;
-        let raw = session.infer(&prompt).map_err(map_err)?;
-        Ok(parse_response(&raw))
+        let (system_message, history_messages, latest_user) = split_messages(&request)?;
+        let history_json = serialize_history(history_messages)?;
+        let tools_json = if request.tools.is_empty() {
+            None
+        } else {
+            Some(serialize_tools(&request.tools)?)
+        };
+
+        let mut conv = Conversation::open(
+            &self.engine,
+            self.options.clone(),
+            system_message.as_deref(),
+            tools_json.as_deref(),
+            history_json.as_deref(),
+        )
+        .map_err(map_err)?;
+
+        // The new user message goes through send_message — that's
+        // the LiteRT-LM convention vs. embedding it in
+        // messages_json. Wrap as a JSON object the C ABI accepts.
+        let message_json = serde_json::json!({
+            "role": "user",
+            "content": latest_user,
+        })
+        .to_string();
+        let response = conv.send_message(&message_json, None).map_err(map_err)?;
+        let raw_json = response.as_str().map_err(map_err)?;
+        parse_conversation_response(raw_json)
     }
+}
+
+/// Split [`InferRequest::messages`] into:
+/// 1. the optional **system** prompt (LiteRT-LM takes this
+///    separately from the conversation messages),
+/// 2. **history** messages — every assistant/user/tool message
+///    *except* the most recent user message,
+/// 3. the **latest user message** content (sent via send_message).
+///
+/// Returns an [`BackendErrorKind::InvalidConfig`] if there's no
+/// user message to send (an inference call with only a system
+/// turn is malformed for the LiteRT-LM Conversation API).
+fn split_messages(
+    request: &InferRequest,
+) -> Result<
+    (
+        Option<String>,
+        &[aegis_inference_engine::ChatMessage],
+        String,
+    ),
+    BackendError,
+> {
+    let mut system_message: Option<String> = None;
+    let mut start_idx = 0;
+    if let Some(first) = request.messages.first() {
+        if matches!(first.role, ChatRole::System) {
+            system_message = Some(first.content.clone());
+            start_idx = 1;
+        }
+    }
+
+    let body = &request.messages[start_idx..];
+    let last_user_idx = body
+        .iter()
+        .rposition(|m| matches!(m.role, ChatRole::User))
+        .ok_or_else(|| {
+            BackendError::new(
+                BackendErrorKind::InvalidConfig,
+                "InferRequest has no user message — Conversation API needs at least one to send",
+            )
+        })?;
+
+    let latest_user = body[last_user_idx].content.clone();
+    let history = &body[..last_user_idx];
+    Ok((system_message, history, latest_user))
+}
+
+/// Serialize history messages into the JSON-array shape LiteRT-LM's
+/// Conversation API expects. Returns `None` when the history is
+/// empty (the C ABI accepts a NULL `messages_json` for fresh
+/// conversations).
+fn serialize_history(
+    history: &[aegis_inference_engine::ChatMessage],
+) -> Result<Option<String>, BackendError> {
+    if history.is_empty() {
+        return Ok(None);
+    }
+    let arr: Vec<serde_json::Value> = history
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "role": m.role.as_str(),
+                "content": m.content,
+            })
+        })
+        .collect();
+    serde_json::to_string(&arr).map(Some).map_err(|e| {
+        BackendError::new(
+            BackendErrorKind::Tokenization,
+            format!("serialize message history: {e}"),
+        )
+    })
+}
+
+/// Parse the JSON response LiteRT-LM's Conversation API returns
+/// into an [`InferResponse`].
+///
+/// Upstream's exact shape isn't documented in `c/engine.h`. Empirical
+/// observation (verified inside the docker rendering container)
+/// shows LiteRT-LM emits an OpenAI-compatible object:
+///
+/// ```json
+/// {
+///   "role": "assistant",
+///   "content": "free-text reasoning + final message",
+///   "tool_calls": [
+///     {
+///       "id": "call_0",
+///       "type": "function",
+///       "function": {
+///         "name": "filesystem__read",
+///         "arguments": "{\"path\": \"/data/x.txt\"}"
+///       }
+///     }
+///   ]
+/// }
+/// ```
+///
+/// `tool_calls[].function.arguments` is a stringified JSON object
+/// (per the OpenAI convention). This parser handles both stringified
+/// and pre-parsed argument shapes — Gemma 4's exact format may vary
+/// across upstream versions, and the parser stays tolerant.
+pub(crate) fn parse_conversation_response(raw_json: &str) -> Result<InferResponse, BackendError> {
+    let v: serde_json::Value = serde_json::from_str(raw_json).map_err(|e| {
+        BackendError::new(
+            BackendErrorKind::Inference,
+            format!("conversation response is not valid JSON: {e}; raw={raw_json:?}"),
+        )
+    })?;
+
+    let content = v
+        .get("content")
+        .and_then(|c| c.as_str())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+    if let Some(calls) = v.get("tool_calls").and_then(|c| c.as_array()) {
+        for call in calls {
+            // Two shapes accepted: OpenAI-nested (`function.name` +
+            // `function.arguments`) and flat (`name` + `arguments`
+            // directly on the call). Pick whichever is present.
+            let (name, arguments_value) = if let Some(func) = call.get("function") {
+                let name = func
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| {
+                        BackendError::new(
+                            BackendErrorKind::Inference,
+                            format!("tool_call.function missing `name`: {call}"),
+                        )
+                    })?
+                    .to_string();
+                let args = func
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                (name, args)
+            } else {
+                let name = call
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| {
+                        BackendError::new(
+                            BackendErrorKind::Inference,
+                            format!("tool_call missing `name`: {call}"),
+                        )
+                    })?
+                    .to_string();
+                let args = call
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                (name, args)
+            };
+
+            // OpenAI convention: `arguments` is a stringified JSON
+            // object. If it's a string, re-parse; otherwise pass
+            // through.
+            let arguments = match arguments_value {
+                serde_json::Value::String(s) => {
+                    if s.is_empty() {
+                        serde_json::Value::Object(Default::default())
+                    } else {
+                        serde_json::from_str(&s).map_err(|e| {
+                            BackendError::new(
+                                BackendErrorKind::Inference,
+                                format!("tool_call arguments is not valid JSON: {e}; raw={s:?}"),
+                            )
+                        })?
+                    }
+                }
+                other => other,
+            };
+
+            tool_calls.push(ToolCall { name, arguments });
+        }
+    }
+
+    let assistant_text = if content.is_empty() {
+        None
+    } else {
+        Some(content.clone())
+    };
+
+    Ok(InferResponse {
+        reasoning: content,
+        tool_calls,
+        assistant_text,
+    })
 }
 
 /// Refuse a [`SessionOptions`] that would activate the seed-aware
@@ -161,48 +376,6 @@ fn check_phase1_determinism(options: &SessionOptions) -> Result<(), BackendError
     Ok(())
 }
 
-/// Format `request.messages` + `request.tools` into a flat prompt
-/// the model can consume. Phase 1 placeholder — the production path
-/// uses upstream's Conversation API (see module docstring).
-///
-/// Format mirrors a generic instruct-model layout:
-///
-/// ```text
-/// <available_tools>
-/// [tool catalog as JSON]
-/// </available_tools>
-///
-/// system: <system prompt>
-/// user: <user message>
-/// tool: <tool result>
-/// ...
-/// assistant:
-/// ```
-///
-/// Modern instruct models trained on tool-call data understand this
-/// shape well enough for Phase 1 demonstrations. The Gemma 4 family
-/// in particular emits structured `<tool_call>{...}</tool_call>`
-/// blocks the [`parse_response`] helper below extracts.
-fn format_chat_prompt(request: &InferRequest) -> Result<String, BackendError> {
-    let mut out = String::new();
-
-    if !request.tools.is_empty() {
-        let tools_json = serialize_tools(&request.tools)?;
-        out.push_str("<available_tools>\n");
-        out.push_str(&tools_json);
-        out.push_str("\n</available_tools>\n\n");
-    }
-
-    for m in &request.messages {
-        out.push_str(m.role.as_str());
-        out.push_str(": ");
-        out.push_str(&m.content);
-        out.push('\n');
-    }
-    out.push_str("assistant: ");
-    Ok(out)
-}
-
 /// Serialize a tool catalog into the OpenAI-compatible tools JSON
 /// shape (mirroring llama-backend's serializer so audit reasoning
 /// stays unified).
@@ -228,86 +401,6 @@ fn serialize_tools(tools: &[ToolDecl]) -> Result<String, BackendError> {
     })
 }
 
-/// Parse the model's raw output into reasoning / tool calls /
-/// assistant text. Tool calls are extracted from
-/// `<tool_call>{...}</tool_call>` JSON blocks (the convention modern
-/// instruct-with-tools models emit). Anything outside those blocks
-/// is treated as the assistant's reasoning + final message.
-///
-/// Same shape as the llama-backend parser (intentionally) — once we
-/// switch to the Conversation API the parser becomes redundant
-/// (constrained decoding upstream produces structured tool_calls
-/// directly), but the flat-prompt path needs it now.
-pub(crate) fn parse_response(raw: &str) -> InferResponse {
-    const OPEN: &str = "<tool_call>";
-    const CLOSE: &str = "</tool_call>";
-
-    let mut reasoning = String::new();
-    let mut tool_calls = Vec::new();
-    let mut cursor = 0;
-
-    while let Some(start) = raw[cursor..].find(OPEN) {
-        let abs_start = cursor + start;
-        reasoning.push_str(&raw[cursor..abs_start]);
-
-        let body_start = abs_start + OPEN.len();
-        let Some(close_rel) = raw[body_start..].find(CLOSE) else {
-            // Unterminated `<tool_call>` — treat the rest as plain
-            // text. The next turn's request can show the model the
-            // problem.
-            reasoning.push_str(&raw[abs_start..]);
-            cursor = raw.len();
-            break;
-        };
-        let body_end = body_start + close_rel;
-        let body = raw[body_start..body_end].trim();
-
-        if let Some(call) = parse_tool_call_body(body) {
-            tool_calls.push(call);
-        } else {
-            // Malformed JSON — keep the original block in reasoning
-            // verbatim so downstream debugging can see what the model
-            // emitted.
-            reasoning.push_str(&raw[abs_start..body_end + CLOSE.len()]);
-        }
-
-        cursor = body_end + CLOSE.len();
-    }
-    // Trailing text after the last `</tool_call>` is reasoning.
-    reasoning.push_str(&raw[cursor..]);
-
-    let reasoning = reasoning.trim().to_string();
-    let assistant_text = if reasoning.is_empty() {
-        None
-    } else {
-        Some(reasoning.clone())
-    };
-    InferResponse {
-        reasoning,
-        tool_calls,
-        assistant_text,
-    }
-}
-
-/// Parse a `<tool_call>...</tool_call>` body into a [`ToolCall`].
-/// Strict serde_json: the Conversation API's structured output (and
-/// constrained-decoded Gemma 4 output) is well-formed JSON. If a
-/// future model emits the doubled-brace Qwen quirk, surface that as
-/// a separate fallback then; today's pin doesn't need it.
-fn parse_tool_call_body(body: &str) -> Option<ToolCall> {
-    #[derive(serde::Deserialize)]
-    struct Wire {
-        name: String,
-        #[serde(default)]
-        arguments: serde_json::Value,
-    }
-    let wire: Wire = serde_json::from_str(body).ok()?;
-    Some(ToolCall {
-        name: wire.name,
-        arguments: wire.arguments,
-    })
-}
-
 /// Map a [`LiteRtError`] into the runtime-facing
 /// [`BackendError`] discriminant.
 fn map_err(e: LiteRtError) -> BackendError {
@@ -318,13 +411,17 @@ fn map_err(e: LiteRtError) -> BackendError {
         LiteRtError::EngineCreationFailed { .. } => {
             (BackendErrorKind::ModelLoadFailed, e.to_string())
         }
-        LiteRtError::EngineSettingsAllocFailed | LiteRtError::SessionConfigAllocFailed => {
+        LiteRtError::EngineSettingsAllocFailed
+        | LiteRtError::SessionConfigAllocFailed
+        | LiteRtError::ConversationConfigAllocFailed => {
             (BackendErrorKind::SessionInitFailed, e.to_string())
         }
-        LiteRtError::SessionInitFailed => (BackendErrorKind::SessionInitFailed, e.to_string()),
-        LiteRtError::InferenceFailed | LiteRtError::NoCandidates => {
-            (BackendErrorKind::Inference, e.to_string())
+        LiteRtError::SessionInitFailed | LiteRtError::ConversationCreateFailed => {
+            (BackendErrorKind::SessionInitFailed, e.to_string())
         }
+        LiteRtError::InferenceFailed
+        | LiteRtError::NoCandidates
+        | LiteRtError::ConversationSendFailed => (BackendErrorKind::Inference, e.to_string()),
         LiteRtError::InvalidUtf8(_) => (BackendErrorKind::InvalidUtf8, e.to_string()),
         LiteRtError::InteriorNul(_) => (BackendErrorKind::InvalidConfig, e.to_string()),
         LiteRtError::InvalidConfig(s) => (BackendErrorKind::InvalidConfig, (*s).to_string()),
@@ -339,19 +436,9 @@ mod tests {
     use aegis_inference_engine::{ChatMessage, ChatRole};
 
     #[test]
-    fn parse_response_extracts_single_tool_call() {
-        let raw = r#"Let me think.<tool_call>{"name":"filesystem__read","arguments":{"path":"/etc/passwd"}}</tool_call>"#;
-        let resp = parse_response(raw);
-        assert_eq!(resp.tool_calls.len(), 1);
-        assert_eq!(resp.tool_calls[0].name, "filesystem__read");
-        assert_eq!(resp.tool_calls[0].arguments["path"], "/etc/passwd");
-        assert_eq!(resp.reasoning, "Let me think.");
-    }
-
-    #[test]
-    fn parse_response_handles_pure_text_response() {
-        let raw = "The capital of France is Paris.";
-        let resp = parse_response(raw);
+    fn parse_conversation_response_pure_text() {
+        let raw = r#"{"role":"assistant","content":"The capital of France is Paris."}"#;
+        let resp = parse_conversation_response(raw).unwrap();
         assert_eq!(resp.tool_calls.len(), 0);
         assert_eq!(resp.reasoning, "The capital of France is Paris.");
         assert_eq!(
@@ -361,29 +448,110 @@ mod tests {
     }
 
     #[test]
-    fn parse_response_handles_multiple_tool_calls() {
-        let raw = r#"<tool_call>{"name":"a","arguments":{"x":1}}</tool_call>middle<tool_call>{"name":"b","arguments":{"y":2}}</tool_call>"#;
-        let resp = parse_response(raw);
+    fn parse_conversation_response_openai_nested_tool_call() {
+        // OpenAI-compatible: tool_calls[].function.{name,arguments}
+        // with arguments as a stringified JSON object (the upstream
+        // convention LiteRT-LM follows).
+        let raw = r#"{
+          "role":"assistant",
+          "content":"Let me read it.",
+          "tool_calls":[
+            {"id":"call_0","type":"function",
+             "function":{"name":"filesystem__read",
+                         "arguments":"{\"path\":\"/etc/passwd\"}"}}
+          ]
+        }"#;
+        let resp = parse_conversation_response(raw).unwrap();
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].name, "filesystem__read");
+        assert_eq!(resp.tool_calls[0].arguments["path"], "/etc/passwd");
+        assert_eq!(resp.reasoning, "Let me read it.");
+    }
+
+    #[test]
+    fn parse_conversation_response_flat_tool_call() {
+        // Tolerance for a flatter shape some upstream variants emit:
+        // tool_calls[].{name,arguments} directly (arguments
+        // pre-parsed as an object).
+        let raw = r#"{
+          "content":"",
+          "tool_calls":[
+            {"name":"filesystem__read","arguments":{"path":"/data/x.txt"}}
+          ]
+        }"#;
+        let resp = parse_conversation_response(raw).unwrap();
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].name, "filesystem__read");
+        assert_eq!(resp.tool_calls[0].arguments["path"], "/data/x.txt");
+        assert_eq!(resp.reasoning, "");
+        assert_eq!(resp.assistant_text, None);
+    }
+
+    #[test]
+    fn parse_conversation_response_multiple_tool_calls() {
+        let raw = r#"{
+          "content":"step",
+          "tool_calls":[
+            {"function":{"name":"a","arguments":"{}"}},
+            {"function":{"name":"b","arguments":"{\"x\":1}"}}
+          ]
+        }"#;
+        let resp = parse_conversation_response(raw).unwrap();
         assert_eq!(resp.tool_calls.len(), 2);
         assert_eq!(resp.tool_calls[0].name, "a");
         assert_eq!(resp.tool_calls[1].name, "b");
-        assert_eq!(resp.reasoning, "middle");
+        assert_eq!(resp.tool_calls[1].arguments["x"], 1);
     }
 
     #[test]
-    fn parse_response_unterminated_tool_call_falls_back_to_reasoning() {
-        let raw = r#"text <tool_call>{"name":"oops"}"#;
-        let resp = parse_response(raw);
-        assert_eq!(resp.tool_calls.len(), 0);
-        assert!(resp.reasoning.contains("<tool_call>"));
+    fn parse_conversation_response_invalid_json_returns_typed_error() {
+        let err = parse_conversation_response("not json at all").expect_err("malformed");
+        assert_eq!(err.kind, BackendErrorKind::Inference);
+        assert!(err.detail.contains("not valid JSON"));
     }
 
     #[test]
-    fn parse_response_malformed_json_kept_as_reasoning() {
-        let raw = r#"<tool_call>not json</tool_call>"#;
-        let resp = parse_response(raw);
-        assert_eq!(resp.tool_calls.len(), 0);
-        assert!(resp.reasoning.contains("not json"));
+    fn split_messages_extracts_system_history_and_latest_user() {
+        let req = InferRequest {
+            messages: vec![
+                ChatMessage {
+                    role: ChatRole::System,
+                    content: "sys".to_string(),
+                },
+                ChatMessage {
+                    role: ChatRole::User,
+                    content: "u1".to_string(),
+                },
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    content: "a1".to_string(),
+                },
+                ChatMessage {
+                    role: ChatRole::User,
+                    content: "u2".to_string(),
+                },
+            ],
+            tools: vec![],
+        };
+        let (system, history, latest) = split_messages(&req).unwrap();
+        assert_eq!(system.as_deref(), Some("sys"));
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].content, "u1");
+        assert_eq!(history[1].content, "a1");
+        assert_eq!(latest, "u2");
+    }
+
+    #[test]
+    fn split_messages_refuses_request_with_no_user_turn() {
+        let req = InferRequest {
+            messages: vec![ChatMessage {
+                role: ChatRole::System,
+                content: "sys-only".to_string(),
+            }],
+            tools: vec![],
+        };
+        let err = split_messages(&req).expect_err("no user turn");
+        assert_eq!(err.kind, BackendErrorKind::InvalidConfig);
     }
 
     #[test]
@@ -415,44 +583,17 @@ mod tests {
     }
 
     #[test]
-    fn format_chat_prompt_includes_messages_and_tool_catalog() {
-        let request = InferRequest {
-            messages: vec![
-                ChatMessage {
-                    role: ChatRole::System,
-                    content: "You are helpful.".to_string(),
-                },
-                ChatMessage {
-                    role: ChatRole::User,
-                    content: "Read /etc/passwd".to_string(),
-                },
-            ],
-            tools: vec![ToolDecl {
-                name: "filesystem__read".to_string(),
-                description: "Read a file".to_string(),
-                arguments_schema: serde_json::json!({"type": "object"}),
-            }],
-        };
-        let prompt = format_chat_prompt(&request).unwrap();
-        assert!(prompt.contains("<available_tools>"));
-        assert!(prompt.contains("filesystem__read"));
-        assert!(prompt.contains("system: You are helpful."));
-        assert!(prompt.contains("user: Read /etc/passwd"));
-        assert!(prompt.ends_with("assistant: "));
-    }
-
-    #[test]
-    fn format_chat_prompt_skips_tool_block_when_no_tools() {
-        let request = InferRequest {
-            messages: vec![ChatMessage {
-                role: ChatRole::User,
-                content: "Hi".to_string(),
-            }],
-            tools: vec![],
-        };
-        let prompt = format_chat_prompt(&request).unwrap();
-        assert!(!prompt.contains("<available_tools>"));
-        assert!(prompt.contains("user: Hi"));
+    fn serialize_tools_emits_openai_compatible_array() {
+        let tools = vec![ToolDecl {
+            name: "filesystem__read".to_string(),
+            description: "Read a file".to_string(),
+            arguments_schema: serde_json::json!({"type": "object"}),
+        }];
+        let json = serialize_tools(&tools).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["type"], "function");
+        assert_eq!(parsed[0]["function"]["name"], "filesystem__read");
+        assert_eq!(parsed[0]["function"]["description"], "Read a file");
     }
 
     #[test]
