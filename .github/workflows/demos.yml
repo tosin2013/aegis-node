@@ -12,12 +12,19 @@ name: Demos snapshot contract
 #     rendering falls back to non-deterministic baked sampler params;
 #     no stable SHA contract is possible. Tracked in #119.
 #
-# Hermeticity: runs inside ghcr.io/<owner>/aegis-node-demo-renderer
-# (built by demos-renderer-publish.yml). The renderer image pins
-# vhs, chrome, ttyd, ffmpeg, fonts-firacode, rust, go — every input
-# the GIF SHA depends on. Without the hermetic image, the same
-# `aegis run` would produce a different GIF on a stock GH Actions
-# runner due to font / chrome / vhs version drift.
+# Hermeticity: builds demos/Dockerfile inline (no GHCR pull
+# dependency — the Dockerfile being tested is the one in this PR).
+# The image pins vhs, chrome, ttyd, ffmpeg, fonts-firacode, rust, go
+# — every input the GIF SHA depends on. Without it, the same `aegis
+# run` would produce a different GIF on a stock GH Actions runner
+# due to font / chrome / vhs version drift.
+#
+# Two-phase design:
+#   1. `build-renderer` — build demos/Dockerfile once, save as a
+#      tarball artifact. ~5 min cold; cached layers via gha cache
+#      bring re-runs to ~30s.
+#   2. `snapshot` (matrix) — download the tarball, docker load, run
+#      the demo, assert SHA. Each matrix item runs in parallel.
 #
 # Failure UX: when a contributor changes a demo's source (manifest /
 # prompt / tape), the SHA check fails with a clear "re-render and
@@ -33,18 +40,56 @@ on:
 
 permissions:
   contents: read
-  packages: read
-
-env:
-  # Pin to :latest. The image's content is locked by the Dockerfile
-  # in the same commit (demos-renderer-publish.yml republishes on
-  # Dockerfile changes). For tighter pinning, switch to the
-  # :sha-<dockerfile-content> tag once a baseline image is published.
-  RENDERER_IMAGE: ghcr.io/${{ github.repository_owner }}/aegis-node-demo-renderer:latest
 
 jobs:
+  build-renderer:
+    name: Build demo renderer image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute content-addressed tag
+        id: tag
+        run: |
+          set -euo pipefail
+          # Hash the Dockerfile so the cache invalidates iff the
+          # build inputs (pinned versions, apt packages) change.
+          dockerfile_sha=$(sha256sum demos/Dockerfile | awk '{print $1}')
+          short=${dockerfile_sha:0:12}
+          echo "tag=aegis-demo-renderer:sha-${short}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build renderer image
+        uses: docker/build-push-action@v6
+        with:
+          context: demos
+          file: demos/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ steps.tag.outputs.tag }}
+          cache-from: type=gha,scope=demos-renderer
+          cache-to: type=gha,scope=demos-renderer,mode=max
+
+      - name: Save renderer image as artifact
+        run: |
+          set -euo pipefail
+          docker save '${{ steps.tag.outputs.tag }}' | gzip -1 > /tmp/renderer.tar.gz
+          ls -lh /tmp/renderer.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demos-renderer-image
+          path: /tmp/renderer.tar.gz
+          retention-days: 1
+
   snapshot:
     name: ${{ matrix.demo }}
+    needs: build-renderer
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -53,71 +98,64 @@ jobs:
           - 01-mcp-sandboxed-twice
           - 05-tampered-model-halts
           - 06-egress-containment
-    container:
-      image: ghcr.io/${{ github.repository_owner }}/aegis-node-demo-renderer:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-      # Mount the workspace at /root/aegis-node/ for parity with the
-      # path the demos were originally rendered against. (We dropped
-      # the /root/aegis-node hardcode from the .tape files in the same
-      # PR that added these workflows; this mount is now a convenience
-      # for contributors who shell into the renderer image manually.)
-      options: --workdir /root/aegis-node
-      volumes:
-        - ${{ github.workspace }}:/root/aegis-node
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache cargo registry + target
+      - uses: actions/download-artifact@v4
+        with:
+          name: demos-renderer-image
+          path: /tmp
+
+      - name: Load renderer image
+        id: load
+        run: |
+          set -euo pipefail
+          docker load < /tmp/renderer.tar.gz
+          docker image ls | head -5
+          echo "tag=${{ needs.build-renderer.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          # Key on Cargo.lock so the cache invalidates on dep updates;
-          # restore-keys give us partial hits on unrelated changes.
+            ~/.cargo-shared/registry
+            ~/.cargo-shared/git
           key: ${{ runner.os }}-demos-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-demos-cargo-
 
-      - name: Build aegis CLI (--features llama)
+      - name: Render ${{ matrix.demo }} inside the renderer image
         run: |
           set -euo pipefail
-          cd /root/aegis-node
-          # The renderer image already has the rust toolchain pinned.
-          # Build the llama-featured release binary; the demos exercise
-          # the llama backend, not litertlm.
-          cargo build --release -p aegis-cli --features llama
-          # Hand-place the binary on PATH for the Makefile's check-tools.
-          install -m 0755 target/release/aegis /usr/local/bin/aegis
-          aegis --help | head -3
-
-      - name: Render ${{ matrix.demo }}
-        env:
-          # cosign keyless verify needs network egress to Sigstore;
-          # fine on GH Actions runners.
-          COSIGN_EXPERIMENTAL: "1"
-        run: |
-          set -euo pipefail
-          cd /root/aegis-node/demos
-          # Render to a side-by-side path so the committed GIF stays
-          # untouched on disk for the diff step. We override the
-          # `Output demo.gif` line in-place by post-processing — vhs
-          # writes wherever the .tape says, so we copy the committed
-          # GIF out first, run the render (which overwrites), then
-          # diff.
           DEMO='${{ matrix.demo }}'
-          GIF="${DEMO}/demo.gif"
-          cp "$GIF" "/tmp/${DEMO}.expected.gif"
-          # Force re-render even though demo.gif exists.
-          make -B "$DEMO"
-          mv "$GIF" "/tmp/${DEMO}.actual.gif"
-          # Restore the committed GIF so subsequent inspection (e.g.
-          # `git status` from a `git diff`-using step) shows a clean
+          mkdir -p ~/.cargo-shared/registry ~/.cargo-shared/git
+          # Save the committed GIF before re-rendering, so we can
+          # diff it against the freshly-rendered one.
+          cp "demos/${DEMO}/demo.gif" "/tmp/${DEMO}.expected.gif"
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/root/aegis-node \
+            -v "$HOME/.cargo-shared/registry":/root/.cargo/registry \
+            -v "$HOME/.cargo-shared/git":/root/.cargo/git \
+            -w /root/aegis-node \
+            '${{ steps.load.outputs.tag }}' \
+            /bin/bash -ce '
+              set -euo pipefail
+              # Build aegis CLI (--features llama). The renderer image
+              # has rust 1.95.0 pinned.
+              cargo build --release -p aegis-cli --features llama
+              install -m 0755 target/release/aegis /usr/local/bin/aegis
+              aegis --help | head -3
+              # Force re-render the demo via the Makefile (setup.sh
+              # auto-runs per the %/demo.gif rule).
+              cd demos
+              make -B "'"${DEMO}"'"
+            '
+
+          mv "demos/${DEMO}/demo.gif" "/tmp/${DEMO}.actual.gif"
+          # Restore the committed GIF so subsequent steps see a clean
           # tree.
-          cp "/tmp/${DEMO}.expected.gif" "$GIF"
+          cp "/tmp/${DEMO}.expected.gif" "demos/${DEMO}/demo.gif"
 
       - name: Assert SHA-256 matches committed GIF
         run: |
