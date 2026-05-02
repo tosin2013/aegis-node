@@ -1,0 +1,1 @@
+Use exec__run to call git with arguments ['diff', '--stat', 'HEAD~1', 'HEAD'] from the /repo directory. Then write a one-paragraph code review to /data/review.md using filesystem__write.

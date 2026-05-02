@@ -1,0 +1,1 @@
+Read /data/research-notes.txt and write a one-paragraph summary of the key findings. Quote one specific number from the source. Do not access any other files.

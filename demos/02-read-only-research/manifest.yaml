@@ -1,0 +1,42 @@
+# Demo 02 — Read-only research assistant.
+# Per ADR-020 §"Six scenarios" item 2.
+#
+# Canonical "agent reads docs, cannot write" narrative. The agent
+# is granted read access to /data plus deny-by-default network.
+# No write_grants, no exec_grants, no MCP servers — every mutating
+# action gets refused at the manifest layer.
+#
+# Per ADR-020 §"Decision item 8" the demo runs against
+# Gemma 4 E4B via the LiteRT-LM backend (per ADR-023). The
+# bigger-model summary is the user-visible payoff; the security
+# story is that the bigger model + MORE capability surface still
+# fits inside an explicit closed-by-default manifest.
+
+schemaVersion: "1"
+agent:
+  name: "research-readonly"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/research-readonly/inst-001"
+tools:
+  # Read-only access to /data — that's where the research notes
+  # live. The agent has no other I/O surface.
+  filesystem:
+    read:
+      - "/data"
+  # Deny-by-default outbound. Catches any attempt at exfiltration
+  # via F6 NetworkAttestation at session shutdown.
+  network:
+    outbound: deny
+    inbound: deny
+
+# REQUIRED for demos (per ADR-020 §"Decision" item 5): pinned seed
+# + temperature 0 → byte-identical model output across renders so
+# `make all && git status` stays clean.
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

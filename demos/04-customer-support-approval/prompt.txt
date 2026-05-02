@@ -1,0 +1,1 @@
+Read /cases/case-1024.txt to understand the customer's complaint. Then use filesystem__write to save a one-paragraph refund-letter draft to /drafts/refund-letter.md.
