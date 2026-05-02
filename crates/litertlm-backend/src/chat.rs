@@ -126,12 +126,20 @@ impl LoadedModel for LiteRtLmLoadedModel {
             Some(serialize_tools(&request.tools)?)
         };
 
+        // Constrained decoding is OFF by default — upstream's FST
+        // enforcer SIGSEGVs on Gemma 4
+        // (google-ai-edge/LiteRT-LM#2149). The chat.rs response
+        // parser tolerates the non-constrained shape; tool-call
+        // well-formedness becomes a model-quality concern rather
+        // than a runtime guarantee until upstream's constraint
+        // provider fix lands.
         let mut conv = Conversation::open(
             &self.engine,
             self.options.clone(),
             system_message.as_deref(),
             tools_json.as_deref(),
             history_json.as_deref(),
+            /* enable_constrained_decoding */ false,
         )
         .map_err(map_err)?;
 
@@ -322,6 +330,18 @@ pub(crate) fn parse_conversation_response(raw_json: &str) -> Result<InferRespons
                 other => other,
             };
 
+            // Strip Gemma 4's chat-template quote tokens from string
+            // leaves. The constrained decoder (currently disabled
+            // per upstream #2149) would have stripped these
+            // upstream — without it, raw `<|"|>` markers leak into
+            // tool-call argument strings (e.g. a path comes through
+            // as `<|"|>/data/x.txt<|"|>` which the policy then
+            // rejects). Walk the parsed Value and strip both
+            // sequences from every string leaf. Tracked: when the
+            // constrained decoder ships and we re-enable it, this
+            // pass becomes a no-op but doesn't hurt.
+            let arguments = strip_gemma_quote_tokens(arguments);
+
             tool_calls.push(ToolCall { name, arguments });
         }
     }
@@ -399,6 +419,41 @@ fn serialize_tools(tools: &[ToolDecl]) -> Result<String, BackendError> {
             format!("serialize tool catalog: {e}"),
         )
     })
+}
+
+/// Walk a [`serde_json::Value`] and strip Gemma 4's
+/// chat-template quote-marker tokens (`<|"|>`) from every string
+/// leaf. These leak into tool-call argument strings when
+/// constrained decoding is disabled (as it currently is — upstream
+/// `libGemmaModelConstraintProvider.so` SIGSEGVs per
+/// google-ai-edge/LiteRT-LM#2149). Recursively descends into
+/// arrays + objects so nested args (e.g. a `paths` array) get the
+/// same treatment.
+///
+/// Becomes a structural no-op once upstream's constraint provider
+/// is fixed and the `enable_constrained_decoding` flag in
+/// [`LiteRtLmLoadedModel::infer`] flips back to `true` — keeping
+/// it in place defensively costs O(n) per response (cheap; the
+/// JSON is small).
+fn strip_gemma_quote_tokens(v: serde_json::Value) -> serde_json::Value {
+    const OPEN: &str = "<|\"|>";
+    const CLOSE: &str = "<|\"|>";
+    match v {
+        serde_json::Value::String(s) => {
+            serde_json::Value::String(s.replace(OPEN, "").replace(CLOSE, ""))
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(strip_gemma_quote_tokens).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let stripped: serde_json::Map<_, _> = map
+                .into_iter()
+                .map(|(k, v)| (k, strip_gemma_quote_tokens(v)))
+                .collect();
+            serde_json::Value::Object(stripped)
+        }
+        other => other,
+    }
 }
 
 /// Map a [`LiteRtError`] into the runtime-facing

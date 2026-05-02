@@ -21,10 +21,10 @@ path is a one-line edit (flip `decision` in the approval file).
 | t | Frame | Note |
 |---|---|---|
 | 0–4s | `grep write_grants` showing `approval_required: true` | The grant exists; approval still required |
-| 4–6s | `echo > approval.json` pre-stages the human decision | F3 file channel: `{decision: approved, approver, reason}` |
+| 4–6s | `echo > approval.json` pre-stages the human decision | F3 file channel: `{decision: granted, approver, reason}` |
 | 6–24s | `aegis run --backend litertlm --prompt "..."` runs Gemma 4 E2B | Read + RequireApproval + approval decision + write — ~18s |
 | 24–28s | `grep accessType.:.read` shows F4 read entry | The case file the agent grounded its draft in |
-| 28–32s | `grep approval` shows F3 approval entry | `entryType: approval`, `decision: approved`, `approver: alice@org` |
+| 28–32s | `grep approval` shows F3 approval entry | `entryType: approval`, `decision: granted`, `approver: alice@org` |
 | 32–37s | `grep accessType.:.write` shows F2 + F7 write entry | Post-approval write to `/drafts/refund-letter.md` |
 
 ## Run locally
@@ -58,13 +58,13 @@ The F3 file channel reads a JSON document the operator hand-edits
 
 ```json
 {
-  "decision": "approved",
+  "decision": "granted",
   "approver": "alice@org",
   "reason": "verified case; refund within policy"
 }
 ```
 
-`decision` may be `"approved"` or `"rejected"`. The approval
+`decision` may be `"granted"` or `"rejected"`. The approval
 entry that lands in the ledger carries the decision verbatim plus
 the approver/reason for the audit trail.
 

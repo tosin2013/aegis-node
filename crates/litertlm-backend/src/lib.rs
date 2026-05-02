@@ -579,11 +579,28 @@ impl Drop for Session<'_> {
 ///
 /// # Constrained decoding
 ///
-/// `Conversation::open` enables upstream's constrained decoder
-/// unconditionally — the Gemma 4 family relies on it for tool-call
-/// well-formedness, and it's the default LiteRT-LM advertises. A
-/// future option to disable it (for non-tool-call use cases) lands
-/// when needed.
+/// [`Conversation::open`] takes an `enable_constrained_decoding`
+/// flag. The flag activates upstream's FST-based grammar enforcer
+/// (which is what makes Gemma 4's tool-call output well-formed
+/// JSON). Currently **SIGSEGVs in `libGemmaModelConstraintProvider.so`**
+/// on Gemma 4 — captured backtrace:
+///
+/// ```text
+/// #0 fst_constraints::Constraint::start()    [constraint provider .so]
+/// #1 litert::lm::FstConstraint::Start()      [constraint provider .so]
+/// #2 std::generate_n in ConstrainedDecoder ctor
+/// #3 Tasks::DecodeOneStep::DecodeOneStep
+/// ```
+///
+/// Tracked upstream as
+/// [google-ai-edge/LiteRT-LM#2149](https://github.com/google-ai-edge/LiteRT-LM/issues/2149).
+/// The `LiteRtLmBackend` defaults the flag to `false` so the
+/// runtime works today; tool-call quality is then governed by the
+/// model's own training rather than runtime constraint
+/// enforcement. The chat.rs response parser already tolerates the
+/// non-constrained shape (free-text-around-tool_calls). Once
+/// upstream fixes the constraint provider, flipping the default to
+/// `true` is a one-line change.
 pub struct Conversation<'e> {
     /// Owned conversation handle. Non-null for the entire lifetime
     /// of the `Conversation`; released by `Drop`.
@@ -618,6 +635,7 @@ impl<'e> Conversation<'e> {
         system_message: Option<&str>,
         tools_json: Option<&str>,
         messages_json: Option<&str>,
+        enable_constrained_decoding: bool,
     ) -> Result<Self, LiteRtError> {
         if options.max_tokens == 0 {
             return Err(LiteRtError::InvalidConfig("max_tokens must be > 0"));
@@ -669,8 +687,13 @@ impl<'e> Conversation<'e> {
         // SAFETY-INVARIANT: `engine.handle` is non-null (Engine
         // invariant). `session_cfg` is the valid pointer above; the
         // C ABI is documented as accepting NULL for the optional
-        // string args. enable_constrained_decoding is `true` per
-        // the Conversation docstring above.
+        // string args. The `enable_constrained_decoding` flag is
+        // caller-controlled — `true` activates upstream's FST-based
+        // grammar enforcer (currently SIGSEGVs in
+        // `libGemmaModelConstraintProvider.so::Constraint::start()`
+        // on Gemma 4 per upstream
+        // https://github.com/google-ai-edge/LiteRT-LM/issues/2149,
+        // so callers default to `false` until that lands).
         let conv_cfg_raw = unsafe {
             sys::litert_lm_conversation_config_create(
                 engine.handle.as_ptr(),
@@ -678,7 +701,7 @@ impl<'e> Conversation<'e> {
                 system_ptr,
                 tools_ptr,
                 messages_ptr,
-                true,
+                enable_constrained_decoding,
             )
         };
         let conv_cfg =
