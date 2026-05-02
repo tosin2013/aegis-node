@@ -408,6 +408,72 @@ workflow + the first publish run; LiteRT-A's wrapper effort
 The amendment is purely a build-supply-chain change — the runtime
 contract the rest of the ADR commits to is unchanged.
 
+## Update — 2026-05-02: Fork-as-insurance for upstream-broken paths (LiteRT-D, [#119](https://github.com/tosin2013/aegis-node/issues/119))
+
+PR #121 (LiteRT-D-A/B) landed the Conversation API integration and
+proved that LiteRT-LM v0.10.2's CPU decode path is upstream-broken
+on Gemma 4: **prefill succeeds**, then `RunDecodeAsync` segfaults
+on E4B / hangs silently on E2B
+([upstream issue #2149](https://github.com/google-ai-edge/LiteRT-LM/issues/2149)).
+Combined with the still-open CPU sampler bug
+([upstream #2080](https://github.com/google-ai-edge/LiteRT-LM/issues/2080)
+/ PR #2081), this means **Demo 2/3/4 GIF rendering is blocked
+upstream** and Google's `CONTRIBUTING.md` explicitly refuses
+external PRs ("the LiteRT-LM repository is not currently ready for
+code contributions").
+
+### Posture
+
+- **Issue route is open**, PR route is closed — file all findings
+  via issues. We did this for the decode bug (#2149) and will
+  cross-comment any future findings.
+- **Apache-2.0 license** permits fork + redistribute of patched
+  binaries via our `models-publish.yml`-style pipeline.
+- **`tosin2013/LiteRT-LM` is the operator-side fork**, branched
+  off upstream's tags. Patches against `aegis/v0.10.2-base` carry
+  Aegis-side workarounds for upstream-broken paths until upstream
+  fixes them. Each patched tag is built into the OCI runtime
+  artifact via the publish workflow's `upstream_owner` /
+  `upstream_repo` inputs.
+- **Default behavior is unchanged.** When the workflow dispatches
+  with `upstream_owner=google-ai-edge` (the default), the build
+  is byte-equivalent to the pre-fork pipeline. The fork path is
+  opt-in per dispatch.
+
+### `litertlm-runtime-publish.yml` change
+
+Two new inputs, both with upstream defaults so existing dispatches
+behave identically:
+
+```yaml
+upstream_owner: { default: "google-ai-edge" }   # override to "tosin2013" for fork builds
+upstream_repo:  { default: "LiteRT-LM" }
+upstream_tag:   #  accepts v<semver> | v<semver>-rc.N | aegis/<branch>
+```
+
+The `aegis/<branch>` shape is the contract for fork branches —
+both the validator and the manifest annotations
+(`org.opencontainers.image.source`,
+`dev.aegis-node.upstream.repo`) record the actual source so an
+auditor pulling an artifact built from a fork can tell at a
+glance which one signed it.
+
+### When we'd dispatch from the fork
+
+Only when an upstream-broken path needs an Aegis-side patch and
+upstream hasn't fixed it. Today's gap inventory (per #119):
+
+- **CPU decode crash on Gemma 4** ([upstream #2149](https://github.com/google-ai-edge/LiteRT-LM/issues/2149)) — blocks
+  Demo 2/3/4 rendering. If we patch this in the fork, dispatch
+  the workflow with `upstream_owner=tosin2013 upstream_tag=aegis/...`.
+- **CPU sampler UNIMPLEMENTED** ([upstream #2080](https://github.com/google-ai-edge/LiteRT-LM/issues/2080)) — already
+  worked around at the Aegis layer (kTypeUnspecified emit in
+  `crates/litertlm-backend/src/lib.rs::build_sampler_params`).
+
+When upstream fixes either, the workflow flips back to
+`upstream_owner=google-ai-edge` on the next dispatch and the
+fork's patch becomes obsolete.
+
 ## Related
 
 - [ADR-014 CPU-First GGUF Inference via llama.cpp](014-cpu-first-gguf-inference-via-llama-cpp.md) —
