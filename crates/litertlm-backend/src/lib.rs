@@ -196,74 +196,47 @@ impl Default for SessionOptions {
     }
 }
 
-/// Sampler choice fed to LiteRT-LM. Phase 1 is **CPU + greedy** per
-/// ADR-023; the other variants are exposed for parity with the C ABI's
-/// `Type` enum and will activate when upstream's GPU sampler-determinism
-/// fix lands.
-///
-/// The mapping `[`DeterminismKnobs`] → `Sampler`] is performed by
-/// [`pick_sampler`] and reflects the current
-/// `LiteRtLmSamplerParams` surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Sampler {
-    /// argmax — fully deterministic regardless of seed.
-    Greedy,
-    /// top-k probabilistic sampling (seed-aware).
-    TopK,
-    /// top-p / nucleus probabilistic sampling (seed-aware).
-    TopP,
-}
-
-impl Sampler {
-    fn as_c_type(self) -> sys::Type {
-        match self {
-            Sampler::Greedy => sys::Type_kGreedy,
-            Sampler::TopK => sys::Type_kTopK,
-            Sampler::TopP => sys::Type_kTopP,
-        }
-    }
-}
-
-/// Reduce a [`DeterminismKnobs`] block to a single C-ABI sampler
-/// choice.
-///
-/// LiteRT-LM's `LiteRtLmSamplerParams` selects exactly one sampler
-/// stage (unlike llama.cpp's chained samplers). We therefore project
-/// the knobs onto the closest single stage:
-///
-/// - `temperature = Some(0.0)` (or unset) → [`Sampler::Greedy`]
-/// - `top_p` set → [`Sampler::TopP`]
-/// - `top_k` set → [`Sampler::TopK`]
-/// - else → [`Sampler::Greedy`] (Phase 1 default).
-///
-/// `top_p` wins ties against `top_k` because the upstream sampler
-/// applies top-k first internally when both are set; exposing both
-/// would require a cascaded API LiteRT-LM doesn't currently offer.
-fn pick_sampler(knobs: &DeterminismKnobs) -> Sampler {
-    let temp = knobs.temperature.unwrap_or(0.0);
-    if temp <= 0.0 {
-        return Sampler::Greedy;
-    }
-    if knobs.top_p.is_some_and(|p| p < 1.0) {
-        return Sampler::TopP;
-    }
-    if knobs.top_k.is_some_and(|k| k > 0) {
-        return Sampler::TopK;
-    }
-    Sampler::Greedy
-}
+// `Sampler` enum + `pick_sampler` were the original C-ABI sampler
+// projection. Removed because LiteRT-LM v0.10.2's CPU executor
+// returns UNIMPLEMENTED for every named sampler type (1, 2, 3),
+// leaving `kTypeUnspecified` (0) — "use the model's baked default"
+// — as the only working CPU choice. Restore both when upstream's
+// CPU sampler ships (LiteRT-LM #2080 / PR #2081); the
+// `DeterminismKnobs` → `Sampler` projection logic is the natural
+// shape we'll want once the fix is in.
 
 /// Build a `LiteRtLmSamplerParams` from the determinism knobs.
+///
+/// **Sampler upstream gap:** LiteRT-LM v0.10.2's CPU executor
+/// returns `UNIMPLEMENTED` for `kGreedy` (type 3), `kTopK`
+/// (type 1), and `kTopP` (type 2) — empirically verified via
+/// `engine.cc:445` "Sampler type: N not implemented yet". The
+/// only CPU-implemented option in this release is
+/// `kTypeUnspecified` (0), which falls back to the model's
+/// default sampler baked into the `.litertlm` flatbuffer's
+/// `LlmMetadata.sampler_params`. For Gemma 4 the default is
+/// top-k=64 / top-p=0.95 / temperature=1.0 (per upstream's
+/// model card), which is NOT byte-deterministic — but Phase 1
+/// gets us a working session the demo recordings can iterate
+/// against.
+///
+/// Determinism is therefore deferred until upstream lands a
+/// CPU sampler (LiteRT-LM #2080 / PR #2081 — the same fix that
+/// unblocks GPU determinism). When that lands, this function
+/// flips back to emitting `Type_kGreedy` directly and the
+/// per-demo seed/temperature contract holds again.
+///
+/// The `seed` field is still emitted from the manifest knob
+/// even though kTypeUnspecified ignores it — keeps the manifest
+/// round-trip stable and makes the ledger entry's recorded
+/// seed-vs-output correspondence trivial to update once
+/// upstream's CPU sampler ships.
 fn build_sampler_params(knobs: &DeterminismKnobs) -> sys::LiteRtLmSamplerParams {
-    let sampler = pick_sampler(knobs);
     sys::LiteRtLmSamplerParams {
-        type_: sampler.as_c_type(),
+        type_: sys::Type_kTypeUnspecified,
         top_k: knobs.top_k.map(|k| k as i32).unwrap_or(0),
         top_p: knobs.top_p.unwrap_or(1.0),
         temperature: knobs.temperature.unwrap_or(0.0),
-        // LiteRtLmSamplerParams.seed is i32; manifest seeds are u32.
-        // Truncate via wrapping cast — auditors run with seed=42 in
-        // practice (per ADR-020), well within the i32 positive range.
         seed: knobs.seed.unwrap_or(0) as i32,
     }
 }
@@ -652,65 +625,23 @@ mod tests {
         assert!(err.to_string().contains("not found or unreadable"));
     }
 
-    #[test]
-    fn pick_sampler_default_knobs_picks_greedy() {
-        assert_eq!(pick_sampler(&DeterminismKnobs::default()), Sampler::Greedy);
-    }
+    // pick_sampler tests removed alongside the function — see the
+    // "// `Sampler` enum + `pick_sampler` were the original C-ABI
+    // sampler projection..." comment above the function for the
+    // restoration plan. The DeterminismKnobs round-trip from the
+    // manifest is still tested below.
 
     #[test]
-    fn pick_sampler_temp_zero_picks_greedy_even_with_top_p() {
-        let knobs = DeterminismKnobs {
-            seed: Some(42),
-            temperature: Some(0.0),
-            top_p: Some(0.9),
-            top_k: Some(40),
-            repeat_penalty: None,
-        };
-        assert_eq!(pick_sampler(&knobs), Sampler::Greedy);
-    }
-
-    #[test]
-    fn pick_sampler_warm_temp_with_top_p_picks_top_p() {
-        let knobs = DeterminismKnobs {
-            seed: Some(42),
-            temperature: Some(0.7),
-            top_p: Some(0.9),
-            top_k: Some(40),
-            repeat_penalty: None,
-        };
-        assert_eq!(pick_sampler(&knobs), Sampler::TopP);
-    }
-
-    #[test]
-    fn pick_sampler_warm_temp_with_only_top_k_picks_top_k() {
-        let knobs = DeterminismKnobs {
-            seed: Some(42),
-            temperature: Some(0.7),
-            top_p: None,
-            top_k: Some(40),
-            repeat_penalty: None,
-        };
-        assert_eq!(pick_sampler(&knobs), Sampler::TopK);
-    }
-
-    #[test]
-    fn pick_sampler_warm_temp_no_filters_picks_greedy_phase1_default() {
-        let knobs = DeterminismKnobs {
-            seed: Some(42),
-            temperature: Some(0.7),
-            top_p: None,
-            top_k: None,
-            repeat_penalty: None,
-        };
-        assert_eq!(pick_sampler(&knobs), Sampler::Greedy);
-    }
-
-    #[test]
-    fn build_sampler_params_default_is_greedy_temp0_seed0() {
+    fn build_sampler_params_default_emits_k_type_unspecified() {
+        // Per the build_sampler_params docstring: LiteRT-LM v0.10.2's
+        // CPU executor returns UNIMPLEMENTED for kGreedy (3), kTopK
+        // (1), and kTopP (2) — only kTypeUnspecified (0) is
+        // implemented on CPU, and that means "use the default sampler
+        // baked into the .litertlm flatbuffer." When upstream wires
+        // kGreedy on CPU (LiteRT-LM #2080 / #2081), this test flips
+        // back to expecting Type_kGreedy.
         let params = build_sampler_params(&DeterminismKnobs::default());
-        // The C-ABI enum value comparison is intentional — we want
-        // future bindgen output to keep `Type_kGreedy` stable.
-        assert_eq!(params.type_, sys::Type_kGreedy);
+        assert_eq!(params.type_, sys::Type_kTypeUnspecified);
         assert_eq!(params.temperature, 0.0);
         assert_eq!(params.top_p, 1.0);
         assert_eq!(params.top_k, 0);

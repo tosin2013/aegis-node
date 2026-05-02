@@ -81,6 +81,15 @@ impl RuntimeBackend for LiteRtLmBackend {
         // lands (LiteRT-LM #2080 / PR #2081).
         check_phase1_determinism(&self.options)?;
 
+        // Surface upstream INFO+ logs to stderr if AEGIS_LITERTLM_DEBUG
+        // is set — the LiteRT-LM C ABI returns NULL on session-create
+        // failure without a structured reason, and the upstream log
+        // line is the only signal an operator can act on. Off by
+        // default to keep the demo recordings noise-free.
+        if std::env::var_os("AEGIS_LITERTLM_DEBUG").is_some() {
+            crate::set_min_log_level(0);
+        }
+
         let engine = Engine::load(model_path).map_err(map_err)?;
         Ok(Box::new(LiteRtLmLoadedModel {
             engine,
@@ -116,22 +125,36 @@ impl LoadedModel for LiteRtLmLoadedModel {
 }
 
 /// Refuse a [`SessionOptions`] that would activate the seed-aware
-/// random sampler. Phase 1 is CPU + greedy only — see
-/// [ADR-023](../../docs/adrs/023-litertlm-as-second-inference-backend.md)
-/// §"Determinism + replay" and the LiteRT-B acceptance criterion.
+/// random sampler. Phase 1 manifests are required to declare
+/// `temperature: 0.0` even though the underlying determinism
+/// guarantee is broken upstream — see the **honesty note** below.
 ///
 /// The boot-time refusal is the same posture llama-backend uses for
 /// invalid configurations (typed error, never a runtime surprise).
+///
+/// ## Honesty note (Phase 1 caveat)
+///
+/// LiteRT-LM v0.10.2's CPU executor returns `UNIMPLEMENTED` for
+/// every named sampler type (`kGreedy`/`kTopK`/`kTopP`) —
+/// empirically `engine.cc:445 "Sampler type: N not implemented yet"`.
+/// We work around this by emitting `kTypeUnspecified` (the model's
+/// default baked into the `.litertlm` flatbuffer); the consequence
+/// is that the manifest's `temperature=0.0` declaration is
+/// **aspirational** on CPU until upstream's CPU sampler lands
+/// (LiteRT-LM #2080 / PR #2081). The gate here documents intent and
+/// keeps the manifest schema honest; the actual byte-determinism
+/// promise depends on the upstream fix.
 fn check_phase1_determinism(options: &SessionOptions) -> Result<(), BackendError> {
     let temp = options.determinism.temperature.unwrap_or(0.0);
     if temp > 0.0 {
         return Err(BackendError::new(
             BackendErrorKind::InvalidConfig,
             format!(
-                "litertlm backend Phase 1 (per ADR-023) requires temperature=0.0 (greedy); got temperature={temp}. \
-                 Probabilistic sampling is gated on upstream LiteRT-LM #2080 (CPU sampler determinism) \
-                 and PR #2081 (GPU sampler determinism); both must land before warm-temperature \
-                 sampling is unblocked. Set inference.determinism.temperature: 0.0 in the manifest."
+                "litertlm backend Phase 1 (per ADR-023) requires temperature=0.0; got temperature={temp}. \
+                 Note: the CPU sampler is upstream-UNIMPLEMENTED in v0.10.2 (LiteRT-LM #2080), so the \
+                 actual byte-determinism guarantee depends on that fix landing — but the gate here keeps \
+                 manifest declaration consistent across backends. Set inference.determinism.temperature: 0.0 \
+                 in the manifest."
             ),
         ));
     }
@@ -384,7 +407,11 @@ mod tests {
         let err = check_phase1_determinism(&opts).expect_err("temp>0 must be refused");
         assert_eq!(err.kind, BackendErrorKind::InvalidConfig);
         assert!(err.detail.contains("temperature=0.7"));
-        assert!(err.detail.contains("#2080") && err.detail.contains("#2081"));
+        // Phase 1's CPU sampler is upstream-UNIMPLEMENTED (LiteRT-LM
+        // #2080); when that lands the gate flips to a real
+        // determinism guarantee. We just check the error message
+        // names the upstream issue an operator would search for.
+        assert!(err.detail.contains("#2080"), "got {err:?}");
     }
 
     #[test]
