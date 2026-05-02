@@ -26,19 +26,23 @@ Type "# Aegis-Node demo: Read-only research assistant"
 Enter
 Sleep 1.2s
 
+Type "echo '## STEP 1: prepare the workdir (clean any prior ledger)'"
+Enter
+Sleep 600ms
 Type "cd /tmp/aegis-demo-02 && rm -f ledger-*.jsonl"
 Enter
 Sleep 600ms
 
-# Show the manifest's read-only posture at a glance. The setup.sh
-# symlinked manifest.yaml into the workdir so we can reference it
-# without a $checkout-prefix.
+Type "echo '## STEP 2: show the manifests read-only posture (no writes, no exec, no network)'"
+Enter
+Sleep 600ms
 Type "grep -A4 'tools:' manifest.yaml | head -8"
 Enter
 Sleep 3s
 
-# Run the agent. Gemma 4 E4B at greedy temperature → deterministic
-# summary across re-renders.
+Type "echo '## STEP 3: run the agent — Gemma 4 E4B reads the file and summarizes (model output below)'"
+Enter
+Sleep 600ms
 Type "aegis run --backend litertlm \"
 Enter
 Type "    --manifest manifest.yaml \"
@@ -51,7 +55,10 @@ Type "    --prompt 'Read /tmp/aegis-demo-02/data/research-notes.txt and write a 
 Enter
 Sleep 25s
 
-# Surface the F-features the demo exercised:
+Type "echo '## STEP 4: inspect the ledger — F4 Access + F6 NetworkAttestation'"
+Enter
+Sleep 600ms
+
 Type "echo && echo '--- F4 Access entries (what the agent read) ---'"
 Enter
 Sleep 600ms
@@ -66,7 +73,7 @@ Type "grep network_attestation ledger-demo-02.jsonl | jq -c '{accessType, totalC
 Enter
 Sleep 4s
 
-Type "echo && echo '--- F9 Tamper-evident chain ---'"
+Type "echo '## STEP 5: verify F9 — the hash-chained ledger is tamper-evident'"
 Enter
 Sleep 600ms
 Type "aegis verify ledger-demo-02.jsonl"

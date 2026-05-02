@@ -39,24 +39,20 @@ chain.
 ## Run locally
 
 ```bash
-# 1) Pull the cosign-verified Qwen artifact (one-time per machine)
-aegis pull \
-  ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37 \
-  --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
-  --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
-
-# 2) Stage the demo workdir
-mkdir -p /tmp/aegis-demo-06
-cp ~/.cache/aegis/models/c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37/blob.bin \
-   /tmp/aegis-demo-06/model.gguf
-
-# 3) Render
 make -C demos 06-egress-containment
 ```
 
-The Makefile's `check-tools` step verifies `vhs` and a llama-featured
-`aegis` are on PATH before running. If either is missing, follow
-[demos/README.md](../README.md) §"Running locally."
+That single command runs `setup.sh` (one-time-per-machine model
+pull, then no-op) and renders the demo. Prerequisites: `aegis` CLI
+built with `--features llama`, plus `oras` and `cosign`.
+
+### What `setup.sh` does
+
+1. `aegis pull` the cosign-verified Qwen 2.5 1.5B Q4_K_M GGUF (cached
+   at `~/.cache/aegis/models/c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37/`).
+2. Symlink the model + chat-template sidecar + `manifest.yaml` into
+   `/tmp/aegis-demo-06/` (the manifest symlink lets `demo.tape` use
+   a workdir-local path with no checkout-prefix dependency).
 
 ## Reproducibility
 

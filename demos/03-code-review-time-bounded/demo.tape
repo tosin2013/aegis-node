@@ -27,12 +27,16 @@ Type "# Aegis-Node demo: Code review with time-bounded write grant"
 Enter
 Sleep 1.2s
 
+Type "echo '## STEP 1: prepare the workdir (clean any prior ledger and review)'"
+Enter
+Sleep 600ms
 Type "cd /tmp/aegis-demo-03 && rm -f ledger-*.jsonl data/review.md"
 Enter
 Sleep 600ms
 
-# Show the time-bounded write_grant + the exec_grant. The setup.sh
-# symlinked manifest.yaml into the workdir.
+Type "echo '## STEP 2: show the F7 time-bounded write_grant + the exec_grant for git'"
+Enter
+Sleep 600ms
 Type "grep -A3 'write_grants:' manifest.yaml"
 Enter
 Sleep 3s
@@ -40,10 +44,9 @@ Type "grep -A2 'exec_grants:' manifest.yaml"
 Enter
 Sleep 2s
 
-# Run the agent. Gemma 4 E4B writes the review directly — Gemma 4
-# emits one tool-call per turn, so the prompt embeds the review
-# text and asks for a single filesystem__write to fire the F7
-# time-bounded write_grant.
+Type "echo '## STEP 3: run the agent — Gemma 4 E4B writes the review via filesystem__write (model output below)'"
+Enter
+Sleep 600ms
 Type "aegis run --backend litertlm \"
 Enter
 Type "    --manifest manifest.yaml \"
@@ -56,7 +59,10 @@ Type "    --prompt 'Write a short positive code review to /tmp/aegis-demo-03/dat
 Enter
 Sleep 28s
 
-# Surface the F-features the demo exercised:
+Type "echo '## STEP 4: inspect the ledger — F7 write within window + F4 access trail'"
+Enter
+Sleep 600ms
+
 Type "echo && echo '--- F7 Time-bounded write (review.md, within 1h window) ---'"
 Enter
 Sleep 600ms
@@ -71,7 +77,7 @@ Type "grep entryType.:.access ledger-demo-03.jsonl | jq -c '{accessType, resourc
 Enter
 Sleep 4s
 
-Type "echo && echo '--- F9 Tamper-evident chain ---'"
+Type "echo '## STEP 5: verify F9 — the hash-chained ledger is tamper-evident'"
 Enter
 Sleep 600ms
 Type "aegis verify ledger-demo-03.jsonl"

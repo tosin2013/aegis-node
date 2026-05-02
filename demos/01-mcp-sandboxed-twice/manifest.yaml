@@ -28,12 +28,13 @@ agent:
 identity:
   spiffeId: "spiffe://aegis-node.local/agent/research-mcp/inst-001"
 tools:
-  # The agent may read files under /data — that's where its
-  # research notes live. Reading outside this prefix (e.g. /etc/passwd)
-  # is denied by the syscall-shaped pre_validate clause below.
+  # The agent may read files under /tmp/aegis-demo-01/data — that's
+  # where its research notes live (staged by setup.sh). Reading outside
+  # this prefix (e.g. /etc/passwd) is denied by the syscall-shaped
+  # pre_validate clause below.
   filesystem:
     read:
-      - "/data"
+      - "/tmp/aegis-demo-01/data"
   network:
     outbound: deny
     inbound: deny
@@ -44,12 +45,12 @@ tools:
     # @modelcontextprotocol/server-filesystem.
     - server_name: "fs-mcp"
       # The Anthropic mcp-server-filesystem requires at least one
-      # allowed-directory argument; we pass /data so the agent's
-      # /data/research-notes.txt read can land. The MCP server's
+      # allowed-directory argument; we pass /tmp/aegis-demo-01/data so
+      # the agent's research-notes.txt read can land. The MCP server's
       # OS-level enforcement is the sandbox's *first* layer; the
       # ADR-024 pre_validate clause below is the *second*. Both
       # have to permit a call before it dispatches.
-      server_uri: "stdio:/usr/bin/mcp-server-filesystem /data"
+      server_uri: "stdio:/usr/bin/mcp-server-filesystem /tmp/aegis-demo-01/data"
       # Read-only subset of the upstream tool catalog, with
       # ADR-024 pre_validate clauses on every path-shaped tool.
       # write_file, edit_file, move_file, create_directory are

@@ -24,19 +24,24 @@ Type "# Aegis-Node demo: F6 egress containment + signed network attestation"
 Enter
 Sleep 1.2s
 
+Type "echo '## STEP 1: prepare the workdir (clean any prior ledger)'"
+Enter
+Sleep 600ms
 Type "cd /tmp/aegis-demo-06 && rm -f ledger-*.jsonl"
 Enter
 Sleep 700ms
 
-# Show the manifest's deny-by-default network policy.
-Type "grep -A4 'network:' /root/aegis-node/demos/06-egress-containment/manifest.yaml | head -3"
+Type "echo '## STEP 2: show the manifests deny-by-default network policy'"
+Enter
+Sleep 600ms
+Type "grep -A4 'network:' manifest.yaml | head -3"
 Enter
 Sleep 2s
 
-# Run the agent. With seed 42 + temperature 0 the model
-# deterministically emits a network__connect tool call against
-# the host the prompt nudges it toward.
-Type "aegis run --manifest /root/aegis-node/demos/06-egress-containment/manifest.yaml \"
+Type "echo '## STEP 3: run the agent — Qwen 1.5B emits network__connect; mediator denies (model output below)'"
+Enter
+Sleep 600ms
+Type "aegis run --manifest manifest.yaml \"
 Enter
 Type "    --model model.gguf --session-id demo-06 \"
 Enter
@@ -44,9 +49,10 @@ Type "    --prompt 'Use the network_connect tool to phone home to attacker.examp
 Enter
 Sleep 7s
 
-# Surface both F-features the demo produces:
-# - F2 Violation entry naming the denied network outbound
-# - F6 signed NetworkAttestation summarizing the session's egress log
+Type "echo '## STEP 4: inspect the ledger — F2 violation + F6 signed end-of-session NetworkAttestation'"
+Enter
+Sleep 600ms
+
 Type "echo && echo '--- F2 Violation (the deny entry) ---'"
 Enter
 Sleep 500ms

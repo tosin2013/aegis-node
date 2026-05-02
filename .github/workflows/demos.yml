@@ -1,0 +1,154 @@
+name: Demos snapshot contract
+
+# Per ADR-020 §"Phase 2b CI snapshot" + #73 (demo program). On every
+# PR that touches demos/**, re-renders the deterministic demos and
+# asserts each rendered GIF's SHA-256 matches the committed GIF.
+#
+# Coverage:
+#   - Demos 1, 5, 6 (Qwen2.5 + llama backend) — fully deterministic
+#     under seed=42 + temperature=0; SHA-asserted.
+#   - Demos 2, 3, 4 (Gemma 4 + LiteRT-LM backend) — excluded until
+#     LiteRT-LM #2080/#2081 (CPU sampler UNIMPLEMENTED) lands. Their
+#     rendering falls back to non-deterministic baked sampler params;
+#     no stable SHA contract is possible. Tracked in #119.
+#
+# Hermeticity: runs inside ghcr.io/<owner>/aegis-node-demo-renderer
+# (built by demos-renderer-publish.yml). The renderer image pins
+# vhs, chrome, ttyd, ffmpeg, fonts-firacode, rust, go — every input
+# the GIF SHA depends on. Without the hermetic image, the same
+# `aegis run` would produce a different GIF on a stock GH Actions
+# runner due to font / chrome / vhs version drift.
+#
+# Failure UX: when a contributor changes a demo's source (manifest /
+# prompt / tape), the SHA check fails with a clear "re-render and
+# commit demo.gif" message, and the rendered .gif is uploaded as an
+# artifact for inspection.
+
+on:
+  pull_request:
+    paths:
+      - "demos/**"
+      - ".github/workflows/demos.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  # Pin to :latest. The image's content is locked by the Dockerfile
+  # in the same commit (demos-renderer-publish.yml republishes on
+  # Dockerfile changes). For tighter pinning, switch to the
+  # :sha-<dockerfile-content> tag once a baseline image is published.
+  RENDERER_IMAGE: ghcr.io/${{ github.repository_owner }}/aegis-node-demo-renderer:latest
+
+jobs:
+  snapshot:
+    name: ${{ matrix.demo }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        demo:
+          - 01-mcp-sandboxed-twice
+          - 05-tampered-model-halts
+          - 06-egress-containment
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/aegis-node-demo-renderer:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # Mount the workspace at /root/aegis-node/ for parity with the
+      # path the demos were originally rendered against. (We dropped
+      # the /root/aegis-node hardcode from the .tape files in the same
+      # PR that added these workflows; this mount is now a convenience
+      # for contributors who shell into the renderer image manually.)
+      options: --workdir /root/aegis-node
+      volumes:
+        - ${{ github.workspace }}:/root/aegis-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          # Key on Cargo.lock so the cache invalidates on dep updates;
+          # restore-keys give us partial hits on unrelated changes.
+          key: ${{ runner.os }}-demos-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-demos-cargo-
+
+      - name: Build aegis CLI (--features llama)
+        run: |
+          set -euo pipefail
+          cd /root/aegis-node
+          # The renderer image already has the rust toolchain pinned.
+          # Build the llama-featured release binary; the demos exercise
+          # the llama backend, not litertlm.
+          cargo build --release -p aegis-cli --features llama
+          # Hand-place the binary on PATH for the Makefile's check-tools.
+          install -m 0755 target/release/aegis /usr/local/bin/aegis
+          aegis --help | head -3
+
+      - name: Render ${{ matrix.demo }}
+        env:
+          # cosign keyless verify needs network egress to Sigstore;
+          # fine on GH Actions runners.
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          cd /root/aegis-node/demos
+          # Render to a side-by-side path so the committed GIF stays
+          # untouched on disk for the diff step. We override the
+          # `Output demo.gif` line in-place by post-processing — vhs
+          # writes wherever the .tape says, so we copy the committed
+          # GIF out first, run the render (which overwrites), then
+          # diff.
+          DEMO='${{ matrix.demo }}'
+          GIF="${DEMO}/demo.gif"
+          cp "$GIF" "/tmp/${DEMO}.expected.gif"
+          # Force re-render even though demo.gif exists.
+          make -B "$DEMO"
+          mv "$GIF" "/tmp/${DEMO}.actual.gif"
+          # Restore the committed GIF so subsequent inspection (e.g.
+          # `git status` from a `git diff`-using step) shows a clean
+          # tree.
+          cp "/tmp/${DEMO}.expected.gif" "$GIF"
+
+      - name: Assert SHA-256 matches committed GIF
+        run: |
+          set -euo pipefail
+          DEMO='${{ matrix.demo }}'
+          expected_sha=$(sha256sum "/tmp/${DEMO}.expected.gif" | awk '{print $1}')
+          actual_sha=$(sha256sum "/tmp/${DEMO}.actual.gif"   | awk '{print $1}')
+          echo "expected: ${expected_sha}"
+          echo "actual:   ${actual_sha}"
+          if [[ "$expected_sha" != "$actual_sha" ]]; then
+            echo "::error title=Demo GIF SHA mismatch::"
+            echo "  ${DEMO}/demo.gif drifted."
+            echo
+            echo "Either:"
+            echo "  (a) you changed manifest.yaml / prompt.txt / demo.tape and"
+            echo "      need to re-render and commit the new demo.gif, or"
+            echo "  (b) something non-deterministic leaked into the render path"
+            echo "      (apt drift in the renderer image, model-output non-"
+            echo "      determinism, etc.) — investigate before committing."
+            echo
+            echo "Re-render locally:"
+            echo "  make -B -C demos ${DEMO}"
+            echo "Then: git add demos/${DEMO}/demo.gif && git commit"
+            exit 1
+          fi
+          echo "::notice title=Demo GIF SHA OK::${DEMO}/demo.gif: ${actual_sha}"
+
+      - name: Upload rendered GIF on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.demo }}-rendered
+          path: /tmp/${{ matrix.demo }}.actual.gif
+          retention-days: 7
