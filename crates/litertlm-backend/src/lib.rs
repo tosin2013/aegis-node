@@ -97,6 +97,26 @@ pub enum LiteRtError {
     #[error("LiteRT-LM session creation failed (set min_log_level=0 for upstream logs)")]
     SessionInitFailed,
 
+    /// `litert_lm_conversation_config_create` returned NULL.
+    /// Same OOM-like failure as the other `*_config_create`
+    /// branches; surfaced separately so a truncated stack trace
+    /// names the exact phase.
+    #[error("LiteRT-LM conversation config allocation failed (likely OOM)")]
+    ConversationConfigAllocFailed,
+
+    /// `litert_lm_conversation_create` returned NULL.
+    #[error(
+        "LiteRT-LM conversation creation failed (set AEGIS_LITERTLM_DEBUG=1 for upstream logs)"
+    )]
+    ConversationCreateFailed,
+
+    /// `litert_lm_conversation_send_message` returned NULL or its
+    /// `_get_string` accessor returned NULL.
+    #[error(
+        "LiteRT-LM conversation send_message failed (set AEGIS_LITERTLM_DEBUG=1 for upstream logs)"
+    )]
+    ConversationSendFailed,
+
     /// `litert_lm_session_generate_content` returned NULL.
     #[error("LiteRT-LM generate_content failed (set min_log_level=0 for upstream logs)")]
     InferenceFailed,
@@ -534,6 +554,269 @@ impl Drop for Session<'_> {
         // returned by `litert_lm_engine_create_session` and not
         // previously deleted (Drop runs at most once per value).
         unsafe { sys::litert_lm_session_delete(self.handle.as_ptr()) };
+    }
+}
+
+/// A LiteRT-LM Conversation — the **higher-level** chat surface
+/// (vs. [`Session`]'s text-in/text-out path). The Conversation API
+/// applies the model's bundled chat template, threads tools through
+/// the upstream constrained-decoder, and returns structured JSON
+/// responses with pre-parsed tool calls and assistant text.
+///
+/// Per [ADR-023](../../docs/adrs/023-litertlm-as-second-inference-backend.md)
+/// and LiteRT-D ([#119](https://github.com/tosin2013/aegis-node/issues/119)),
+/// this is the production path for Gemma 4. The flat-prompt path
+/// in [`Session::infer`] was a Phase 1 placeholder that doesn't
+/// elicit tool calls from instruct models trained against a
+/// specific chat template.
+///
+/// # Lifetime / threading
+///
+/// `Conversation` borrows `&'e Engine` so the engine must outlive
+/// every conversation derived from it. Same `!Send + !Sync` posture
+/// as [`Session`]: thread-movable handles aren't documented as safe,
+/// concurrent calls explicitly aren't.
+///
+/// # Constrained decoding
+///
+/// `Conversation::open` enables upstream's constrained decoder
+/// unconditionally — the Gemma 4 family relies on it for tool-call
+/// well-formedness, and it's the default LiteRT-LM advertises. A
+/// future option to disable it (for non-tool-call use cases) lands
+/// when needed.
+pub struct Conversation<'e> {
+    /// Owned conversation handle. Non-null for the entire lifetime
+    /// of the `Conversation`; released by `Drop`.
+    handle: NonNull<sys::LiteRtLmConversation>,
+    /// Borrow tying the conversation lifetime to the engine that
+    /// produced it.
+    _engine: std::marker::PhantomData<&'e Engine>,
+    /// `!Send + !Sync` marker (parity with [`Session`]).
+    _not_thread_safe: std::marker::PhantomData<*const ()>,
+}
+
+impl<'e> Conversation<'e> {
+    /// Open a new conversation against `engine`. The session config
+    /// (max_output_tokens, sampler params) is built from `options`
+    /// the same way [`Session::new`] builds it; the conversation
+    /// owns the resulting session-config and conversation-config
+    /// for its lifetime.
+    ///
+    /// `system_message` is the system-role text the model sees
+    /// once at the conversation's start (`None` = no system turn).
+    /// `tools_json` is the OpenAI-compatible tools array as a JSON
+    /// string (`None` or `"[]"` = no tools); the upstream constrained
+    /// decoder uses it to constrain tool-call output to declared
+    /// names + argument shapes.
+    ///
+    /// `messages_json` lets the caller pre-load conversation history
+    /// (an array of `{role, content}` objects). `None` means start
+    /// fresh with just the system turn (if any).
+    pub fn open(
+        engine: &'e Engine,
+        options: SessionOptions,
+        system_message: Option<&str>,
+        tools_json: Option<&str>,
+        messages_json: Option<&str>,
+    ) -> Result<Self, LiteRtError> {
+        if options.max_tokens == 0 {
+            return Err(LiteRtError::InvalidConfig("max_tokens must be > 0"));
+        }
+
+        // Session config: max_output_tokens + sampler. Lifetime
+        // ends with this function — the conversation_config_create
+        // copies what it needs (per the C ABI contract).
+        // SAFETY-INVARIANT: `_create` returns NULL on alloc failure;
+        // checked.
+        let session_cfg_raw = unsafe { sys::litert_lm_session_config_create() };
+        let session_cfg =
+            NonNull::new(session_cfg_raw).ok_or(LiteRtError::SessionConfigAllocFailed)?;
+
+        struct SessionCfgGuard(NonNull<sys::LiteRtLmSessionConfig>);
+        impl Drop for SessionCfgGuard {
+            fn drop(&mut self) {
+                // SAFETY-INVARIANT: matching delete for the create
+                // above; runs at most once.
+                unsafe { sys::litert_lm_session_config_delete(self.0.as_ptr()) };
+            }
+        }
+        let session_cfg_guard = SessionCfgGuard(session_cfg);
+
+        let max_tokens_i = i32::try_from(options.max_tokens).unwrap_or(i32::MAX);
+        // SAFETY-INVARIANT: `session_cfg` is the valid pointer above;
+        // setter copies the value.
+        unsafe {
+            sys::litert_lm_session_config_set_max_output_tokens(session_cfg.as_ptr(), max_tokens_i);
+        }
+        let sampler_params = build_sampler_params(&options.determinism);
+        // SAFETY-INVARIANT: `&sampler_params` is a valid pointer to
+        // a stack value; the setter copies it.
+        unsafe {
+            sys::litert_lm_session_config_set_sampler_params(session_cfg.as_ptr(), &sampler_params);
+        }
+
+        // Convert each optional &str to a CString that lives until
+        // after `_create` returns (the C ABI copies the bytes; we
+        // hold them across the call to be safe).
+        let system_c = optional_cstring(system_message, "system_message")?;
+        let tools_c = optional_cstring(tools_json, "tools_json")?;
+        let messages_c = optional_cstring(messages_json, "messages_json")?;
+
+        let system_ptr = system_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+        let tools_ptr = tools_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+        let messages_ptr = messages_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+
+        // SAFETY-INVARIANT: `engine.handle` is non-null (Engine
+        // invariant). `session_cfg` is the valid pointer above; the
+        // C ABI is documented as accepting NULL for the optional
+        // string args. enable_constrained_decoding is `true` per
+        // the Conversation docstring above.
+        let conv_cfg_raw = unsafe {
+            sys::litert_lm_conversation_config_create(
+                engine.handle.as_ptr(),
+                session_cfg.as_ptr(),
+                system_ptr,
+                tools_ptr,
+                messages_ptr,
+                true,
+            )
+        };
+        let conv_cfg =
+            NonNull::new(conv_cfg_raw).ok_or(LiteRtError::ConversationConfigAllocFailed)?;
+
+        struct ConvCfgGuard(NonNull<sys::LiteRtLmConversationConfig>);
+        impl Drop for ConvCfgGuard {
+            fn drop(&mut self) {
+                // SAFETY-INVARIANT: matching delete for the create.
+                unsafe { sys::litert_lm_conversation_config_delete(self.0.as_ptr()) };
+            }
+        }
+        let conv_cfg_guard = ConvCfgGuard(conv_cfg);
+
+        // SAFETY-INVARIANT: `engine.handle` is non-null; `conv_cfg`
+        // is the valid pointer above; returns NULL on failure.
+        let conv_raw = unsafe {
+            sys::litert_lm_conversation_create(engine.handle.as_ptr(), conv_cfg.as_ptr())
+        };
+        let handle = NonNull::new(conv_raw).ok_or(LiteRtError::ConversationCreateFailed)?;
+
+        // Per the C ABI's "caller owns what they created" contract,
+        // both configs stay owned by their guards and get released
+        // here as we return.
+        drop(conv_cfg_guard);
+        drop(session_cfg_guard);
+        // The CStrings are dropped at function return — the
+        // Conversation has either copied the bytes or doesn't need
+        // them post-create.
+        drop(system_c);
+        drop(tools_c);
+        drop(messages_c);
+
+        Ok(Self {
+            handle,
+            _engine: std::marker::PhantomData,
+            _not_thread_safe: std::marker::PhantomData,
+        })
+    }
+
+    /// Send one message to the conversation and return the model's
+    /// JSON response. Blocks until the model finishes the turn (per
+    /// the C ABI doc: "This is a blocking call").
+    ///
+    /// `message_json` is a JSON object representing the message in
+    /// LiteRT-LM's expected shape — typically:
+    ///
+    /// ```json
+    /// {"role": "user", "content": "..."}
+    /// ```
+    ///
+    /// `extra_context_json` is reserved for upstream's RAG-style
+    /// "extra context" injection; pass `None` for the typical chat
+    /// case.
+    ///
+    /// The returned [`JsonResponse`] owns the response string for
+    /// the duration of the call; copy it out before dropping.
+    pub fn send_message(
+        &mut self,
+        message_json: &str,
+        extra_context_json: Option<&str>,
+    ) -> Result<JsonResponse, LiteRtError> {
+        let message_c = CString::new(message_json).map_err(|e| {
+            LiteRtError::InteriorNul(format!("message_json contains interior NUL: {e}"))
+        })?;
+        let extra_c = optional_cstring(extra_context_json, "extra_context_json")?;
+        let extra_ptr = extra_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+
+        // SAFETY-INVARIANT: `self.handle` is non-null. `message_c`
+        // and (when set) `extra_c` are valid C strings that live
+        // through the call. Returns NULL on failure.
+        let resp_raw = unsafe {
+            sys::litert_lm_conversation_send_message(
+                self.handle.as_ptr(),
+                message_c.as_ptr(),
+                extra_ptr,
+            )
+        };
+        let handle = NonNull::new(resp_raw).ok_or(LiteRtError::ConversationSendFailed)?;
+        Ok(JsonResponse { handle })
+    }
+}
+
+impl Drop for Conversation<'_> {
+    fn drop(&mut self) {
+        // SAFETY-INVARIANT: `self.handle` is non-null; runs at most once.
+        unsafe { sys::litert_lm_conversation_delete(self.handle.as_ptr()) };
+    }
+}
+
+/// A JSON response from [`Conversation::send_message`]. The string
+/// is owned by the upstream library; this wrapper releases it on
+/// `Drop`.
+///
+/// Use [`Self::as_str`] to read the response — the underlying byte
+/// buffer is valid only for the lifetime of this `JsonResponse`.
+pub struct JsonResponse {
+    handle: NonNull<sys::LiteRtLmJsonResponse>,
+}
+
+impl JsonResponse {
+    /// Borrow the response as a `&str`. The slice is valid until
+    /// the `JsonResponse` is dropped.
+    pub fn as_str(&self) -> Result<&str, LiteRtError> {
+        // SAFETY-INVARIANT: `self.handle` is non-null. Returns NULL
+        // (per the C ABI) only when `response` itself is NULL,
+        // which we already excluded; checked anyway.
+        let ptr = unsafe { sys::litert_lm_json_response_get_string(self.handle.as_ptr()) };
+        if ptr.is_null() {
+            return Err(LiteRtError::ConversationSendFailed);
+        }
+        // SAFETY-INVARIANT: the C ABI documents the returned string
+        // as null-terminated and "valid only for the lifetime of
+        // the response object." We bind the borrow to `&self`.
+        let cstr = unsafe { CStr::from_ptr(ptr) };
+        cstr.to_str()
+            .map_err(|e| LiteRtError::InvalidUtf8(e.to_string()))
+    }
+}
+
+impl Drop for JsonResponse {
+    fn drop(&mut self) {
+        // SAFETY-INVARIANT: matching delete for the create; runs at
+        // most once.
+        unsafe { sys::litert_lm_json_response_delete(self.handle.as_ptr()) };
+    }
+}
+
+/// Helper: turn `Option<&str>` into `Option<CString>`, surfacing
+/// interior-NUL errors as a typed `LiteRtError`. The label is
+/// echoed in the error message so the operator knows which arg
+/// was malformed.
+fn optional_cstring(s: Option<&str>, label: &str) -> Result<Option<CString>, LiteRtError> {
+    match s {
+        None => Ok(None),
+        Some(raw) => CString::new(raw)
+            .map(Some)
+            .map_err(|e| LiteRtError::InteriorNul(format!("{label} contains interior NUL: {e}"))),
     }
 }
 
