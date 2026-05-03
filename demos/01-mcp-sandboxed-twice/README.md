@@ -73,31 +73,28 @@ the Aegis side without trusting the upstream server's promises.
 ## Run locally
 
 ```bash
-# 1) Pull the cosign-verified Qwen artifact (one-time per machine)
-aegis pull \
-  ghcr.io/tosin2013/aegis-node-models/qwen2.5-1.5b-instruct-q4_k_m@sha256:c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37 \
-  --keyless-identity '^https://github\.com/tosin2013/aegis-node/\.github/workflows/models-publish\.yml@.*$' \
-  --keyless-oidc-issuer 'https://token.actions.githubusercontent.com'
-
-# 2) Install the upstream MCP filesystem server (Anthropic)
-npm install -g @modelcontextprotocol/server-filesystem
-# Resulting binary: /usr/local/bin/mcp-server-filesystem (npm-global default)
-
-# 3) Stage the demo workdir
-mkdir -p /tmp/aegis-demo-01 /data
-cp ~/.cache/aegis/models/c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37/blob.bin \
-   /tmp/aegis-demo-01/model.gguf
-ln -sf ~/.cache/aegis/models/c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37/chat_template.sha256.txt \
-   /tmp/aegis-demo-01/chat_template.sha256.txt
-echo "research note about quarterly results" > /data/research-notes.txt
-
-# 4) Render
 make -C demos 01-mcp-sandboxed-twice
 ```
 
-The manifest pins the MCP server URI at `/usr/bin/mcp-server-filesystem`;
-adjust to wherever `npm install -g` placed your binary
-(`/usr/local/bin/...` is standard).
+That single command runs `setup.sh` (one-time-per-machine setup, then
+no-op) and renders the demo. Prerequisites: `aegis` CLI built with
+`--features llama`, plus `oras`, `cosign`, and the upstream
+`@modelcontextprotocol/server-filesystem` server reachable as
+`/usr/bin/mcp-server-filesystem` (a symlink the demos/Dockerfile
+provides for CI; install hint: `npm install -g
+@modelcontextprotocol/server-filesystem` then `ln -sf
+/usr/local/bin/mcp-server-filesystem /usr/bin/...`).
+
+### What `setup.sh` does
+
+1. `aegis pull` the cosign-verified Qwen 2.5 1.5B Q4_K_M GGUF (cached
+   at `~/.cache/aegis/models/c7404a910e65596a185e788ede19e09bc017dc3101cd106ba7d65fe1dd7dec37/`).
+2. Symlink the model + chat-template sidecar into
+   `/tmp/aegis-demo-01/`.
+3. Symlink `manifest.yaml` into the workdir so `demo.tape` can use a
+   workdir-local path (no checkout-prefix dependency).
+4. Write the sample `research-notes.txt` into
+   `/tmp/aegis-demo-01/data/`.
 
 ## Reproducibility
 

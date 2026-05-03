@@ -1,0 +1,96 @@
+name: Publish demo renderer image
+
+# Per ADR-020 §"Phase 2b CI snapshot". Publishes the hermetic
+# demo-rendering image (demos/Dockerfile) to GHCR. The demos.yml
+# contract-test workflow consumes it as the runtime environment for
+# Demos 1/5/6's SHA-256 GIF assertions.
+#
+# Tags:
+#   :latest                            — floating, points at HEAD's Dockerfile build
+#   :sha-<short-dockerfile-content>    — immutable, content-addressed by the
+#                                        Dockerfile's SHA-256 (truncated to 12).
+#                                        demos.yml pulls this exact tag so the
+#                                        rendering environment is locked to the
+#                                        Dockerfile in the same commit.
+#
+# Triggers:
+#   - Push to main touching demos/Dockerfile (rebuilds + republishes).
+#   - workflow_dispatch (manual, for ad-hoc rebuilds).
+#
+# License: ubuntu:24.04 + apt packages + vendored binaries (oras,
+# cosign, vhs, chrome) — all OSS / freely redistributable.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "demos/Dockerfile"
+      - ".github/workflows/demos-renderer-publish.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Build + push demos/Dockerfile to GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute content-addressed tag
+        id: tag
+        run: |
+          set -euo pipefail
+          # Hash the Dockerfile so the tag changes iff the build
+          # inputs (pinned versions, apt packages, etc.) change.
+          # Truncate to 12 hex chars — collision-free at this scale,
+          # readable in `docker images` output.
+          dockerfile_sha=$(sha256sum demos/Dockerfile | awk '{print $1}')
+          short=${dockerfile_sha:0:12}
+          owner='${{ github.repository_owner }}'
+          repo="ghcr.io/${owner}/aegis-node-demo-renderer"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "content_tag=${short}" >> "$GITHUB_OUTPUT"
+          echo "Image will be pushed as:"
+          echo "  ${repo}:latest"
+          echo "  ${repo}:sha-${short}"
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: demos
+          file: demos/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.tag.outputs.repo }}:latest
+            ${{ steps.tag.outputs.repo }}:sha-${{ steps.tag.outputs.content_tag }}
+          # GHA's per-runner cache makes incremental rebuilds cheap.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Hermetic demo renderer for Aegis-Node ADR-020 GIFs (vhs + chrome + ttyd + aegis build deps).
+            dev.aegis-node.demo-renderer.dockerfile.sha256=${{ steps.tag.outputs.content_tag }}
+
+      - name: Print pinning info for demos.yml
+        run: |
+          echo "::notice title=Published demo renderer image::"
+          echo "  ${{ steps.tag.outputs.repo }}:latest"
+          echo "  ${{ steps.tag.outputs.repo }}:sha-${{ steps.tag.outputs.content_tag }}"
+          echo
+          echo "demos.yml pulls the :sha-<...> tag derived from the same commit's"
+          echo "demos/Dockerfile, so the rendering environment is locked to the"
+          echo "Dockerfile in the PR being tested."

@@ -30,25 +30,30 @@ Type "# Aegis-Node demo: Customer support with F3 approval gate"
 Enter
 Sleep 1.2s
 
+Type "echo '## STEP 1: prepare the workdir (clean any prior ledger and draft)'"
+Enter
+Sleep 600ms
 Type "cd /tmp/aegis-demo-04 && rm -f ledger-*.jsonl drafts/refund-letter.md"
 Enter
 Sleep 600ms
 
-# Show the explicit write_grant + approval_required. The setup.sh
-# symlinked manifest.yaml into the workdir.
+Type "echo '## STEP 2: show the explicit write_grant with approval_required: true'"
+Enter
+Sleep 600ms
 Type "grep -A3 'write_grants:' manifest.yaml"
 Enter
 Sleep 3s
 
-# Show the pre-staged F3 file-channel approval (the human
-# approver's decision; pre-staged by setup.sh because VHS's
-# `Type` syntax doesn't tolerate the escaped-quote heredoc the
-# JSON content needs).
+Type "echo '## STEP 3: show the pre-staged F3 approval (the human approvers decision)'"
+Enter
+Sleep 600ms
 Type "cat approval.json"
 Enter
 Sleep 2s
 
-# Run the agent. AEGIS_APPROVAL_FILE wires the F3 file-channel.
+Type "echo '## STEP 4: run the agent — F3 gates the write; on grant, Gemma 4 E2B drafts the letter (model output below)'"
+Enter
+Sleep 600ms
 Type "AEGIS_APPROVAL_FILE=/tmp/aegis-demo-04/approval.json aegis run \"
 Enter
 Type "    --backend litertlm \"
@@ -63,7 +68,10 @@ Type "    --prompt 'Write a one-paragraph refund-letter draft to /tmp/aegis-demo
 Enter
 Sleep 22s
 
-# Surface the F-features the demo exercised:
+Type "echo '## STEP 5: inspect the ledger — F3 approval chain + F2/F7 write + F9 verify'"
+Enter
+Sleep 600ms
+
 Type "echo && echo '--- F3 Approval entry ---'"
 Enter
 Sleep 600ms
