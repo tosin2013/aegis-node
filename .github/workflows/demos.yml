@@ -111,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           docker load < /tmp/renderer.tar.gz
-          docker image ls | head -5
+          docker image ls
           echo "tag=${{ needs.build-renderer.outputs.image_tag }}" >> "$GITHUB_OUTPUT"
 
       - name: Cache cargo registry
@@ -145,7 +145,7 @@ jobs:
               # has rust 1.95.0 pinned.
               cargo build --release -p aegis-cli --features llama
               install -m 0755 target/release/aegis /usr/local/bin/aegis
-              aegis --help | head -3
+              aegis --version || aegis --help
               # Force re-render the demo via the Makefile (setup.sh
               # auto-runs per the %/demo.gif rule).
               cd demos
