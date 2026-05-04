@@ -1,14 +1,35 @@
 # Installing Aegis-Node
 
 OS-specific install paths for getting `aegis` on your PATH and the
-[examples](../examples/) running. Three approaches, in order of how
-much host setup they need:
+[examples](../examples/) running.
+
+## Quickest: run the installer script
+
+Empirically validated on `ubuntu:24.04` and `quay.io/centos/centos:stream10`
+(2026-05-04). One command per OS, runs Steps 1–4 below end-to-end and
+finishes by running Example 01 as a smoke test:
+
+```bash
+git clone https://github.com/tosin2013/aegis-node.git
+cd aegis-node
+
+# Ubuntu 22.04 / 24.04
+bash scripts/install/ubuntu.sh
+
+# CentOS Stream 10 / Rocky 10 / Alma 10 / RHEL 10
+bash scripts/install/centos10.sh
+```
+
+If you'd rather understand every step or your distro isn't covered,
+keep reading — the rest of this doc is the manual prose form of the
+same flow. See also [`scripts/install/README.md`](../scripts/install/README.md).
+
+## Other install paths
 
 1. **[Docker](../examples/README.md#docker--fastest-no-host-toolchain-install)** —
    the published devbox image (`ghcr.io/tosin2013/aegis-node-devbox:latest`)
-   has Rust + Go + oras + cosign + jq + node baked in. **Fastest path; OS-agnostic.**
-   Covered in `examples/README.md` — start there if you don't have a strong
-   reason to install natively.
+   has Rust + Go + oras + cosign + jq + node baked in. OS-agnostic.
+   Covered in `examples/README.md`.
 2. **[Native via mise](#step-2a-native-via-mise)** — toolchain version manager;
    pins everything per `mise.toml`. Same on Ubuntu and CentOS once mise itself is installed.
 3. **[Native via system packages + rustup](#step-2b-native-via-system-packages--rustup)** —
@@ -34,12 +55,17 @@ toolchain installs and for running every example.
 sudo apt-get update
 sudo apt-get install -y \
     curl ca-certificates git \
-    build-essential pkg-config \
+    build-essential pkg-config clang cmake unzip \
     jq sqlite3 \
     nodejs npm pipx
 pipx ensurepath
 source ~/.bashrc
 ```
+
+`clang` provides `libclang.so` (needed by `bindgen`, transitively
+required by `llama-cpp-sys-2`); `cmake` builds llama.cpp from source.
+Skipping these gets you `Unable to find libclang` partway through
+`cargo build`.
 
 **Install `oras`** (no apt package):
 
@@ -64,6 +90,7 @@ echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.bashrc
 sudo dnf install -y \
     curl ca-certificates git \
     gcc gcc-c++ make pkgconf-pkg-config \
+    clang cmake unzip \
     jq sqlite \
     nodejs npm python3-pip
 sudo dnf groupinstall -y "Development Tools"
@@ -71,6 +98,10 @@ python3 -m pip install --user pipx
 python3 -m pipx ensurepath
 source ~/.bashrc
 ```
+
+`clang` provides `libclang.so` (needed by `bindgen` for
+`llama-cpp-sys-2`); `cmake` builds llama.cpp from source. Skipping
+these gets you `Unable to find libclang` partway through `cargo build`.
 
 All packages above are in CentOS 10's base / AppStream repos —
 **you should not need EPEL** for the examples. If a specific package
@@ -127,6 +158,7 @@ echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc   # persist
 # Clone + install pinned toolchain
 git clone https://github.com/tosin2013/aegis-node.git
 cd aegis-node
+mise trust mise.toml                                      # required before mise install for new checkouts
 mise install                                              # Rust 1.85, Go 1.23, cosign, node per mise.toml
 source ~/.cargo/env                                       # if mise's rust used rustup, this puts cargo on PATH
 
