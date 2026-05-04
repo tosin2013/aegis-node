@@ -1,0 +1,67 @@
+# Example 02 — research assistant via MCP (extended mode with Firecrawl)
+# Adds the Firecrawl MCP server for live web research on top of the
+# offline filesystem MCP server. Selected by setup.sh when
+# FIRECRAWL_API_KEY is set in the environment.
+#
+# Two MCP servers, two layers of enforcement each:
+#   - filesystem MCP: ADR-024 pre_validate against tools.filesystem.read
+#   - firecrawl MCP: tools.network.outbound allowlist for api.firecrawl.dev
+#
+# This is the canonical "API-key-required external MCP server"
+# pattern — fork it for Slack, GitHub, Postgres, Anthropic API,
+# or any other authenticated MCP server.
+
+schemaVersion: "1"
+agent:
+  name: "research-assistant"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/research-assistant/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/tmp/aegis-example-02/fixtures/docs"
+    write:
+      - "/tmp/aegis-example-02/output"
+  # Targeted allowlist — Firecrawl's API endpoint only. Any other
+  # outbound connect is denied by the closed-by-default base + emits
+  # an F2 violation in the ledger. F6 NetworkAttestation at session
+  # shutdown summarizes every connect attempt regardless of outcome.
+  network:
+    outbound:
+      allowed:
+        - host: "api.firecrawl.dev"
+          port: 443
+    inbound: deny
+  mcp:
+    - server_name: "fs-mcp"
+      server_uri: "stdio:/usr/bin/mcp-server-filesystem /tmp/aegis-example-02/fixtures/docs"
+      allowed_tools:
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        - name: "list_directory"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - "list_allowed_directories"
+    - server_name: "firecrawl"
+      # FIRECRAWL_API_KEY is read from env by the firecrawl-mcp-server
+      # process; the manifest never touches the secret.
+      server_uri: "stdio:npx -y firecrawl-mcp"
+      allowed_tools:
+        - "firecrawl_search"
+        - "firecrawl_scrape"
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

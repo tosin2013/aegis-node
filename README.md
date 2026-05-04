@@ -23,18 +23,39 @@ Aegis-Node is structured around the ten questions a zero-trust security team ask
 | Can logs be altered? | F9 Hash-Chained Ledger | ✅ v0.5.0 |
 | Can policies be reviewed before runtime? | F10 Policy-as-Code Validation | v0.9.0 |
 
+The F-feature table maps directly to the [OWASP Top 10 for Agentic Applications 2026](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) — F1 counters identity/privilege abuse, F2+ADR-024 counters tool misuse and agentic supply chain, F3 counters human-agent trust exploitation, F6 counters goal hijack via exfiltration, and F9 covers memory poisoning / cascading failures via tamper-evident audit. See [examples/](examples/) for runnable mappings.
+
+## Quick Start
+
+5-minute walkthrough — see [examples/](examples/) for six graduated, fork-friendly samples (hello-world → MCP research → customer support → coding agent → egress audit → finance/SQL).
+
+```bash
+mise install && make build                                # one-time
+aegis identity init --trust-domain aegis-node.local       # one-time
+cd examples/01-hello-world
+bash setup.sh
+cd /tmp/aegis-example-01
+aegis run --manifest manifest.yaml --model model.gguf \
+    --workload hello-world --instance inst-001 \
+    --prompt "$(cat prompt.txt)"
+cat output/greeting.txt          # the agent's work product
+aegis verify ledger-*.jsonl      # the audit trail
+```
+
+Continue through `examples/02-mcp-research-assistant/` … `06-mcp-finance-sqlite/`.
+
 ## What works today
 
 ```bash
 # One-time CA setup
 aegis identity init --trust-domain aegis-node.local
 
-# Run a fixed tool-call script under enforcement (manifest gates every I/O)
+# Run an agent under enforcement (manifest gates every I/O)
 aegis run \
   --manifest schemas/manifest/v1/examples/read-only-research.manifest.yaml \
   --model /path/to/model.gguf \
   --workload research --instance inst-001 \
-  --script my-script.json
+  --prompt "summarize the docs in /data"
 
 # Verify the produced ledger end-to-end (chain integrity + summary)
 aegis verify ledger-session-*.jsonl

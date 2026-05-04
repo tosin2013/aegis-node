@@ -1,0 +1,1 @@
+Write the text "hello, world from aegis-node" to the file /tmp/aegis-example-01/output/greeting.txt using the filesystem__write tool. Then stop.

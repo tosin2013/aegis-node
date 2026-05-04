@@ -1,0 +1,28 @@
+# Example 01 — hello-world
+# Smallest possible Aegis manifest. The agent writes one greeting
+# file to the workdir-local output/ dir under F2 enforcement.
+# No reads, no MCP, no network, no approval, no time-bounding.
+# This proves the runtime end-to-end: identity boots, manifest
+# gates the write, ledger records, aegis verify confirms the chain.
+
+schemaVersion: "1"
+agent:
+  name: "hello-world"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/hello-world/inst-001"
+tools:
+  filesystem:
+    write:
+      - "/tmp/aegis-example-01/output"
+  network:
+    outbound: deny
+    inbound: deny
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

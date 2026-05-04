@@ -1,0 +1,43 @@
+# Example 03 — customer-support agent with F3 approval gate
+# The agent reads a customer case file and drafts a refund letter.
+# The write requires F3 human approval — the manifest's write_grant
+# carries approval_required: true, and a pre-staged approval.json
+# satisfies the F3 file-channel.
+#
+# Three observable phases:
+#   1. Agent reads the case (Allow path)
+#   2. Agent attempts to write the draft (RequireApproval)
+#   3. Approval is granted via the file channel → write proceeds
+
+schemaVersion: "1"
+agent:
+  name: "support-agent"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/support-agent/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/tmp/aegis-example-03/fixtures"
+    # Broad write coverage to output/, narrowed by the explicit
+    # write_grant below (approval_required: true). Per ADR-019,
+    # explicit grants take precedence.
+    write:
+      - "/tmp/aegis-example-03/output"
+  network:
+    outbound: deny
+    inbound: deny
+
+write_grants:
+  - resource: "/tmp/aegis-example-03/output/refund-letter.md"
+    actions: ["write"]
+    duration: "PT1H"
+    approval_required: true
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

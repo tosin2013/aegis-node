@@ -1,0 +1,1 @@
+Read the case file at /tmp/aegis-example-03/fixtures/case-1024.txt using the filesystem__read tool. Then draft a one-paragraph refund letter to the customer, acknowledging the damaged package and confirming a full refund will be issued. Write the letter to /tmp/aegis-example-03/output/refund-letter.md using the filesystem__write tool. Then stop.

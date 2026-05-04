@@ -1,0 +1,59 @@
+# Example 06 — finance/ops expense audit via SQLite MCP server
+# The agent queries a workdir-staged SQLite database of synthetic
+# expense rows, identifies anomalies (large amounts, unusual vendors),
+# and writes a report to disk under F3 approval.
+#
+# Two layers of MCP enforcement — the canonical "tool misuse" defense
+# the OWASP Top 10 for Agentic Applications 2026 demands:
+#   1. tools.mcp[].allowed_tools — only read_query / list_tables /
+#      describe_table are permitted; write_query / create_table /
+#      drop_table are denied at the protocol allowlist layer
+#      regardless of what the upstream server advertises
+#   2. F3 approval gate on the report write — explicit human sign-off
+#      before any artifact lands
+
+schemaVersion: "1"
+agent:
+  name: "finance-auditor"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/finance-auditor/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/tmp/aegis-example-06"
+    write:
+      - "/tmp/aegis-example-06/output"
+  network:
+    outbound: deny
+    inbound: deny
+  mcp:
+    - server_name: "sqlite"
+      # uvx runs the canonical Python MCP SQLite server. The
+      # --db-path arg points at the workdir-staged expense DB.
+      server_uri: "stdio:uvx mcp-server-sqlite --db-path /tmp/aegis-example-06/expenses.db"
+      # Read-only subset. write_query / create_table / etc. are
+      # deliberately omitted — closed-by-default keeps any DDL/DML
+      # denied at the MCP allowlist layer regardless of what
+      # mcp-server-sqlite advertises in its capabilities response.
+      allowed_tools:
+        - "read_query"
+        - "list_tables"
+        - "describe_table"
+
+# Explicit approval-gated write_grant for the audit report. F3
+# upgrades Allow → RequireApproval; the file channel reads
+# approval.json.
+write_grants:
+  - resource: "/tmp/aegis-example-06/output/q2-expense-anomalies.md"
+    actions: ["write"]
+    duration: "PT1H"
+    approval_required: true
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

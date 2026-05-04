@@ -1,0 +1,47 @@
+# Example 04 — code-review agent with time-bounded write grant
+# The agent reads a small Go source file and writes a code review to
+# disk under F7 time-bounded enforcement. The minimum capability
+# surface for "useful coding agent" without exec or network:
+#
+#   - Read access to the source under review
+#   - Time-bounded write grant for the single review file
+#   - Deny-by-default network (no leaking source)
+#
+# For the exec-grant pattern (giving the agent /usr/bin/git so it can
+# inspect diffs), see demos/03-code-review-time-bounded — that demo's
+# manifest declares `exec_grants` and the .tape walks the agent
+# through `git diff` calls. The demo is the "watch + understand" path;
+# this example is the "fork + run."
+
+schemaVersion: "1"
+agent:
+  name: "code-reviewer"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/code-reviewer/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/tmp/aegis-example-04/repo"
+    # No broad write coverage — the explicit write_grant below is the
+    # only path that authorizes a write. Per ADR-019, explicit grants
+    # take precedence; closed-by-default keeps everything else denied.
+  network:
+    outbound: deny
+    inbound: deny
+
+# Time-bounded write grant. Valid for 1 hour after session start.
+# Outside the window the same write is denied. Auditors see in the
+# ledger which window the write happened in.
+write_grants:
+  - resource: "/tmp/aegis-example-04/output/code-review.md"
+    actions: ["write"]
+    duration: "PT1H"
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0
