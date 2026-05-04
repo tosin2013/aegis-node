@@ -29,9 +29,10 @@ tools:
   # shutdown summarizes every connect attempt regardless of outcome.
   network:
     outbound:
-      allowed:
+      allowlist:
         - host: "api.firecrawl.dev"
           port: 443
+          protocol: https
     inbound: deny
   mcp:
     - server_name: "fs-mcp"
