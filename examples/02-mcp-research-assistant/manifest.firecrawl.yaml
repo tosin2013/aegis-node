@@ -54,10 +54,14 @@ tools:
     - server_name: "firecrawl"
       # FIRECRAWL_API_KEY is read from env by the firecrawl-mcp-server
       # process; the manifest never touches the secret.
+      # The model invokes these as `firecrawl__search` / `firecrawl__scrape`
+      # (the `<server_name>__<tool_name>` MCP convention); the
+      # allowed_tools list contains the bare tool names the upstream
+      # firecrawl-mcp server advertises.
       server_uri: "stdio:npx -y firecrawl-mcp"
       allowed_tools:
-        - "firecrawl_search"
-        - "firecrawl_scrape"
+        - "search"
+        - "scrape"
 
 inference:
   determinism:
