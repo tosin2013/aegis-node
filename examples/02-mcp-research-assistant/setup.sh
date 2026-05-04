@@ -59,9 +59,11 @@ done
 if [ -n "${FIRECRAWL_API_KEY:-}" ]; then
     echo '[02] FIRECRAWL_API_KEY detected — wiring extended mode (filesystem + Firecrawl MCP)'
     require_bin npx 'install Node.js + npm'
-    # Pre-warm the firecrawl MCP server cache so the first agent run
-    # doesn't pay the npm-install latency mid-session.
-    npx -y firecrawl-mcp --help >/dev/null 2>&1 || true
+    # Note: we intentionally do NOT pre-run firecrawl-mcp here.
+    # `npx -y firecrawl-mcp --help` doesn't always exit cleanly (the
+    # MCP server may start listening on stdin instead of printing help),
+    # which hangs setup.sh. The first `aegis run` will pay the npx
+    # install latency once; subsequent runs hit npm's cache.
     ln -sf "$SCRIPT_DIR/manifest.firecrawl.yaml" "$WORKDIR/manifest.yaml"
     MODE='extended (filesystem + Firecrawl)'
 else
