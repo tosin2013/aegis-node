@@ -56,18 +56,26 @@ against:
 ```bash
 # 0. Install mise itself (skip if already installed)
 curl https://mise.run | sh
-source ~/.bashrc                                          # or ~/.zshrc; or restart shell
 
-# 1. Install the pinned toolchain (Rust 1.83, Go 1.23, cosign 2.4.1, node 20)
+# 1. Activate mise in your current shell (mise install puts tools in
+#    ~/.local/share/mise but they aren't on PATH until activation).
+#    Persist by adding this line to ~/.bashrc (or ~/.zshrc) too.
+eval "$(~/.local/bin/mise activate bash)"                 # use 'zsh' if on zsh
+
+# 2. Install the pinned toolchain (Rust 1.83, Go 1.23, cosign 2.4.1, node 20)
 cd /path/to/aegis-node
 mise install
 
-# 2. Build + install aegis to ~/.cargo/bin (puts it on PATH; enables --prompt)
+# 3. Build + install aegis to ~/.cargo/bin (puts it on PATH; enables --prompt)
 cargo install --path crates/cli --features llama
 
-# 3. Bootstrap the local CA (one-time)
+# 4. Bootstrap the local CA (one-time)
 aegis identity init --trust-domain aegis-node.local
 ```
+
+If you skip step 1 you'll see *"cargo: command not found"* even after
+`mise install` succeeds — mise installed the tools, but your shell
+doesn't know where they are until activated.
 
 `make build` alone is not enough — it builds to `target/debug/aegis`
 without the `llama` feature, so `aegis run --prompt …` won't work.

@@ -149,7 +149,8 @@ Install [`mise`](https://mise.jdx.dev/) (toolchain version manager), then pin ev
 
 ```bash
 curl https://mise.run | sh                                # install mise itself (one-time)
-source ~/.bashrc                                          # or restart shell
+eval "$(~/.local/bin/mise activate bash)"                 # activate in current shell (use 'zsh' if on zsh)
+echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc   # persist for new shells
 
 cd /path/to/aegis-node
 mise install                                              # installs Rust 1.83, Go 1.23, cosign, node per mise.toml
