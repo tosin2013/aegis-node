@@ -1,0 +1,54 @@
+# Example 02 — research assistant via MCP (default offline mode)
+# The agent uses the official Anthropic filesystem MCP server in
+# read-only mode to summarize a small fixtures/docs/ corpus, then
+# writes a research-summary.md to output/.
+#
+# Two layers of enforcement guard every MCP call:
+#   1. tools.mcp[].allowed_tools — protocol-level allowlist
+#   2. ADR-024 pre_validate — per-tool side-effect mapping that runs
+#      paths through tools.filesystem.read before dispatch
+#
+# This default manifest works offline. For the extended mode that
+# adds Firecrawl web research, see manifest.firecrawl.yaml (selected
+# automatically by setup.sh when FIRECRAWL_API_KEY is set).
+
+schemaVersion: "1"
+agent:
+  name: "research-assistant"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/research-assistant/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/tmp/aegis-example-02/fixtures/docs"
+    write:
+      - "/tmp/aegis-example-02/output"
+  network:
+    outbound: deny
+    inbound: deny
+  mcp:
+    - server_name: "fs-mcp"
+      server_uri: "stdio:npx -y @modelcontextprotocol/server-filesystem /tmp/aegis-example-02/fixtures/docs"
+      allowed_tools:
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        - name: "list_directory"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - "list_allowed_directories"
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

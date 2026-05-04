@@ -1,0 +1,34 @@
+# Example 05 — egress containment + signed network attestation
+# The agent is given the network__connect tool in its catalog (so the
+# model knows to attempt) but `tools.network.outbound: deny` closes
+# every outbound call. The attempt lands as F2 violation; the F6
+# end-of-session NetworkAttestation summarizes every connect (allowed
+# or denied) with a signed digest.
+#
+# Plus a writable output/ for the post-session report a small shell
+# script generates from the ledger — answering the canonical
+# governance question: "what did this agent do at 3pm Tuesday?"
+
+schemaVersion: "1"
+agent:
+  name: "egress-audit"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/egress-audit/inst-001"
+tools:
+  filesystem:
+    write:
+      - "/tmp/aegis-example-05/output"
+  network:
+    # Deny-by-default per F6. Model still sees the tool in the catalog;
+    # the deny fires at dispatch.
+    outbound: deny
+    inbound: deny
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

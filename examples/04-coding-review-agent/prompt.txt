@@ -1,0 +1,14 @@
+A teammate replaced this Go function:
+
+  func Add(a, b int32) int32 { return a + b }
+
+with this:
+
+  func Add(a, b int32) int32 {
+      r := int64(a) + int64(b)
+      if r > math.MaxInt32 { return math.MaxInt32 }
+      if r < math.MinInt32 { return math.MinInt32 }
+      return int32(r)
+  }
+
+Write a short code review (3-5 bullet points covering correctness, clarity, and any tests that should be added) to /tmp/aegis-example-04/output/code-review.md using the filesystem__write tool. Then stop.
