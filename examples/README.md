@@ -22,15 +22,35 @@ Aegis-Node actually does about each:
 
 ### Toolchain (one-time per machine)
 
+The canonical path uses [`mise`](https://mise.jdx.dev/) (per
+[ADR-017](../docs/adrs/017-local-development-environment-devcontainer-mise.md))
+to pin Rust / Go / cosign / Node to the versions the project tests
+against:
+
 ```bash
-mise install                                              # pins Rust 1.83 + Go 1.23 + cosign 2.4.1 + node 20
-cargo install --path crates/cli --features llama          # builds + installs aegis to ~/.cargo/bin (puts it on PATH; enables --prompt)
-aegis identity init --trust-domain aegis-node.local       # one-time: bootstraps the local CA in ~/.config/aegis/identity/
+# 0. Install mise itself (skip if already installed)
+curl https://mise.run | sh
+source ~/.bashrc                                          # or ~/.zshrc; or restart shell
+
+# 1. Install the pinned toolchain (Rust 1.83, Go 1.23, cosign 2.4.1, node 20)
+cd /path/to/aegis-node
+mise install
+
+# 2. Build + install aegis to ~/.cargo/bin (puts it on PATH; enables --prompt)
+cargo install --path crates/cli --features llama
+
+# 3. Bootstrap the local CA (one-time)
+aegis identity init --trust-domain aegis-node.local
 ```
 
 `make build` alone is not enough — it builds to `target/debug/aegis`
 without the `llama` feature, so `aegis run --prompt …` won't work.
 The `cargo install` step above is what the demos and examples expect.
+
+**Without mise** (if you'd rather use rustup directly): install
+[`rustup`](https://rustup.rs) + [`go 1.23+`](https://go.dev/dl/) via
+your usual channel, then run steps 2–3 above. You skip the version
+pinning, but the examples don't depend on exact versions.
 
 ### Extra binaries on PATH
 
