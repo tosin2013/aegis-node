@@ -40,7 +40,7 @@ edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/tosin2013/aegis-node"
 authors = ["The Aegis-Node Contributors"]
-rust-version = "1.78"
+rust-version = "1.85"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"

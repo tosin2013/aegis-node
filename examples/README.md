@@ -62,7 +62,7 @@ curl https://mise.run | sh
 #    Persist by adding this line to ~/.bashrc (or ~/.zshrc) too.
 eval "$(~/.local/bin/mise activate bash)"                 # use 'zsh' if on zsh
 
-# 2. Install the pinned toolchain (Rust 1.83, Go 1.23, cosign 2.4.1, node 20)
+# 2. Install the pinned toolchain (Rust 1.85, Go 1.23, cosign 2.4.1, node 20)
 cd /path/to/aegis-node
 mise install
 

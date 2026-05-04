@@ -153,7 +153,7 @@ eval "$(~/.local/bin/mise activate bash)"                 # activate in current 
 echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc   # persist for new shells
 
 cd /path/to/aegis-node
-mise install                                              # installs Rust 1.83, Go 1.23, cosign, node per mise.toml
+mise install                                              # installs Rust 1.85, Go 1.23, cosign, node per mise.toml
 cargo install --locked --path crates/cli --features llama          # puts aegis on PATH (~/.cargo/bin); enables --prompt
 aegis identity init --trust-domain aegis-node.local       # one-time CA
 
