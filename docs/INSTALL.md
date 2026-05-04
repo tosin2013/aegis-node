@@ -102,11 +102,18 @@ python3 -m pipx ensurepath
 source ~/.bashrc
 ```
 
-**Note on EPEL:** `jq` is in the base CentOS 10 repos. If a future
-package goes missing, enable EPEL:
+**Note on EPEL:** all the packages above (`jq`, `sqlite`, `nodejs`,
+`npm`, `python3-pip`) are in CentOS 10's base / AppStream repos —
+**you should not need EPEL** for the examples. If a specific package
+goes missing on your build of CentOS 10 / Rocky 10 / Alma 10, install
+EPEL via URL since the `epel-release` package isn't in the default
+extras repo on EL10:
 
 ```bash
-sudo dnf install -y epel-release
+# RHEL 10 / Stream 10 / Rocky 10 / Alma 10
+sudo dnf install -y \
+    https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm
+sudo dnf config-manager --set-enabled crb       # CodeReady Builder, prereq for EPEL
 ```
 
 **Install `oras`** (no dnf package):
