@@ -54,18 +54,52 @@ aegis verify ledger-*.jsonl
 
 ### Extended mode (live web research via Firecrawl)
 
+The default `prompt.txt` only exercises filesystem reads. To actually
+hit firecrawl, write a prompt that names the firecrawl tool by its
+fully-qualified MCP name `web__firecrawl_search`:
+
 ```bash
 export FIRECRAWL_API_KEY=fc-...        # your Firecrawl key
 bash setup.sh                          # detects the env var, wires manifest.firecrawl.yaml
 cd /tmp/aegis-example-02
+
+cat > /tmp/firecrawl-prompt.txt <<'EOF'
+Use the web__firecrawl_search tool to search the web for 'AI agent runtime security 2026'. Return the top 3 result titles and URLs. Then write a one-paragraph summary to /tmp/aegis-example-02/output/research-summary.md using filesystem__write. Then stop.
+EOF
+
 aegis run --manifest manifest.yaml --model model.gguf \
     --workload research-assistant --instance inst-001 \
-    --prompt "$(cat prompt.txt)"
+    --prompt "$(cat /tmp/firecrawl-prompt.txt)"
 ```
 
-In extended mode, the ledger gains entries for `firecrawl__search` and
-`firecrawl__scrape` calls, plus F6 NetworkAttestation entries showing the
-allowed connections to `api.firecrawl.dev:443`.
+**What success looks like** — the ledger gains an `mcp__web__firecrawl_search`
+F4 entry, plus F6 NetworkAttestation showing the allowed connection
+to `api.firecrawl.dev:443`:
+
+```bash
+$ grep firecrawl ledger-*.jsonl | jq -c '{accessType, resourceUri}'
+{"accessType":"mcp_tool_call","resourceUri":"mcp://web/firecrawl_search"}
+$ aegis verify ledger-*.jsonl
+ledger ok: session=session-... entries=6 root=...
+```
+
+**Why the server is named `web` (not `firecrawl`).** The upstream
+firecrawl-mcp server advertises its tools as `firecrawl_search`,
+`firecrawl_scrape`, etc. (with a `firecrawl_` prefix). If the
+manifest names the server `firecrawl`, the model sees tools as
+`firecrawl__firecrawl_search` and tends to abbreviate the redundant
+prefix when calling — emitting `firecrawl__search` instead, which the
+upstream server doesn't recognize. Naming the server `web` removes
+the redundancy: the model emits `web__firecrawl_search`, and Aegis
+dispatches `firecrawl_search` upstream where it's recognized.
+
+**Note on MCP progress notifications.** The firecrawl-mcp server
+emits a `notifications/message` (level=info, "Searching") *before*
+the actual `tools/call` response. Aegis's MCP client (per the spec)
+skips these notifications and waits for the matching response by id.
+Without that handling, every firecrawl call would hang or fail with
+"response missing both result and error". Tested in
+`crates/mcp-client/tests/integration.rs::stdio_skips_server_to_client_notifications_before_response`.
 
 ## What just happened
 

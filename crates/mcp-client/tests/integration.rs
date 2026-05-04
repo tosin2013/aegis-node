@@ -48,6 +48,24 @@ fn stdio_propagates_server_side_error() {
 }
 
 #[test]
+fn stdio_skips_server_to_client_notifications_before_response() {
+    // Regression test: before read_response_for_id, the client would
+    // mis-parse a `notifications/message` (no id, no result, no error)
+    // as the tools/call response and fail with "response missing both
+    // result and error". Servers like firecrawl-mcp emit progress
+    // notifications during a tools/call; the client must skip them
+    // and keep reading until a frame whose id matches the request
+    // arrives. The echo_with_progress fixture emits exactly that
+    // pattern (notifications/message → response).
+    let mut client = StdioMcpClient::new();
+    let uri = server_uri();
+    let result = client
+        .call_tool(&uri, "echo_with_progress", json!({"q": "search"}))
+        .unwrap();
+    assert_eq!(result, json!({"echoed": {"q": "search"}}));
+}
+
+#[test]
 fn stdio_rejects_non_stdio_uri() {
     let mut client = StdioMcpClient::new();
     let err = client
