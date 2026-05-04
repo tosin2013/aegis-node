@@ -51,8 +51,12 @@ ln -sf "$CACHED/chat_template.sha256.txt" "$WORKDIR/chat_template.sha256.txt"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ln -sf "$SCRIPT_DIR/prompt.txt" "$WORKDIR/prompt.txt"
+# Copy (not symlink) the fixture .md files. mcp-server-filesystem
+# refuses to follow symlinks whose targets resolve outside the
+# allowed-directory it was launched with — copy keeps the canonical
+# path inside the workdir.
 for doc in "$SCRIPT_DIR"/fixtures/docs/*.md; do
-    ln -sf "$doc" "$WORKDIR/fixtures/docs/$(basename "$doc")"
+    cp -f "$doc" "$WORKDIR/fixtures/docs/$(basename "$doc")"
 done
 
 # Mode selection: Firecrawl extended if FIRECRAWL_API_KEY is set.
