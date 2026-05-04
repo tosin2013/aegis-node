@@ -20,18 +20,41 @@ Aegis-Node actually does about each:
 
 ## Prerequisites
 
+### Toolchain (one-time per machine)
+
 ```bash
-mise install                                              # pins Rust 1.83 + Go 1.23 + cosign + oras + ...
-make build                                                # builds aegis (Rust) and the Go validator
-aegis identity init --trust-domain aegis-node.local       # one-time: bootstraps the local CA
+mise install                                              # pins Rust 1.83 + Go 1.23 + cosign 2.4.1 + node 20
+cargo install --path crates/cli --features llama          # builds + installs aegis to ~/.cargo/bin (puts it on PATH; enables --prompt)
+aegis identity init --trust-domain aegis-node.local       # one-time: bootstraps the local CA in ~/.config/aegis/identity/
 ```
 
-You'll also need on PATH: `oras`, `cosign`, `jq`, plus per-example
-extras called out in each example's `setup.sh`:
-- Example 02: `mcp-server-filesystem` (`npm install -g @modelcontextprotocol/server-filesystem`)
-- Example 02 extended mode: `npx`, `FIRECRAWL_API_KEY` env var
-- Example 04: `git`
-- Example 06: `sqlite3`, `uvx` (`pipx install uv`)
+`make build` alone is not enough — it builds to `target/debug/aegis`
+without the `llama` feature, so `aegis run --prompt …` won't work.
+The `cargo install` step above is what the demos and examples expect.
+
+### Extra binaries on PATH
+
+Not pinned by `mise.toml`; install via your OS package manager:
+
+```bash
+# Linux (Debian/Ubuntu)
+apt-get install -y jq sqlite3 git
+# oras: https://github.com/oras-project/oras/releases (no apt package; download the tarball)
+```
+
+| Binary | Used by | Install hint |
+|---|---|---|
+| `oras` | All (`aegis pull`) | https://github.com/oras-project/oras/releases |
+| `cosign` | All (`aegis pull` keyless verify) | provided by `mise install` |
+| `jq` | All (inspect ledger) | `apt-get install jq` |
+| `git` | Example 04 | `apt-get install git` |
+| `sqlite3` | Example 06 (seed loading) | `apt-get install sqlite3` |
+| `mcp-server-filesystem` | Example 02 default mode | `npm install -g @modelcontextprotocol/server-filesystem` |
+| `npx` | Example 02 extended mode | comes with Node.js (provided by `mise install`) |
+| `uvx` | Example 06 (SQLite MCP server) | `pipx install uv` or `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+
+Plus environment variables for opt-in modes:
+- `FIRECRAWL_API_KEY` — Example 02 extended (live web research)
 
 ## The 6-example arc
 

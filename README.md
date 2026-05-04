@@ -30,8 +30,9 @@ The F-feature table maps directly to the [OWASP Top 10 for Agentic Applications 
 5-minute walkthrough — see [examples/](examples/) for six graduated, fork-friendly samples (hello-world → MCP research → customer support → coding agent → egress audit → finance/SQL).
 
 ```bash
-mise install && make build                                # one-time
-aegis identity init --trust-domain aegis-node.local       # one-time
+mise install                                              # one-time toolchain
+cargo install --path crates/cli --features llama          # one-time: aegis on PATH + --prompt support
+aegis identity init --trust-domain aegis-node.local       # one-time CA
 cd examples/01-hello-world
 bash setup.sh
 cd /tmp/aegis-example-01
@@ -41,6 +42,8 @@ aegis run --manifest manifest.yaml --model model.gguf \
 cat output/greeting.txt          # the agent's work product
 aegis verify ledger-*.jsonl      # the audit trail
 ```
+
+You'll also need `oras`, `jq`, and `git` on PATH (see [examples/README.md](examples/README.md#extra-binaries-on-path) for the full install matrix including per-example MCP server installs).
 
 Continue through `examples/02-mcp-research-assistant/` … `06-mcp-finance-sqlite/`.
 
