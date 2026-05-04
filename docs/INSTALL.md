@@ -130,22 +130,32 @@ cd aegis-node
 mise install                                              # Rust 1.85, Go 1.23, cosign, node per mise.toml
 source ~/.cargo/env                                       # if mise's rust used rustup, this puts cargo on PATH
 
+# If mise reused a pre-existing ~/.rustup, the rustup default may
+# still be an older Rust than mise.toml asks for. Confirm and fix:
+rustc --version                                           # should print 1.85.0 or newer
+rustup install 1.85.0 && rustup default 1.85.0            # only if rustc above showed <1.85.0
+
 # Build + install aegis
-cargo install --locked --path crates/cli --features llama
+cargo install --path crates/cli --features llama
 aegis identity init --trust-domain aegis-node.local
 ```
 
-**Two install gotchas you might hit:**
+**Three install gotchas you might hit:**
 
-- *`cargo: command not found` after `mise install` succeeds.* mise
-  installs tools but doesn't always put `cargo` on PATH on its own —
-  on systems with a pre-existing `~/.rustup`, mise reuses rustup
-  and cargo lands at `~/.cargo/bin/cargo`. Fix:
-  `source ~/.cargo/env`. (Persist by adding it to `~/.bashrc`.)
-- *`feature edition2024 is required` from `cargo install`.* Your Rust
-  is too old (probably 1.83). Either re-run `mise install` from a
-  checkout that pins Rust 1.85+, or upgrade rustup directly:
-  `rustup install 1.85.0 && rustup default 1.85.0`.
+- *`cargo: command not found` after `mise install` succeeds.* On
+  systems with a pre-existing `~/.rustup`, mise reuses rustup and
+  cargo lands at `~/.cargo/bin/cargo` (not via mise's shims). Fix:
+  `source ~/.cargo/env`. Persist by adding to `~/.bashrc`.
+- *`mise install` ran but `rustc --version` shows the old Rust.*
+  This is the same root cause as above — mise deferred to rustup's
+  pre-existing default toolchain instead of installing what
+  `mise.toml` asks for. `rustup install 1.85.0 && rustup default
+  1.85.0` is the canonical fix; this matches the workspace's
+  `Cargo.lock` pins (clap 4.6, indexmap 2.14, etc., all of which
+  require Rust 1.85+).
+- *`feature edition2024 is required` from `cargo install`.* Direct
+  symptom of the previous gotcha — your Rust is older than 1.85.
+  `rustup default 1.85.0` fixes it.
 
 ### Step 2b: Native via system packages + rustup
 
@@ -217,13 +227,19 @@ Fix: `source ~/.cargo/env`, persist by adding to `~/.bashrc`.
 
 ### `feature edition2024 is required` from cargo
 
-Your Rust is older than 1.85. The locked dependencies in `Cargo.lock`
-need Rust 1.85+. Two fixes:
+Your Rust is older than 1.85. The committed `Cargo.lock` itself pins
+clap 4.6, indexmap 2.14, and others that require Rust 1.85+. Fix:
 
-- **From a Rust-1.85-pinned checkout** (post-v0.9.0 main, or this PR
-  branch): re-run `mise install`.
-- **Otherwise:** upgrade rustup directly —
-  `rustup install 1.85.0 && rustup default 1.85.0`.
+```bash
+source ~/.cargo/env
+rustup install 1.85.0
+rustup default 1.85.0
+rustc --version    # confirm 1.85.0+
+```
+
+This is most often hit when `mise install` has deferred to a
+pre-existing `~/.rustup` whose default toolchain is older than
+what `mise.toml` asks for.
 
 ### `aegis pull` fails with cosign verification error
 
