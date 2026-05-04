@@ -22,7 +22,33 @@ Aegis-Node actually does about each:
 
 ### Toolchain (one-time per machine)
 
-The canonical path uses [`mise`](https://mise.jdx.dev/) (per
+Two ways to get a working toolchain. The Docker path is fastest if
+you just want to run the examples; the native path is what you want
+if you're going to develop on the codebase.
+
+#### Docker — fastest, no host toolchain install
+
+```bash
+git clone https://github.com/tosin2013/aegis-node.git && cd aegis-node
+docker run --rm -it \
+    -v "$PWD:/workspaces/aegis-node" \
+    -w /workspaces/aegis-node \
+    ghcr.io/tosin2013/aegis-node-devbox:latest \
+    bash
+
+# inside the container — Rust, Go, oras, cosign, jq, node all pre-installed:
+cargo install --path crates/cli --features llama
+aegis identity init --trust-domain aegis-node.local
+cd examples/01-hello-world && bash setup.sh
+# follow the example's README from here
+```
+
+The image is `.devcontainer/Dockerfile` published from main, signed
+with cosign keyless. Same image VS Code uses for "Reopen in Container."
+
+#### Native — `mise` toolchain manager
+
+The canonical native path uses [`mise`](https://mise.jdx.dev/) (per
 [ADR-017](../docs/adrs/017-local-development-environment-devcontainer-mise.md))
 to pin Rust / Go / cosign / Node to the versions the project tests
 against:

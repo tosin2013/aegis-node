@@ -118,15 +118,46 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 
 ## Local development
 
-Two paths, same pinned tool versions (per [ADR-017](docs/adrs/017-local-development-environment-devcontainer-mise.md)):
+Three paths, same pinned tool versions (per [ADR-017](docs/adrs/017-local-development-environment-devcontainer-mise.md)). The Docker path is the fastest if you just want to try the examples:
 
-**Devcontainer (canonical):** open the repo in VS Code and choose *"Reopen in Container"*. The image bundles Rust, Go, `buf`, `ajv`, `cosign`, `oras`, `golangci-lint`, and `protoc`.
+### Docker (fastest — no toolchain install)
 
-**Native via mise:**
+The signed devbox image bundles Rust, Go, `buf`, `ajv`, `cosign`, `oras`, `jq`, `golangci-lint`, `protoc`, and `node`. Pull it and bind-mount your checkout:
 
 ```bash
-mise install        # installs the versions pinned in mise.toml
-make build          # builds Go + Rust
+git clone https://github.com/tosin2013/aegis-node.git && cd aegis-node
+docker run --rm -it \
+    -v "$PWD:/workspaces/aegis-node" \
+    -w /workspaces/aegis-node \
+    ghcr.io/tosin2013/aegis-node-devbox:latest \
+    bash
+
+# inside the container:
+cargo install --path crates/cli --features llama
+aegis identity init --trust-domain aegis-node.local
+cd examples/01-hello-world && bash setup.sh
+# then follow the example's README from there
+```
+
+### Devcontainer (canonical — VS Code)
+
+Open the repo in VS Code and choose *"Reopen in Container"*. Same image as the Docker path; VS Code wires up the Rust + Go extensions automatically.
+
+### Native via mise (no Docker)
+
+Install [`mise`](https://mise.jdx.dev/) (toolchain version manager), then pin everything via `mise.toml`:
+
+```bash
+curl https://mise.run | sh                                # install mise itself (one-time)
+source ~/.bashrc                                          # or restart shell
+
+cd /path/to/aegis-node
+mise install                                              # installs Rust 1.83, Go 1.23, cosign, node per mise.toml
+cargo install --path crates/cli --features llama          # puts aegis on PATH (~/.cargo/bin); enables --prompt
+aegis identity init --trust-domain aegis-node.local       # one-time CA
+
+# you'll also need oras + jq + git on PATH; see examples/README.md for the full install matrix
+make build          # builds Go + Rust (target/debug/ — for tests; the cargo install above is what example runs use)
 make test           # runs all tests
 make lint           # cargo fmt/clippy + go vet + golangci-lint
 ```
