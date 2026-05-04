@@ -43,7 +43,7 @@ cat output/greeting.txt          # the agent's work product
 aegis verify ledger-*.jsonl      # the audit trail
 ```
 
-You'll also need `oras`, `jq`, and `git` on PATH (see [examples/README.md](examples/README.md#extra-binaries-on-path) for the full install matrix including per-example MCP server installs).
+You'll also need `oras`, `jq`, and `git` on PATH. Per-OS install instructions (Ubuntu 22.04/24.04, CentOS 10 family) are in [docs/INSTALL.md](docs/INSTALL.md); per-example install matrix is in [examples/README.md](examples/README.md#extra-binaries-on-path).
 
 Continue through `examples/02-mcp-research-assistant/` … `06-mcp-finance-sqlite/`.
 

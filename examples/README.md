@@ -88,12 +88,18 @@ pinning, but the examples don't depend on exact versions.
 
 ### Extra binaries on PATH
 
-Not pinned by `mise.toml`; install via your OS package manager:
+Not pinned by `mise.toml`; install via your OS package manager. **For
+full per-OS install instructions (Ubuntu 22.04/24.04, CentOS 10
+Stream / Rocky / Alma) see [docs/INSTALL.md](../docs/INSTALL.md).**
+
+Quick reference:
 
 ```bash
-# Linux (Debian/Ubuntu)
-apt-get install -y jq sqlite3 git
-# oras: https://github.com/oras-project/oras/releases (no apt package; download the tarball)
+# Ubuntu / Debian
+sudo apt-get install -y jq sqlite3 git
+# CentOS / RHEL family
+sudo dnf install -y jq sqlite git
+# oras (both): https://github.com/oras-project/oras/releases (download the tarball)
 ```
 
 | Binary | Used by | Install hint |
