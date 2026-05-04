@@ -19,7 +19,7 @@ require_bin() {
     }
 }
 
-require_bin aegis 'cargo install --path crates/cli --features llama'
+require_bin aegis 'cargo install --locked --path crates/cli --features llama'
 require_bin oras 'https://github.com/oras-project/oras/releases'
 require_bin cosign 'https://github.com/sigstore/cosign/releases'
 require_bin git ''

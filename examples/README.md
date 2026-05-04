@@ -37,7 +37,7 @@ docker run --rm -it \
     bash
 
 # inside the container — Rust, Go, oras, cosign, jq, node all pre-installed:
-cargo install --path crates/cli --features llama
+cargo install --locked --path crates/cli --features llama
 aegis identity init --trust-domain aegis-node.local
 cd examples/01-hello-world && bash setup.sh
 # follow the example's README from here
@@ -67,7 +67,7 @@ cd /path/to/aegis-node
 mise install
 
 # 3. Build + install aegis to ~/.cargo/bin (puts it on PATH; enables --prompt)
-cargo install --path crates/cli --features llama
+cargo install --locked --path crates/cli --features llama
 
 # 4. Bootstrap the local CA (one-time)
 aegis identity init --trust-domain aegis-node.local
