@@ -27,13 +27,22 @@ echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc   # persist
 git clone https://github.com/tosin2013/aegis-node.git
 cd aegis-node
 mise install                                              # Rust 1.85, Go 1.23, cosign, node per mise.toml
+source ~/.cargo/env                                       # if mise's rust uses rustup (common on RHEL/CentOS), this puts cargo on PATH
 cargo install --locked --path crates/cli --features llama
 aegis identity init --trust-domain aegis-node.local
 ```
 
-If you skip the `eval` step you'll see *"cargo: command not found"*
-even after `mise install` succeeds — installing tools and putting
-them on PATH are separate operations in mise.
+**Two install gotchas you might hit:**
+
+- *`cargo: command not found` after `mise install` succeeds.* mise
+  installs tools but doesn't always put `cargo` on PATH on its own —
+  on systems with a pre-existing `~/.rustup`, mise reuses rustup
+  and cargo lands at `~/.cargo/bin/cargo`. Fix:
+  `source ~/.cargo/env`. (Persist by adding it to `~/.bashrc`.)
+- *`feature edition2024 is required` from `cargo install`.* Your Rust
+  is too old (probably 1.83). Either re-run `mise install` from a
+  checkout that pins Rust 1.85+ (this PR branch does), or upgrade
+  rustup directly: `rustup install 1.85.0 && rustup default 1.85.0`.
 
 ## Native via system packages + rustup
 
@@ -157,10 +166,11 @@ pipx install uv
 
 ## Verify the install
 
-Same on every OS. Run Example 01 end-to-end:
+Same on every OS. From inside your `aegis-node` checkout, run
+Example 01 end-to-end:
 
 ```bash
-cd /path/to/aegis-node/examples/01-hello-world
+cd examples/01-hello-world
 bash setup.sh
 cd /tmp/aegis-example-01
 aegis run --manifest manifest.yaml --model model.gguf \
