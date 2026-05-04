@@ -174,7 +174,7 @@ impl McpClient for StdioMcpClient {
             }),
         };
         write_message(&mut conn.stdin, &req)?;
-        let resp: JsonRpcResponse = read_message(&mut conn.stdout)?;
+        let resp = read_response_for_id(&mut conn.stdout, id)?;
         if let Some(err) = resp.error {
             return Err(Error::ServerError {
                 code: err.code,
@@ -248,7 +248,7 @@ fn initialize_handshake(conn: &mut StdioConnection) -> Result<()> {
         }),
     };
     write_message(&mut conn.stdin, &req)?;
-    let resp: JsonRpcResponse = read_message(&mut conn.stdout)?;
+    let resp = read_response_for_id(&mut conn.stdout, id)?;
     if let Some(err) = resp.error {
         return Err(Error::ServerError {
             code: err.code,
@@ -293,4 +293,29 @@ fn read_message<T: for<'de> Deserialize<'de>>(stdout: &mut BufReader<ChildStdout
     }
     serde_json::from_str(line.trim_end_matches('\n'))
         .map_err(|e| Error::Protocol(format!("decode: {e}; raw: {line:?}")))
+}
+
+/// Read JSON-RPC frames from `stdout` until one arrives whose `id`
+/// matches `expected_id`. Server-to-client notifications (per MCP
+/// spec, e.g. `notifications/message` for progress / log updates)
+/// have no `id` field and are silently skipped — they're not
+/// responses to the pending request. Without this loop, the first
+/// notification arriving on stdout would be mis-parsed as the
+/// response and trigger "missing both result and error" on every
+/// tools/call against servers that emit progress notifications
+/// (firecrawl-mcp's `Searching` is one example).
+fn read_response_for_id(
+    stdout: &mut BufReader<ChildStdout>,
+    expected_id: u64,
+) -> Result<JsonRpcResponse> {
+    loop {
+        let resp: JsonRpcResponse = read_message(stdout)?;
+        match resp.id {
+            Some(id) if id == expected_id => return Ok(resp),
+            _ => {
+                // notification (no id) or response to a different request — skip
+                continue;
+            }
+        }
+    }
 }
