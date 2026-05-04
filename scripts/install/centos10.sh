@@ -105,7 +105,7 @@ log "Rust toolchain: $(rustc --version)"
 # Step 2a: build + install aegis
 # ============================================================
 log "Step 2a: cargo build (workspace-aware; respects Cargo.lock)"
-cargo build --release -p aegis-cli --features llama
+cargo build --release -p aegis-cli --features llama --locked
 
 log "Step 2a: install aegis to ~/.local/bin"
 mkdir -p "$HOME/.local/bin"
