@@ -130,15 +130,38 @@ cd aegis-node
 mise install                                              # Rust 1.85, Go 1.23, cosign, node per mise.toml
 source ~/.cargo/env                                       # if mise's rust used rustup, this puts cargo on PATH
 
-# If mise reused a pre-existing ~/.rustup, the rustup default may
-# still be an older Rust than mise.toml asks for. Confirm and fix:
-rustc --version                                           # should print 1.85.0 or newer
-rustup install 1.85.0 && rustup default 1.85.0            # only if rustc above showed <1.85.0
+# Verify Rust is actually 1.85+. mise can defer to a pre-existing
+# rustup whose RUSTUP_TOOLCHAIN env var pins an older toolchain —
+# in that case rustc --version will show <1.85 even though mise
+# install said it succeeded.
+rustc --version
+# If <1.85.0:
+#   rustup install 1.85.0 && rustup default 1.85.0
+#   unset RUSTUP_TOOLCHAIN     # mise may set this; clears the override
 
-# Build + install aegis
-cargo install --path crates/cli --features llama
+# Build aegis from the workspace root (uses the workspace Cargo.lock,
+# which pins dependencies to Rust-1.85-compatible versions).
+cargo build --release -p aegis-cli --features llama
+
+# Install the binary to ~/.local/bin (no sudo needed)
+mkdir -p ~/.local/bin
+cp target/release/aegis ~/.local/bin/aegis
+export PATH="$HOME/.local/bin:$PATH"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+
+# Bootstrap the local CA
+aegis --version
 aegis identity init --trust-domain aegis-node.local
 ```
+
+**Why `cargo build + cp` instead of `cargo install --path`:**
+`cargo install --path crates/cli` is the idiomatic single-command
+install, but it ignores the workspace `Cargo.lock` (the workspace
+root's lockfile isn't auto-picked-up for path installs of workspace
+members). It then regenerates dependencies fresh, which may pull
+versions newer than what the project tests against — for Aegis-Node
+that means `time 0.3.47` (requires Rust 1.88) and others. `cargo
+build -p` from the workspace root respects `Cargo.lock` directly.
 
 **Three install gotchas you might hit:**
 
@@ -146,16 +169,17 @@ aegis identity init --trust-domain aegis-node.local
   systems with a pre-existing `~/.rustup`, mise reuses rustup and
   cargo lands at `~/.cargo/bin/cargo` (not via mise's shims). Fix:
   `source ~/.cargo/env`. Persist by adding to `~/.bashrc`.
-- *`mise install` ran but `rustc --version` shows the old Rust.*
-  This is the same root cause as above — mise deferred to rustup's
-  pre-existing default toolchain instead of installing what
-  `mise.toml` asks for. `rustup install 1.85.0 && rustup default
-  1.85.0` is the canonical fix; this matches the workspace's
-  `Cargo.lock` pins (clap 4.6, indexmap 2.14, etc., all of which
-  require Rust 1.85+).
-- *`feature edition2024 is required` from `cargo install`.* Direct
-  symptom of the previous gotcha — your Rust is older than 1.85.
-  `rustup default 1.85.0` fixes it.
+- *`mise install` ran, `rustup default 1.85.0` ran, but `rustc
+  --version` still shows 1.83.* mise is setting `RUSTUP_TOOLCHAIN=1.83.0`
+  from the project's `mise.toml`, and that env var overrides rustup's
+  default. Two fixes: (a) `unset RUSTUP_TOOLCHAIN` in current shell,
+  or (b) check out a branch whose `mise.toml` pins 1.85+ (the
+  v0.9.0 release does).
+- *`feature edition2024 is required` from `cargo install`.* You're
+  using `cargo install --path` — switch to the `cargo build + cp`
+  flow above. The workspace `Cargo.lock` pins Rust-1.85-compatible
+  versions of clap and indexmap; `cargo install --path` regenerates
+  the lockfile fresh and pulls newer versions that need Rust 1.88.
 
 ### Step 2b: Native via system packages + rustup
 
@@ -167,11 +191,20 @@ installed Go, cosign, and the build prereqs.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source ~/.cargo/env
 rustup install 1.85.0 && rustup default 1.85.0
+rustc --version                                           # confirm 1.85.0+
 
-# Clone + build + install aegis
+# Clone + build aegis
 git clone https://github.com/tosin2013/aegis-node.git
 cd aegis-node
-cargo install --locked --path crates/cli --features llama
+cargo build --release -p aegis-cli --features llama
+
+# Install binary to ~/.local/bin
+mkdir -p ~/.local/bin
+cp target/release/aegis ~/.local/bin/aegis
+export PATH="$HOME/.local/bin:$PATH"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+
+aegis --version
 aegis identity init --trust-domain aegis-node.local
 ```
 
@@ -227,19 +260,23 @@ Fix: `source ~/.cargo/env`, persist by adding to `~/.bashrc`.
 
 ### `feature edition2024 is required` from cargo
 
-Your Rust is older than 1.85. The committed `Cargo.lock` itself pins
-clap 4.6, indexmap 2.14, and others that require Rust 1.85+. Fix:
+Two possible causes:
 
-```bash
-source ~/.cargo/env
-rustup install 1.85.0
-rustup default 1.85.0
-rustc --version    # confirm 1.85.0+
-```
+1. **You're on Rust < 1.85.** The workspace `Cargo.lock` pins clap 4.6
+   and indexmap 2.14, which require Rust 1.85+. Fix:
+   ```bash
+   source ~/.cargo/env
+   rustup install 1.85.0 && rustup default 1.85.0
+   unset RUSTUP_TOOLCHAIN     # if mise was setting it to an older version
+   rustc --version            # confirm 1.85.0+
+   ```
 
-This is most often hit when `mise install` has deferred to a
-pre-existing `~/.rustup` whose default toolchain is older than
-what `mise.toml` asks for.
+2. **You're using `cargo install --path crates/cli` instead of
+   `cargo build`.** The path install ignores the workspace
+   `Cargo.lock` and regenerates dependencies fresh, pulling
+   `time 0.3.47` (Rust 1.88), `wasip2 1.0` (Rust 1.87), etc. — all
+   newer than the lockfile would pick. Fix: switch to the
+   `cargo build + cp` flow described in [Step 2a](#step-2a-native-via-mise).
 
 ### `aegis pull` fails with cosign verification error
 
