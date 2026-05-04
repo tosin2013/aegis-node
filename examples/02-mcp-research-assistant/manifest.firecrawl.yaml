@@ -35,7 +35,7 @@ tools:
     inbound: deny
   mcp:
     - server_name: "fs-mcp"
-      server_uri: "stdio:/usr/bin/mcp-server-filesystem /tmp/aegis-example-02/fixtures/docs"
+      server_uri: "stdio:npx -y @modelcontextprotocol/server-filesystem /tmp/aegis-example-02/fixtures/docs"
       allowed_tools:
         - name: "read_text_file"
           pre_validate:
