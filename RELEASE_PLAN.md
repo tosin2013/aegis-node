@@ -47,6 +47,13 @@ Once `gh auth login` succeeds and a GitHub remote is added:
 
 _Synced from `.mcp-adr-cache/milestones.local.json`. Run `release_tracking` with `operation: "push_local_milestones"` to publish to GitHub._
 
+> **Format note (consumed by `.github/workflows/release.yml`):** each card
+> below must start with an H3 header in the exact form `### vX.Y.Z — <name>`
+> (em-dash, not hyphen). The release workflow extracts the matching card
+> when a tag is pushed and includes it in the GitHub Release body. Pre-
+> release tags (`vX.Y.Z-rc.N`) fall back to the base-version card. See
+> `scripts/release/extract-milestone-notes.sh` for the parser.
+
 ### v0.1.0 — Foundations
 <!-- milestone-id: v0-1-0-foundations -->
 - **Status:** pushed (#1)
