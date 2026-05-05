@@ -13,8 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to mirror mise.toml + Cargo.toml workspace.rust-version (1.85).
+      # Bumping the project MSRV requires editing all three. Pinning here
+      # prevents a new stable Rust release from introducing a clippy lint
+      # that fails CI without the project intentionally upgrading.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85
         with:
           components: clippy, rustfmt
 
