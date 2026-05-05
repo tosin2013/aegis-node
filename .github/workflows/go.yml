@@ -19,7 +19,7 @@ jobs:
           cache: true
 
       # Pinned to project MSRV (mise.toml + Cargo.toml workspace.rust-version).
-      - uses: dtolnay/rust-toolchain@1.85
+      - uses: dtolnay/rust-toolchain@1.86
 
       - uses: Swatinem/rust-cache@v2
 
