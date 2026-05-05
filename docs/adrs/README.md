@@ -38,6 +38,10 @@ The decisions are anchored in the Architecture Principles (PRD §7) and the ten-
 | [028](028-adversarial-pre-filter-gate.md) | Adversarial Pre-Filter Gate for Inbound Tool Results | §4 F2 |
 | [029](029-task-scoped-ephemeral-approval-grants.md) | Task-Scoped Ephemeral Approval Grants (F3 Evolution) | §4 F3 |
 | [030](030-per-turn-spiffe-mtls-attestation.md) | Per-Turn SPIFFE / mTLS Workload Attestation | §4 F1 |
+| [031](031-community-webui-for-local-collaboration.md) | Community WebUI for Local Collaboration | §1, §7 (#1) |
+| [032](032-webui-model-library-and-session-forking.md) | WebUI Model Library and Session Forking | §6.1 |
+| [033](033-webui-visual-mcp-server-management.md) | WebUI Visual MCP Server Management | §4 F2 |
+| [034](034-enterprise-management-dashboard-and-rbac.md) | Enterprise Management Dashboard and RBAC | §9.1 (open-core) |
 
 ADRs 025–030 form a coherent set: the Phase 1 GA (v1.0.0)
 multi-turn agent loop architecture with per-turn enforcement.
@@ -49,6 +53,16 @@ human-factors realities; ADR-030 binds workload identity to each
 turn's content. See the research input at
 [docs/research/multi-turn-agent-loop.md](../research/multi-turn-agent-loop.md)
 and the compliance mapping at [docs/COMPLIANCE_MATRIX.md](../COMPLIANCE_MATRIX.md).
+
+ADRs 031–033 are the Community WebUI set targeting v0.9.5 (Phase 1d):
+ADR-031 ships the localhost UI with chat / live trajectory / inline
+F3 approvals / visual manifest builder under Apache-2.0; ADR-032 wraps
+`aegis pull` as a visual Model Library and implements Session Forking
+so model swaps don't break F1 binding; ADR-033 promotes MCP servers to
+a discoverable catalog with checkbox-toggled allowlists. ADR-034 is
+the v2.5.0 commercial-licensed Enterprise Management Dashboard
+(multi-tenant fleet, RBAC + SSO, automated compliance reports) — same
+runtime gates as the community tier, fleet-scale operations on top.
 
 ## Decision Coverage Matrix
 
