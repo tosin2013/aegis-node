@@ -93,7 +93,21 @@ log "Rust toolchain: $(rustc --version)"
 # Step 2a: build + install aegis
 # ============================================================
 log "Step 2a: cargo build (workspace-aware; respects Cargo.lock)"
-cargo build --release -p aegis-cli --features llama --locked
+cargo build --release -p aegis-cli --features "llama litertlm" --locked
+
+log "Step 2a: install LiteRT-LM runtime libs to /usr/local/lib"
+# The aegis-litertlm-sys build script bakes an absolute rpath into the
+# binary pointing at the build dir's litertlm-runtime/. That works for
+# `cargo run` from the workspace but breaks once the binary is copied
+# elsewhere. Installing system-wide makes `aegis` work from any cwd
+# without LD_LIBRARY_PATH. Skipped silently when the litertlm runtime
+# wasn't built (e.g. if a future user dropped the litertlm feature).
+SO_SRC=$(find target/release/build -name 'libaegis_litertlm_engine_cpu.so' -path '*/litertlm-runtime/*' -print -quit 2>/dev/null || true)
+if [ -n "$SO_SRC" ]; then
+    SO_DIR=$(dirname "$SO_SRC")
+    sudo install -m 0755 "$SO_DIR"/*.so /usr/local/lib/
+    sudo ldconfig
+fi
 
 log "Step 2a: install aegis to ~/.local/bin"
 mkdir -p "$HOME/.local/bin"
@@ -136,7 +150,10 @@ cd "$WORKSPACE/examples/01-hello-world"
 bash setup.sh
 
 cd /tmp/aegis-example-01
-aegis run --manifest manifest.yaml --model model.gguf \
+aegis run --backend litertlm \
+    --manifest manifest.yaml \
+    --model model.litertlm \
+    --chat-template-sidecar chat_template.sha256.txt \
     --workload hello-world --instance inst-001 \
     --prompt "$(cat prompt.txt)"
 

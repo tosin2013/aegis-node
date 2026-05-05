@@ -173,7 +173,7 @@ rustc --version
 
 # Build aegis from the workspace root (uses the workspace Cargo.lock,
 # which pins dependencies to Rust-1.85-compatible versions).
-cargo build --release -p aegis-cli --features llama --locked
+cargo build --release -p aegis-cli --features "llama litertlm" --locked
 
 # Install the binary to ~/.local/bin (no sudo needed)
 mkdir -p ~/.local/bin
@@ -228,7 +228,7 @@ rustc --version                                           # confirm 1.85.0+
 # Clone + build aegis
 git clone https://github.com/tosin2013/aegis-node.git
 cd aegis-node
-cargo build --release -p aegis-cli --features llama --locked
+cargo build --release -p aegis-cli --features "llama litertlm" --locked
 
 # Install binary to ~/.local/bin
 mkdir -p ~/.local/bin

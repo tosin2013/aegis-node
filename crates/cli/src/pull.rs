@@ -602,7 +602,7 @@ fn pick_largest_file(dir: &Path) -> Result<PathBuf> {
             continue;
         }
         let size = meta.len();
-        if best.as_ref().map_or(true, |(s, _)| size > *s) {
+        if best.as_ref().is_none_or(|(s, _)| size > *s) {
             best = Some((size, entry.path()));
         }
     }

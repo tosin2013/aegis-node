@@ -18,7 +18,8 @@ jobs:
           go-version: '1.23'
           cache: true
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to project MSRV (mise.toml + Cargo.toml workspace.rust-version).
+      - uses: dtolnay/rust-toolchain@1.86
 
       - uses: Swatinem/rust-cache@v2
 

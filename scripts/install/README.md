@@ -24,7 +24,7 @@ What each script does:
 2. **Install [`oras`](https://oras.land/)** v1.2.1 (no distro package; tarball install)
 3. **Install [`mise`](https://mise.jdx.dev/)** if absent + activate in current shell + persist to `~/.bashrc`
 4. **`mise trust` + `mise install`**: pin Rust 1.85.0, Go 1.23, cosign 2.4.1, node 20 per `mise.toml`
-5. **`cargo build --release -p aegis-cli --features llama`** (workspace-aware → respects `Cargo.lock`)
+5. **`cargo build --release -p aegis-cli --features "llama litertlm"`** (workspace-aware → respects `Cargo.lock`)
 6. **Install binary** to `~/.local/bin/aegis` + add to `PATH`
 7. **`aegis identity init`** (idempotent — skips if CA already exists)
 8. **Install MCP server extras**: `@modelcontextprotocol/server-filesystem` (Example 02), `uv`/`uvx` (Example 06)

@@ -31,12 +31,32 @@ artifact, one passing verify. Everything else builds on this foundation.
 ```bash
 bash setup.sh
 cd /tmp/aegis-example-01
-aegis run --manifest manifest.yaml --model model.gguf \
+aegis run --backend litertlm \
+    --manifest manifest.yaml \
+    --model model.litertlm \
+    --chat-template-sidecar chat_template.sha256.txt \
     --workload hello-world --instance inst-001 \
     --prompt "$(cat prompt.txt)"
 cat output/greeting.txt
 aegis verify ledger-*.jsonl
 ```
+
+## Known limitation — LiteRT-LM CPU sampler
+
+This example uses the LiteRT-LM backend (Gemma 4 E4B) for prose-quality
+output. Per [ADR-023](../../docs/adrs/023-litertlm-second-inference-backend.md)
+§"Decision" item 5, `inference.determinism.temperature` must be `0.0`
+until upstream LiteRT-LM PR #2081 merges. Track progress at
+[#119](../../../../issues/119). On unusual hardware (16+ cores with
+very fast inference, emulated CPU) the model may emit unexpected
+tokens — the `temperature: 0.0` pin in `manifest.yaml` keeps output
+deterministic on commodity x86_64.
+
+If you'd rather run on the llama.cpp + Qwen 1.5B path (smaller download,
+no upstream blocker, less prose-quality output), see
+[Example 03](../03-customer-support-refund/) and the other Qwen-based
+examples (04, 05, 06) — they use `--features llama` and the GGUF model
+format.
 
 ## What just happened
 

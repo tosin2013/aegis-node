@@ -50,8 +50,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to project MSRV (mise.toml + Cargo.toml workspace.rust-version).
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.86
         with:
           components: clippy, rustfmt
 
