@@ -1,0 +1,217 @@
+name: Release
+
+# Tags vX.Y.Z[-suffix] trigger the workflow. The job composes release notes
+# from RELEASE_PLAN.md's matching milestone card + the GitHub auto-generated
+# "What's Changed" list, then creates a *draft* GitHub Release for operator
+# review. The operator clicks Publish in the GitHub UI.
+#
+# workflow_dispatch supports dry-run previews: pass dry_run=true to print
+# the composed body without calling `gh release create`.
+#
+# Pre-release detection: any pre-1.0 tag (v0.x.y) or any tag with a suffix
+# (v1.0.0-rc.1, v1.0.0-beta.2) is marked --prerelease. v1.0.0 and later
+# without a suffix are marked --latest.
+#
+# Policy decisions (see docs/RELEASE_PROCESS.md once written):
+#   - Hard-require: matching milestone card in RELEASE_PLAN.md (else fail)
+#   - Report-only: GitHub milestone open-issue count (rendered, not blocking)
+#   - Always draft: never auto-publish (pre-1.0 caution; typo / scope safety)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to compose notes for (e.g. v0.9.0). For dry-run the tag does not need to exist."
+        required: true
+        type: string
+      dry_run:
+        description: "If true, print the composed release body without creating a GitHub Release."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # gh release create needs this
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Compose release body + create draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for git describe + auto-changelog
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
+            echo "::error::Version '$VERSION' doesn't match vX.Y.Z[-suffix] pattern"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      - name: Detect pre-release flag
+        id: prerel
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+            echo "flag=--prerelease" >> "$GITHUB_OUTPUT"
+            echo "Reason: suffixed semver (rc/beta/alpha/etc.)"
+          elif [[ "$VERSION" =~ ^v0\. ]]; then
+            echo "flag=--prerelease" >> "$GITHUB_OUTPUT"
+            echo "Reason: pre-1.0 per RELEASE_PLAN.md versioning policy"
+          else
+            echo "flag=--latest" >> "$GITHUB_OUTPUT"
+            echo "Reason: stable semver >= 1.0.0"
+          fi
+
+      - name: Extract milestone card from RELEASE_PLAN.md
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          chmod +x scripts/release/extract-milestone-notes.sh
+          if ! scripts/release/extract-milestone-notes.sh "$VERSION" RELEASE_PLAN.md > /tmp/milestone-card.md; then
+            echo "::error::Missing RELEASE_PLAN.md milestone card for $VERSION. Add an H3 entry to the LOCAL MILESTONES block before tagging."
+            exit 1
+          fi
+          echo "Milestone card extracted:"
+          cat /tmp/milestone-card.md
+
+      - name: Look up GitHub milestone status (report-only)
+        id: ms
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MILESTONE=$(gh api "repos/${GITHUB_REPOSITORY}/milestones?state=all&per_page=100" \
+            --jq "[.[] | select(.title | startswith(\"$VERSION \") or startswith(\"$VERSION—\") or startswith(\"$VERSION-\"))][0]")
+          if [ -z "$MILESTONE" ] || [ "$MILESTONE" = "null" ]; then
+            echo "::warning::No matching GitHub milestone for $VERSION (looked for prefix '$VERSION '). Skipping milestone status block."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            OPEN=$(echo "$MILESTONE" | jq -r .open_issues)
+            CLOSED=$(echo "$MILESTONE" | jq -r .closed_issues)
+            URL=$(echo "$MILESTONE" | jq -r .html_url)
+            TITLE=$(echo "$MILESTONE" | jq -r .title)
+            {
+              echo "found=true"
+              echo "open=$OPEN"
+              echo "closed=$CLOSED"
+              echo "url=$URL"
+              echo "title=$TITLE"
+            } >> "$GITHUB_OUTPUT"
+            echo "Found milestone: $TITLE — open=$OPEN closed=$CLOSED"
+            if [ "$OPEN" -gt 0 ]; then
+              echo "::warning::Milestone $TITLE has $OPEN open issue(s). Release will still publish (Balanced policy)."
+            fi
+          fi
+
+      - name: Generate auto-changelog
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Prefer GitHub's generate-notes API (rich PR list + contributors) when
+          # the tag exists on the remote. Fall back to git log for dry-runs of
+          # tags that haven't been pushed yet.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${VERSION}" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -F tag_name="${VERSION}" \
+              --jq .body > /tmp/auto-changelog.md
+            echo "Auto-changelog source: GitHub generate-notes API (tag exists)"
+          else
+            PREV_TAG=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1 || echo "")
+            {
+              echo "_Generated from \`git log\` (tag $VERSION not yet pushed; use the GitHub Releases API for richer notes once tagged)._"
+              echo
+              if [ -n "$PREV_TAG" ]; then
+                echo "### Commits since $PREV_TAG"
+                echo
+                git log --pretty=format:"- %s" "${PREV_TAG}..HEAD"
+              else
+                echo "### Recent commits"
+                echo
+                git log --pretty=format:"- %s" --max-count=30 HEAD
+              fi
+              echo
+            } > /tmp/auto-changelog.md
+            echo "Auto-changelog source: git log (tag does not exist yet)"
+          fi
+
+      - name: Compose release body
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          MS_FOUND: ${{ steps.ms.outputs.found }}
+          MS_OPEN: ${{ steps.ms.outputs.open }}
+          MS_CLOSED: ${{ steps.ms.outputs.closed }}
+          MS_URL: ${{ steps.ms.outputs.url }}
+          MS_TITLE: ${{ steps.ms.outputs.title }}
+        run: |
+          {
+            echo "## Scope (from RELEASE_PLAN.md)"
+            echo
+            cat /tmp/milestone-card.md
+            echo
+            if [ "${MS_FOUND:-false}" = "true" ]; then
+              echo "## Milestone status"
+              echo
+              echo "[**${MS_TITLE}**](${MS_URL}) — open: \`${MS_OPEN}\` · closed: \`${MS_CLOSED}\`"
+              if [ "${MS_OPEN:-0}" != "0" ]; then
+                echo
+                echo "_⚠️ ${MS_OPEN} issue(s) still open against this milestone — see linked milestone for the in-flight scope._"
+              fi
+              echo
+            fi
+            echo "## What's Changed"
+            echo
+            cat /tmp/auto-changelog.md
+          } > /tmp/release-body.md
+
+          echo "===== composed release body ====="
+          cat /tmp/release-body.md
+          echo "===== end ====="
+
+      - name: Dry-run preview (workflow_dispatch with dry_run=true)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          PRERELEASE: ${{ steps.prerel.outputs.flag }}
+        run: |
+          echo "::notice::Dry-run only — no GitHub Release created. Body printed above."
+          echo "version: $VERSION"
+          echo "prerelease flag: $PRERELEASE"
+
+      - name: Create draft GitHub Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == 'false')
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          PRERELEASE: ${{ steps.prerel.outputs.flag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag ${VERSION} doesn't exist on origin. Push the tag (\`git push --tags\`) before running with dry_run=false."
+            exit 1
+          fi
+          gh release create "${VERSION}" \
+            --draft \
+            --title "${VERSION}" \
+            --notes-file /tmp/release-body.md \
+            ${PRERELEASE}
+          URL=$(gh release view "${VERSION}" --json url --jq .url)
+          echo "::notice::Draft release created: ${URL}"
+          echo "Review the draft and click Publish in the GitHub UI to ship."
