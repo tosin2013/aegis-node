@@ -32,6 +32,23 @@ The decisions are anchored in the Architecture Principles (PRD §7) and the ten-
 | [022](022-trust-boundary-format-agnosticism.md) | Trust-Boundary Format Agnosticism — Verify Signed Claims, Don't Parse Files | §6.1, §7 |
 | [023](023-litertlm-as-second-inference-backend.md) | LiteRT-LM as Second Inference Backend (CPU + Greedy, Phase 1) | §5 Phase 1, §6.1 |
 | [024](024-mcp-args-prevalidation.md) | MCP Tool-Arg Pre-Validation — The Second Layer for `tools.mcp[]` | §4 F2 |
+| [025](025-multi-turn-agent-loop-with-triple-bound-circuit-breaker.md) | Multi-Turn Agent Loop with Triple-Bound Circuit Breaker | §5 Phase 1 GA |
+| [026](026-hierarchical-per-turn-ledger-protocol.md) | Hierarchical Per-Turn Ledger Protocol (F9 Schema v2) | §4 F9 |
+| [027](027-aggregate-quota-schema.md) | Per-Session Aggregate Quota Schema for the Permission Manifest | §4 F2 |
+| [028](028-adversarial-pre-filter-gate.md) | Adversarial Pre-Filter Gate for Inbound Tool Results | §4 F2 |
+| [029](029-task-scoped-ephemeral-approval-grants.md) | Task-Scoped Ephemeral Approval Grants (F3 Evolution) | §4 F3 |
+| [030](030-per-turn-spiffe-mtls-attestation.md) | Per-Turn SPIFFE / mTLS Workload Attestation | §4 F1 |
+
+ADRs 025–030 form a coherent set: the Phase 1 GA (v1.0.0)
+multi-turn agent loop architecture with per-turn enforcement.
+ADR-025 establishes the loop bounds; ADR-026 evolves the F9 ledger
+to capture per-turn trajectories; ADR-027 adds aggregate quotas to
+the F2 manifest; ADR-028 defends against indirect prompt injection
+via tool results; ADR-029 evolves F3 approvals for the loop's
+human-factors realities; ADR-030 binds workload identity to each
+turn's content. See the research input at
+[docs/research/multi-turn-agent-loop.md](../research/multi-turn-agent-loop.md)
+and the compliance mapping at [docs/COMPLIANCE_MATRIX.md](../COMPLIANCE_MATRIX.md).
 
 ## Decision Coverage Matrix
 
