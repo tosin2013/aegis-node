@@ -31,12 +31,13 @@ The F-feature table maps directly to the [OWASP Top 10 for Agentic Applications 
 
 ```bash
 mise install                                              # one-time toolchain
-cargo install --locked --path crates/cli --features llama          # one-time: aegis on PATH + --prompt support
+cargo install --locked --path crates/cli --features "llama litertlm"          # one-time: aegis on PATH + --prompt support
 aegis identity init --trust-domain aegis-node.local       # one-time CA
 cd examples/01-hello-world
 bash setup.sh
 cd /tmp/aegis-example-01
-aegis run --manifest manifest.yaml --model model.gguf \
+aegis run --backend litertlm --manifest manifest.yaml --model model.litertlm \
+    --chat-template-sidecar chat_template.sha256.txt \
     --workload hello-world --instance inst-001 \
     --prompt "$(cat prompt.txt)"
 cat output/greeting.txt          # the agent's work product
@@ -133,7 +134,7 @@ docker run --rm -it \
     bash
 
 # inside the container:
-cargo install --locked --path crates/cli --features llama
+cargo install --locked --path crates/cli --features "llama litertlm"
 aegis identity init --trust-domain aegis-node.local
 cd examples/01-hello-world && bash setup.sh
 # then follow the example's README from there
@@ -154,7 +155,7 @@ echo 'eval "$(~/.local/bin/mise activate bash)"' >> ~/.bashrc   # persist for ne
 
 cd /path/to/aegis-node
 mise install                                              # installs Rust 1.85, Go 1.23, cosign, node per mise.toml
-cargo install --locked --path crates/cli --features llama          # puts aegis on PATH (~/.cargo/bin); enables --prompt
+cargo install --locked --path crates/cli --features "llama litertlm"          # puts aegis on PATH (~/.cargo/bin); enables --prompt
 aegis identity init --trust-domain aegis-node.local       # one-time CA
 
 # you'll also need oras + jq + git on PATH; see examples/README.md for the full install matrix
