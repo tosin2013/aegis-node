@@ -20,7 +20,7 @@
 | **v0.5.0** | Core Security Primitives: F1 identity, F2 manifest enforcement, F9 ledger writer + verify, F4 access log emitter | 2026-07-20 | ADR-003, ADR-004, ADR-006, ADR-011 / Phase 1a |
 | **v0.8.0** | Reasoning + Approval: F5 trajectory, F3 approval gate, F6 network deny, F7 read-only default | 2026-08-31 | ADR-005, ADR-007, ADR-008, ADR-009 / Phase 1b |
 | **v0.9.0** | Tooling + Replay: F10 validator, F8 replay viewer, OCI pull + Cosign, llama.cpp FFI, MCP client | 2026-10-05 | ADR-010, ADR-012, ADR-013, ADR-014, ADR-018 / Phase 1c |
-| **v1.0.0** | **Phase 1 GA — Security Review Milestone:** end-to-end conformance suite, auditor evidence package, design-partner review passed, Apache 2.0 community release | **2026-11-02** | ADR-001, ADR-016 / Phase 1 GA |
+| **v1.0.0** | **Phase 1 GA — Security Review Milestone:** multi-turn agent loop with per-turn enforcement, web UI, conformance suite, auditor evidence package, design-partner review passed, Apache 2.0 community release | **2026-11-02** | ADR-001, ADR-016, ADR-025, ADR-026, ADR-027, ADR-028, ADR-029, ADR-030 / Phase 1 GA |
 | **v2.0.0** | Kubernetes Runtime: Operator + CRDs, SPIRE attestation, GPU backends (vLLM/TGI/KServe), persistent ledger | 2027-01-25 | ADR-002, ADR-015 / Phase 2 |
 | **v3.0.0** | OpenShift Enterprise Runtime: SCCs, disconnected install, GitOps, automated CMMC/FedRAMP exports | 2027-04-19 | ADR-015 / Phase 3 |
 
@@ -87,7 +87,25 @@ Phase 1c: F10 policy-as-code validator (aegis validate) with composition + linte
 - **Status:** pushed (#5)
 - **Due:** 2026-11-02
 
-End-to-end conformance test suite green, auditor evidence package generator, first design-partner security review passed, Apache 2.0 community release. Anchored to the U.S. CMMC 2.0 deadline (PRD §9 — defense beachhead). Maps to ADRs 001, 016.
+Phase 1 GA. Closes the gap between "agent runtime" the project name and what the runtime can actually do.
+
+**Multi-turn agent loop with per-turn enforcement** (ADR-025 through ADR-030, informed by the [security research brief](docs/research/multi-turn-agent-loop.md)):
+- ADR-025: bounded multi-turn loop in `Session::run_turn` with Triple-Bound Circuit Breaker (turns + tokens + wallclock)
+- ADR-026: hierarchical per-turn ledger protocol (F9 schema v2) with per-turn reasoning, tool_call/tool_result hashing, replay determinism
+- ADR-027: per-session aggregate quota schema for the F2 manifest (forbid-overrides-permit, prevention not just detection)
+- ADR-028: Adversarial Pre-Filter Gate against indirect prompt injection in inbound tool results
+- ADR-029: F3 evolution — task-scoped ephemeral approval grants (argument-hash-bound TTLs, tier-based scoping, async pause/resume)
+- ADR-030: per-turn SPIFFE/mTLS workload attestation (ephemeral SVIDs, `aud` claim binds to turn)
+
+**Other v1.0.0 deliverables:**
+- Web UI (operator console for live agent observation + approval routing — details TBD)
+- End-to-end conformance test suite green
+- `aegis evidence cmmc` evidence-pack generator (signed report from F9 ledger; see [docs/COMPLIANCE_MATRIX.md](docs/COMPLIANCE_MATRIX.md))
+- First design-partner security review passed
+- Independent MITRE ATLAS red-team validation
+- Apache 2.0 community release
+
+Anchored to the U.S. CMMC 2.0 deadline (PRD §9 — defense beachhead). Maps to ADRs 001, 016, 025, 026, 027, 028, 029, 030.
 
 ### v2.0.0 — Kubernetes Runtime
 <!-- milestone-id: v2-0-0-kubernetes-runtime -->

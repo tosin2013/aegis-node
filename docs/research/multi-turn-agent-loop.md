@@ -1,9 +1,9 @@
 # Research Brief: Multi-Turn Agent Loops with Per-Turn Enforcement
 
-**Status:** open research, feeds future ADRs
+**Status:** Research input — fed into [ADR-025](../adrs/025-multi-turn-agent-loop-with-triple-bound-circuit-breaker.md) through [ADR-030](../adrs/030-per-turn-spiffe-mtls-attestation.md). The open questions listed under each Group below have been translated into ADR decisions; this brief is preserved as the threat-model record and citation source.
 **Date:** 2026-05-05
-**Owner:** _open — see project maintainers_
-**Related:** ADR-018 (MCP), ADR-019 (write-grant precedence), ADR-023 (LiteRT-LM backend), ADR-024 (`pre_validate`), [Compatibility Charter](../COMPATIBILITY_CHARTER.md)
+**Owner:** Project maintainers
+**Related ADRs:** [025](../adrs/025-multi-turn-agent-loop-with-triple-bound-circuit-breaker.md), [026](../adrs/026-hierarchical-per-turn-ledger-protocol.md), [027](../adrs/027-aggregate-quota-schema.md), [028](../adrs/028-adversarial-pre-filter-gate.md), [029](../adrs/029-task-scoped-ephemeral-approval-grants.md), [030](../adrs/030-per-turn-spiffe-mtls-attestation.md), [018](../adrs/018-adopt-mcp-protocol-for-agent-tool-boundary.md), [019](../adrs/019-explicit-write-grant-takes-precedence.md), [023](../adrs/023-litertlm-as-second-inference-backend.md), [024](../adrs/024-mcp-args-prevalidation.md). [Compatibility Charter](../COMPATIBILITY_CHARTER.md), [Compliance Matrix](../COMPLIANCE_MATRIX.md).
 
 ## Background
 
