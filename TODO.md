@@ -76,11 +76,32 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 - [ ] **P1** [ADR-013] Document operator workflow: download upstream, scan, sign with org Cosign key, push to internal registry.
 - [ ] **P2** [ADR-010, F8] CI test: fixed ledger fixture renders to fixed DOM snapshot.
 
+## Phase 1d — Community UI (target: v0.9.5, 2026-10-20)
+
+- [ ] **P0** [ADR-031] Build the Community WebUI as a static React/Vite SPA, bundled into the `aegis` binary at compile time. New crate `crates/ui-server/` (axum) serves the SPA + WebSocket/REST API on `127.0.0.1:7777`.
+- [ ] **P0** [ADR-031] Implement live trajectory streaming over WebSocket: F5 reasoning + F4 access entries render inline in chat as they're written to the F9 ledger. Read path is the existing `crates/ledger-writer/` reader API.
+- [ ] **P0** [ADR-031, ADR-029] Implement inline F3 approval cards in the chat flow: render F5 reasoning + tool args + manifest tier (advisory/validating/blocking/escalating) + cumulative ADR-027 quota state; allow / deny / escalate buttons write the same `approval_decision` ledger entry the CLI does.
+- [ ] **P0** [ADR-031, ADR-012] Implement the visual Manifest Builder backed by `crates/policy/src/validate.rs` for live `aegis validate` warnings. Output is the same YAML; hand-edit and builder coexist.
+- [ ] **P0** [ADR-032] Implement the "Model Library" view as a visual wrapper around `crates/cli/src/pull.rs`. Stream pull progress + cosign verification result over WebSocket. No file uploads — OCI ref only.
+- [ ] **P0** [ADR-032] Implement Session Forking: ending one session and booting a new one when the operator switches models in the UI. Replay chat history as the new session's prompt context. Backend auto-detects llama vs. litertlm from the OCI artifact's media type.
+- [ ] **P0** [ADR-033] Build the MCP Server Catalog page that runs `tools/list` against configured `server_uri`s and renders tool schemas with checkbox-toggled allowlist state. Reuses `crates/mcp-client/`.
+- [ ] **P0** [ADR-033, ADR-024] Infer `pre_validate` mappings from each tool's JSON schema; surface in the UI with operator override.
+- [ ] **P1** [ADR-031] Add per-session bearer token auth on the loopback API (stored in `~/.config/aegis/ui-token` with 0600 perms). Closes the local-malicious-process gap.
+- [ ] **P1** [ADR-031] WCAG 2.1 AA accessibility — keyboard navigation for approvals + screen-reader semantics on the chat feed. No color-only state encoding.
+- [ ] **P2** [ADR-031] localStorage persistence for manifest drafts; no PII or session content stored UI-side.
+
 ## Phase 1 GA — Security Review Milestone (target: v1.0.0, 2026-11-02 — CMMC deadline)
 
-- [ ] **P0** [ADR-001] Build the auditor evidence package generator: combine manifest + ledger + replay viewer + policy summary into a single signed bundle.
-- [ ] **P0** [ADR-001] Cross-language conformance suite green: every manifest accepted by the Go validator is enforced consistently by the Rust runtime, and vice versa.
-- [ ] **P0** [ADR-001] Pass a real security review with at least one design-partner organization (defense beachhead preferred).
+- [ ] **P0** [ADR-025] Implement the multi-turn agent loop in `crates/inference-engine/src/turn.rs` with the Triple-Bound Circuit Breaker (--max-turns 10, --max-tokens, --max-seconds 300). TurnCapExceeded preserves partial F9 ledger; CLI returns structured error.
+- [ ] **P0** [ADR-026] Bump ledger schema to v2 with hierarchical per-turn entries (`turn_start`, `tool_call`, `tool_result`, `turn_end`, `approval_decision`). Hash tool-result payloads inline; sidecar blob mechanism for >32KB results. `aegis verify` validates v1 + v2.
+- [ ] **P0** [ADR-027] Extend the F2 manifest schema with `tools.<class>.quota` sub-objects + the in-memory accumulator in `crates/policy/src/aggregate.rs`. AggregateCapExceeded prevents (halts + denies); rendered in `turn_end.quotaSnapshots[]`.
+- [ ] **P0** [ADR-028] Build the Adversarial Pre-Filter Gate. Default `RegexHeuristicClassifier` in-process; opt-in `LiteRtLmGuardClassifier` via manifest. Sanitize-and-warn pattern (no drop-and-retry). Verdict in F9 ledger.
+- [ ] **P0** [ADR-029] Implement Task-Scoped Ephemeral Approval Grants: TTL + sha256(canonical_args) binding; auto-consume on identical retry; tier schema (advisory / validating / blocking / escalating); pause-and-resume for headless mTLS approvals.
+- [ ] **P0** [ADR-030] Per-turn SVID rebinding at `turn_start` / destroy at `turn_end`. `aud="aegis-turn://<session>/<turn>"` claim binds replay scope; `context_digest_hex` selector detects inter-turn tampering. Performance budget <50ms per turn.
+- [ ] **P0** [ADR-001] `aegis evidence cmmc` evidence-pack generator: signed report from F9 ledger mapping observed runtime activity to NIST 800-171 controls (per `docs/COMPLIANCE_MATRIX.md`).
+- [ ] **P0** [ADR-001] Cross-language conformance suite green: every manifest accepted by the Go validator is enforced consistently by the Rust runtime, and vice versa. Includes new ADR-027 quota cases + ADR-028 IPI fixtures.
+- [ ] **P0** [ADR-001] Independent third-party red-team validation against MITRE ATLAS threat matrices.
+- [ ] **P0** [ADR-001] Pass a design-partner security review (defense beachhead preferred).
 - [ ] **P0** [ADR-016] v1.0.0 community release under Apache 2.0; tag, sign, publish.
 - [ ] **P1** [ADR-001] Public security documentation organized by the F1–F10 questions (one section per question, mapping to features and ADRs).
 - [ ] **P1** [ADR-001] Establish PR-review rule: every new feature must reference the security-review question it answers (or be marked post-MVP).
@@ -92,6 +113,15 @@ Priority key: **P0** = release blocker · **P1** = required for the phase exit m
 - [ ] **P0** [ADR-014, ADR-015] Implement GPU backend(s) against the `Backend` trait: at minimum vLLM; design space for TGI / KServe.
 - [ ] **P0** [ADR-008] Stack F6 runtime-deny under cluster NetworkPolicies (defense in depth).
 - [ ] **P0** [ADR-011] Persistent ledger storage strategy (PVC + retention/archival).
+
+## Phase 2.5 — Enterprise UI (target: v2.5.0, 2027-03-01)
+
+- [ ] **P0** [ADR-034] Build the multi-tenant Enterprise Management Dashboard on top of the Phase 2 Kubernetes Operator. Lives in the commercial-tier repository (separate from the open-core monorepo).
+- [ ] **P0** [ADR-034] Implement RBAC + SSO/SAML (Okta / Azure AD / Google Workspace / Auth0 / Keycloak air-gapped). Defaults: Security Admin / Operator / Auditor; custom roles supported.
+- [ ] **P0** [ADR-034] Multi-tenant manifest authoring with quota inheritance (tenant policy → workload policy → session policy). Tenant policy is a floor, not a ceiling.
+- [ ] **P0** [ADR-034] Live + historical fleet ledger view backed by tenant-scoped persistent ledger storage from Phase 2. Cryptographic chain remains source of truth; UI is a query surface.
+- [ ] **P1** [ADR-034] Automated compliance report exports — CMMC 2.0 Level 2 + FedRAMP Moderate/High + SOC 2 Type II + EU AI Act. Continuous (scheduled) + on-demand. Reports signed by runtime identity.
+- [ ] **P2** [ADR-034] Pricing / SKU shape decided by the business team; ADR sets the philosophical boundary (open-core per ADR-016), not the line items.
 
 ## Phase 3 — OpenShift Enterprise (target: v3.0.0, 2027-04-19)
 

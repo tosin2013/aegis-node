@@ -20,8 +20,10 @@
 | **v0.5.0** | Core Security Primitives: F1 identity, F2 manifest enforcement, F9 ledger writer + verify, F4 access log emitter | 2026-07-20 | ADR-003, ADR-004, ADR-006, ADR-011 / Phase 1a |
 | **v0.8.0** | Reasoning + Approval: F5 trajectory, F3 approval gate, F6 network deny, F7 read-only default | 2026-08-31 | ADR-005, ADR-007, ADR-008, ADR-009 / Phase 1b |
 | **v0.9.0** | Tooling + Replay: F10 validator, F8 replay viewer, OCI pull + Cosign, llama.cpp FFI, MCP client | 2026-10-05 | ADR-010, ADR-012, ADR-013, ADR-014, ADR-018 / Phase 1c |
-| **v1.0.0** | **Phase 1 GA — Security Review Milestone:** multi-turn agent loop with per-turn enforcement, web UI, conformance suite, auditor evidence package, design-partner review passed, Apache 2.0 community release | **2026-11-02** | ADR-001, ADR-016, ADR-025, ADR-026, ADR-027, ADR-028, ADR-029, ADR-030 / Phase 1 GA |
+| **v0.9.5** | Community UI: localhost chat, live trajectory, inline F3 approvals, visual manifest builder, model library, MCP catalog | 2026-10-20 | ADR-031, ADR-032, ADR-033 / Phase 1d |
+| **v1.0.0** | **Phase 1 GA — Security Review Milestone:** multi-turn agent loop with per-turn enforcement, conformance suite, auditor evidence package, design-partner review passed, Apache 2.0 community release | **2026-11-02** | ADR-001, ADR-016, ADR-025, ADR-026, ADR-027, ADR-028, ADR-029, ADR-030 / Phase 1 GA |
 | **v2.0.0** | Kubernetes Runtime: Operator + CRDs, SPIRE attestation, GPU backends (vLLM/TGI/KServe), persistent ledger | 2027-01-25 | ADR-002, ADR-015 / Phase 2 |
+| **v2.5.0** | Enterprise UI: multi-tenant fleet dashboard, RBAC + SSO/SAML, automated compliance exports (CMMC / FedRAMP / SOC 2 / EU AI Act) | 2027-03-01 | ADR-034 / Phase 2.5 |
 | **v3.0.0** | OpenShift Enterprise Runtime: SCCs, disconnected install, GitOps, automated CMMC/FedRAMP exports | 2027-04-19 | ADR-015 / Phase 3 |
 
 ## Strategic Anchor: CMMC 2.0 Deadline
@@ -82,6 +84,13 @@ Phase 1b: F5 pre-execution trajectory recorder, F3 human approval gate (CLI + lo
 
 Phase 1c: F10 policy-as-code validator (aegis validate) with composition + linter, F8 deterministic offline single-file HTML replay viewer, OCI artifact pull + Cosign verification (aegis pull), llama.cpp Rust FFI binding integrated with Backend trait, MCP client adoption per ADR-018 (manifest gains optional `tools.mcp[]`; F5 reasoning entries carry MCP tool names). Maps to ADRs 010, 012, 013, 014, 018.
 
+### v0.9.5 — Community UI
+<!-- milestone-id: v0-9-5-community-ui -->
+- **Status:** planned
+- **Due:** 2026-10-20
+
+Phase 1d: localhost-bound Apache-2.0 Community UI for the single-user / single-agent workflow. Ships four core surfaces (chat, live trajectory streaming, inline F3 approval cards, visual manifest builder with live `aegis validate` feedback) plus a visual Model Library wrapping `aegis pull` and an MCP Server Catalog with discovery-driven allowlist toggles. Static SPA bundled into the `aegis` binary; no external services. Multi-turn-aware (renders per-turn ledger structure from ADR-026). Maps to ADRs 031, 032, 033.
+
 ### v1.0.0 — Phase 1 GA / Security Review Milestone
 <!-- milestone-id: v1-0-0-phase-1-ga-security-review-milestone -->
 - **Status:** pushed (#5)
@@ -98,7 +107,7 @@ Phase 1 GA. Closes the gap between "agent runtime" the project name and what the
 - ADR-030: per-turn SPIFFE/mTLS workload attestation (ephemeral SVIDs, `aud` claim binds to turn)
 
 **Other v1.0.0 deliverables:**
-- Web UI (operator console for live agent observation + approval routing — details TBD)
+- Community UI polish on top of v0.9.5 (per-turn fold/unfold rendering for ADR-026, quota visualization for ADR-027, escalation routing for ADR-029)
 - End-to-end conformance test suite green
 - `aegis evidence cmmc` evidence-pack generator (signed report from F9 ledger; see [docs/COMPLIANCE_MATRIX.md](docs/COMPLIANCE_MATRIX.md))
 - First design-partner security review passed
@@ -113,6 +122,13 @@ Anchored to the U.S. CMMC 2.0 deadline (PRD §9 — defense beachhead). Maps to 
 - **Due:** 2027-01-25
 
 Phase 2: Kubernetes Operator + CRDs (AegisAgent, PermissionManifest, Ledger), SPIRE workload-attestation integration, GPU backends (vLLM/TGI/KServe) against the Backend trait, persistent ledger storage, NetworkPolicies stacked under runtime-level F6 deny. Maps to ADRs 002, 003, 008, 014, 015.
+
+### v2.5.0 — Enterprise UI
+<!-- milestone-id: v2-5-0-enterprise-ui -->
+- **Status:** planned
+- **Due:** 2027-03-01
+
+Phase 2.5: commercial-licensed multi-tenant Enterprise Management Dashboard built on top of the Phase 2 Kubernetes Operator. Surfaces fleet-wide agent state across the cluster, RBAC + SSO/SAML (Okta / Azure AD / Google / Keycloak air-gapped), multi-tenant manifest authoring with quota inheritance, live + historical ledger view, automated compliance report exports (CMMC 2.0 / FedRAMP / SOC 2 Type II / EU AI Act). Does not weaken or replace the community-tier runtime gates — operates them at scale. Maps to ADR-034.
 
 ### v3.0.0 — OpenShift Enterprise Runtime
 <!-- milestone-id: v3-0-0-openshift-enterprise-runtime -->
