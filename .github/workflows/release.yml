@@ -187,7 +187,7 @@ jobs:
           echo "===== end ====="
 
       - name: Dry-run preview (workflow_dispatch with dry_run=true)
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true'
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           PRERELEASE: ${{ steps.prerel.outputs.flag }}
@@ -197,7 +197,7 @@ jobs:
           echo "prerelease flag: $PRERELEASE"
 
       - name: Create draft GitHub Release
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == 'false')
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           PRERELEASE: ${{ steps.prerel.outputs.flag }}
