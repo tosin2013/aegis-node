@@ -24,6 +24,25 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Node + pnpm are required by crates/ui-server/build.rs, which
+      # invokes `pnpm install --frozen-lockfile && pnpm build` in `ui/`
+      # to produce the static SPA assets that `rust-embed` bakes into
+      # the binary at compile time (per ADR-031). Pinned to mise.toml's
+      # node = "20" + the `packageManager` field in `ui/package.json`
+      # (pnpm@10.x). Bumping either requires editing both. pnpm is
+      # installed before setup-node so setup-node's `cache: pnpm`
+      # backend can locate the pnpm store.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
       # oras + cosign are needed by crates/cli/tests/pull_real_image.rs
       # which pulls the devbox image through the same `pull::pull` code
       # path operators use (per ADR-013 / OCI-A). Without them, the test
