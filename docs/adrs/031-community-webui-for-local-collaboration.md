@@ -184,14 +184,24 @@ Plus two adjacent capabilities ship as their own ADRs:
   builder's live linting.
 - Tracking issue: see v0.9.5 milestone tracker.
 
+## Resolved questions
+
+- **Auth on localhost.** *Resolved 2026-05-06 (sub-phase 1d.1a):
+  no auth in the Community UI, period.* No login screen, no
+  per-session token, no `Authorization` header check, no session
+  cookie. The OS process boundary plus the loopback bind ([ADR-031](031-community-webui-for-local-collaboration.md)
+  §"Localhost-only") is the entire auth model. Earlier draft of
+  this ADR floated a kubectl-style 0600 token to close the
+  "malicious local process drives the UI" gap; the project
+  decision is to keep the open-source Community tier
+  deliberately auth-free and route all auth — login/logout, SSO,
+  SAML, RBAC — exclusively through [ADR-034](034-enterprise-management-dashboard-and-rbac.md)
+  / v2.5.0 Enterprise. Mixing auth into the Community UI would
+  blur the open-core boundary and ship a half-solution that
+  real multi-user deployments outgrow anyway.
+
 ## Open questions for follow-up
 
-- **Auth on localhost.** The threat model is "operator owns the
-  host," so no auth at all is defensible. But: a malicious local
-  process can drive the UI via the loopback API. Should we require
-  a per-session token in `Authorization` headers (stored in a
-  user-readable file with 0600 perms; same trust as kubectl
-  config)? Lean yes — costs nothing, closes a small gap.
 - **Cookie storage of session state.** UI may want to persist
   drafts of manifests across browser refreshes. localStorage is
   acceptable; no PII or secrets stored UI-side. Decision: yes,
