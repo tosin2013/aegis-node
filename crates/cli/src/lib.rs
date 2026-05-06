@@ -23,6 +23,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 pub mod pull;
 pub mod run;
+pub mod ui;
 
 #[derive(Debug, Parser)]
 #[command(name = "aegis", version, about = "Aegis-Node CLI")]
@@ -44,6 +45,8 @@ enum Command {
     Run(run::RunArgs),
     /// Fetch + verify a model artifact from an OCI registry (ADR-013, F1).
     Pull(PullArgs),
+    /// Start the localhost-bound Community UI server (ADR-031, sub-phase 1d.0).
+    Ui(ui::UiArgs),
 }
 
 #[derive(Debug, Args)]
@@ -145,6 +148,7 @@ pub fn run() -> Result<()> {
         Command::Verify(args) => cmd_verify(args),
         Command::Run(args) => cmd_run(args),
         Command::Pull(args) => cmd_pull(args),
+        Command::Ui(args) => ui::execute(args),
     }
 }
 

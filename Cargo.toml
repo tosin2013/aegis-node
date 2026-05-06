@@ -14,6 +14,7 @@ members = [
     "crates/llama-backend",
     "crates/litertlm-sys",
     "crates/litertlm-backend",
+    "crates/ui-server",
 ]
 # Default member set excludes the FFI-bound backends (`llama-backend`,
 # `litertlm-sys`, `litertlm-backend`) so the existing
@@ -32,6 +33,7 @@ default-members = [
     "crates/filesystem-gate",
     "crates/approval-gate",
     "crates/mcp-client",
+    "crates/ui-server",
 ]
 
 [workspace.package]

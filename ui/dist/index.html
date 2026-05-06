@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aegis-Node — Community UI</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Aegis-Node</h1>
+        <p class="tagline">Community UI · Phase 1d scaffold</p>
+      </header>
+      <section class="card">
+        <p class="muted">
+          The full UI ships across v0.9.5 (Phase 1d). This page proves the
+          embedded SPA pipeline works — the React surfaces (chat,
+          trajectory, manifest builder, model library) replace this
+          placeholder in subsequent sub-phases.
+        </p>
+        <dl>
+          <dt>Runtime version</dt>
+          <dd id="version" class="mono">loading…</dd>
+          <dt>Build features</dt>
+          <dd id="features" class="mono">loading…</dd>
+          <dt>Listen address</dt>
+          <dd id="listen" class="mono">loading…</dd>
+        </dl>
+      </section>
+      <footer>
+        <a href="https://github.com/tosin2013/aegis-node">github.com/tosin2013/aegis-node</a>
+      </footer>
+    </main>
+    <script>
+      fetch("/api/v1/version")
+        .then((r) => r.json())
+        .then((j) => {
+          document.getElementById("version").textContent =
+            j.version ?? "(unknown)";
+          document.getElementById("features").textContent =
+            (j.features ?? []).join(", ") || "(none)";
+          document.getElementById("listen").textContent =
+            j.listen ?? "(unknown)";
+        })
+        .catch((e) => {
+          document.getElementById("version").textContent = "error: " + e;
+        });
+    </script>
+  </body>
+</html>
