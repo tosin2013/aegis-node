@@ -41,6 +41,7 @@ aegis-llama-backend = { path = "../llama-backend", optional = true }
 aegis-litertlm-backend = { path = "../litertlm-backend", optional = true }
 aegis-mcp-client = { path = "../mcp-client" }
 aegis-policy = { path = "../policy" }
+aegis-ui-server = { path = "../ui-server" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -50,6 +51,7 @@ anyhow = "1"
 sha2 = "0.10"
 tempfile = "3"
 thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "signal"] }
 
 [dev-dependencies]
 tempfile = "3"
