@@ -13,7 +13,7 @@ type LoadState =
   | { kind: "ready"; data: VersionResponse }
   | { kind: "error"; message: string };
 
-export default function App() {
+export function Home() {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export default function App() {
   }, []);
 
   return (
-    <main className="mx-auto max-w-2xl px-6 pt-16 pb-12">
+    <>
       <header className="mb-8 flex items-center gap-3">
         <ShieldCheck className="h-7 w-7 text-accent" aria-hidden="true" />
         <div>
@@ -87,15 +87,6 @@ export default function App() {
           )}
         </CardContent>
       </Card>
-
-      <footer className="mt-8 text-center">
-        <a
-          href="https://github.com/tosin2013/aegis-node"
-          className="font-mono text-xs text-muted hover:text-accent"
-        >
-          github.com/tosin2013/aegis-node
-        </a>
-      </footer>
-    </main>
+    </>
   );
 }

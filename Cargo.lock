@@ -199,6 +199,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "axum",
+ "dirs",
  "http-body-util",
  "hyper",
  "hyper-util",
