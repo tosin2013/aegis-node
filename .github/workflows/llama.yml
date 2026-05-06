@@ -55,6 +55,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libclang-dev clang
 
+      # Node + pnpm are required by `crates/ui-server`'s build.rs (per
+      # ADR-031) which runs `pnpm install --frozen-lockfile && pnpm build`
+      # in `ui/` to produce the static SPA assets that `rust-embed`
+      # bakes into the binary. Any workflow that touches `aegis-cli`
+      # transitively triggers this build script — see the matching
+      # setup in `rust.yml`, `litertlm.yml`, and `demos.yml`.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
       - uses: Swatinem/rust-cache@v2
         with:
           # The llama.cpp build artifacts live under target/; cache them

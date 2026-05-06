@@ -73,6 +73,7 @@ pub fn router(config: Config) -> Router {
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
         .route("/api/v1/version", get(handlers::health::version))
+        .route("/api/v1/models", get(handlers::models::list_models))
         .fallback(handlers::assets::serve_embedded)
         .with_state(config)
 }

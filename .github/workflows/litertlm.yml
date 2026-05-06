@@ -72,6 +72,20 @@ jobs:
       - name: Install oras
         uses: oras-project/setup-oras@v1
 
+      # Node + pnpm are required by `crates/ui-server`'s build.rs (per
+      # ADR-031). Building `aegis-cli` transitively triggers it. See
+      # `rust.yml` / `llama.yml` / `demos.yml` for the matching setup.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: litertlm-backend
