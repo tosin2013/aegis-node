@@ -60,7 +60,10 @@ func TestRenderTextSummaryAndCounts(t *testing.T) {
 		"AEGIS001",
 		"AEGIS006",
 		"AEGIS010",
-		"manifest.yaml:0:0:",
+		// Fixture findings have Line/Col=0 (unresolved); positionFor
+		// falls back to 1,1 so the text format emits :1:1: rather
+		// than the legacy :0:0: placeholder.
+		"manifest.yaml:1:1:",
 		"1 error(s), 1 warning(s), 1 info",
 	} {
 		if !strings.Contains(got, want) {

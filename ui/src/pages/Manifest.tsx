@@ -201,10 +201,16 @@ export function Manifest() {
           <p className="mb-4 text-sm text-muted">
             Monaco editor served from the embedded SPA bundle (no CDN). Each
             curated template ships with a metadata block + pain-point citation
-            anchored in a documented incident; source files live at{" "}
-            <code className="font-mono text-accent">
+            anchored in a documented incident (CVE, postmortem, forum
+            thread); source files live at{" "}
+            <a
+              href="https://github.com/tosin2013/aegis-node/tree/main/examples/templates/manifests"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-accent underline-offset-2 hover:underline"
+            >
               examples/templates/manifests/
-            </code>
+            </a>
             . Save writes to{" "}
             <code className="font-mono text-accent">
               ~/.config/aegis/manifests/draft.yaml

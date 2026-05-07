@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/tosin2013/aegis-node/pkg/manifest"
 	"github.com/tosin2013/aegis-node/pkg/validate"
@@ -65,7 +66,18 @@ Flags:
 	}
 
 	path := fs.Arg(0)
-	m, err := manifest.Load(path)
+	// Read the YAML bytes once so we can both pass them to manifest.Load
+	// (via Parse) AND, after Lint, look up source positions for each
+	// finding. Each Finding.Field is a dotted-with-brackets path; the
+	// LookupPosition helper walks the YAML AST to translate it to
+	// (line, col). Output formatters consume the populated Line/Col
+	// fields when present and fall back to (1,1) otherwise.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "load %s: %v\n", path, err)
+		return errExit(2)
+	}
+	m, err := manifest.Parse(path, data)
 	if err != nil {
 		fmt.Fprintf(stderr, "load %s: %v\n", path, err)
 		return errExit(2)
@@ -78,6 +90,12 @@ Flags:
 	}
 
 	findings := validate.Lint(m, opts)
+	for i := range findings {
+		line, col := manifest.LookupPosition(data, findings[i].Field)
+		findings[i].Line = line
+		findings[i].Col = col
+	}
+
 	if err := format.Render(stdout, path, findings, out); err != nil {
 		fmt.Fprintf(stderr, "render: %v\n", err)
 		return errExit(1)
