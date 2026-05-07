@@ -56,13 +56,32 @@ pub struct TurnOutcome {
     pub assistant_text: Option<String>,
     /// Per-tool-call outcome, in emission order.
     pub tool_calls: Vec<ToolCallOutcome>,
+    /// UUIDv7 of the F5 reasoning-step ledger entry this turn
+    /// produced. The same id appears in
+    /// [F9](../../docs/adrs/011-hash-chained-tamper-evident-ledger.md)
+    /// as the step's `id` and on every per-call ledger entry the
+    /// dispatcher emits during the turn (each carries
+    /// `reasoning_step_id`). Surfaced here so callers — the WebUI
+    /// chat surface (ADR-031), evidence-pack generators, replay
+    /// viewers — can anchor their per-turn UI to the cryptographic
+    /// trail in the F9 ledger without re-reading the file.
+    pub reasoning_step_id: String,
 }
 
-/// Outcome of one dispatched [`ToolCall`].
+/// Outcome of one dispatched [`ToolCall`]. Captures the model's
+/// emitted args alongside the mediator's terminal result so callers
+/// have the full call signature in-process, not just the verdict.
 #[derive(Debug, Clone)]
 pub struct ToolCallOutcome {
     /// Tool name as the model emitted it (`<namespace>__<tool>`).
     pub name: String,
+    /// Args the model passed, preserved verbatim from the
+    /// [`ToolCall::arguments`] the mediator received. The runtime
+    /// validates these against the manifest's allowlist + ADR-024
+    /// `pre_validate` clauses before dispatch; surfacing them on
+    /// the outcome lets the WebUI render them inside its inline
+    /// tool-call cards (ADR-031 §"Inline tool-call cards").
+    pub arguments: serde_json::Value,
     /// Result of the dispatch.
     pub result: ToolCallResult,
 }
@@ -142,6 +161,7 @@ impl Session {
         Ok(TurnOutcome {
             assistant_text: response.assistant_text,
             tool_calls: outcomes,
+            reasoning_step_id: step_id,
         })
     }
 
@@ -268,6 +288,7 @@ impl Session {
         let Some((namespace, tool)) = split_mcp_name(&call.name) else {
             return Ok(ToolCallOutcome {
                 name: call.name.clone(),
+                arguments: call.arguments,
                 result: ToolCallResult::Unroutable(format!(
                     "tool name {:?} not in <namespace>__<tool> shape",
                     call.name
@@ -300,6 +321,7 @@ impl Session {
         };
         Ok(ToolCallOutcome {
             name: call.name,
+            arguments: call.arguments,
             result,
         })
     }
