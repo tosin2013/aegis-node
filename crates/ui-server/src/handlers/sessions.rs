@@ -130,11 +130,19 @@ pub struct ConnectParams {
 /// `GET /api/v1/stream?sid=<id>` — upgrade to WebSocket and run the
 /// chat loop. Rejects unknown session IDs with 404 *before* upgrade,
 /// so the SPA's connection failure is unambiguous.
+///
+/// The backend is read through the `RwLock` at upgrade time and
+/// captured for the connection's lifetime. A fork that lands while
+/// this WS is open uses the new backend only on subsequently-opened
+/// connections — the SPA closes + reopens the WS after a successful
+/// fork (sub-phase 1d.2e.1) so this is the operator-visible behaviour.
 pub async fn stream(
     ws: WebSocketUpgrade,
     Query(params): Query<ConnectParams>,
     State(reg): State<SessionRegistry>,
-    State(backend): State<std::sync::Arc<dyn crate::ChatBackend>>,
+    State(backend_swap): State<
+        std::sync::Arc<tokio::sync::RwLock<std::sync::Arc<dyn crate::ChatBackend>>>,
+    >,
 ) -> Response {
     if !reg.exists(&params.sid).await {
         return (
@@ -143,7 +151,102 @@ pub async fn stream(
         )
             .into_response();
     }
+    let backend = backend_swap.read().await.clone();
     ws.on_upgrade(move |socket| handle_socket(socket, params.sid, backend))
+}
+
+/// Request body for `POST /api/v1/sessions/fork`.
+#[derive(Debug, Deserialize)]
+pub struct ForkRequest {
+    /// Cache-directory digest of the model the new session should
+    /// run against (the SHA-256 of the artifact's OCI manifest, same
+    /// shape as `/api/v1/models` returns). Sub-phase 1d.2e.1 keeps
+    /// the manifest fixed; only the model swaps.
+    pub model_digest: String,
+}
+
+/// Response for `POST /api/v1/sessions/fork`.
+#[derive(Debug, Serialize)]
+pub struct ForkResponse {
+    pub ok: bool,
+    /// The digest the runtime is now bound to. Echoed for the SPA
+    /// to confirm the swap landed on the requested model (no
+    /// silent fallback to the previous one).
+    pub model_digest: String,
+    pub schema: &'static str,
+}
+
+/// `POST /api/v1/sessions/fork` — swap the chat backend to a fresh
+/// `Session` bound to `model_digest`, dropping the previous one.
+/// The manifest, identity, and backend kind stay fixed at process
+/// boot; only the model artifact changes (per ADR-032 §"Session
+/// Forking" — same-backend swap in 1d.2e.1; cross-backend lands in
+/// 1d.2e.2 alongside chat-history replay).
+pub async fn fork_session(
+    State(swap): State<std::sync::Arc<tokio::sync::RwLock<std::sync::Arc<dyn crate::ChatBackend>>>>,
+    State(factory): State<Option<std::sync::Arc<dyn crate::ChatBackendFactory>>>,
+    Json(req): Json<ForkRequest>,
+) -> Response {
+    let factory = match factory {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "fork unavailable: chat surface is running on the stub backend. Start \
+                 `aegis ui --manifest <m> --model <m>` to enable model swapping."
+                    .to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    // Run factory.fork on a blocking thread — Session::boot does
+    // model-load work that's CPU-bound; blocking the executor here
+    // would freeze every active WebSocket on this process for the
+    // duration of the load.
+    let factory_for_blocking = factory.clone();
+    let digest_for_blocking = req.model_digest.clone();
+    let new_backend =
+        match tokio::task::spawn_blocking(move || factory_for_blocking.fork(&digest_for_blocking))
+            .await
+        {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("fork failed: {e}"),
+                )
+                    .into_response();
+            }
+            Err(join_err) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("fork worker panicked: {join_err}"),
+                )
+                    .into_response();
+            }
+        };
+
+    // Replace the inner backend. The previous `Arc<dyn ChatBackend>`
+    // drops here; SessionBackend's Drop runs the inner Session's
+    // destructor (no explicit shutdown — that's a 1d.2e.2 concern
+    // alongside graceful session_end emission). Subsequent WS
+    // connections see the new backend; existing ones keep the old
+    // one until the SPA closes + reopens them.
+    *swap.write().await = new_backend;
+
+    tracing::info!(
+        target: "aegis_ui_server",
+        model_digest = %req.model_digest,
+        "chat backend forked",
+    );
+
+    Json(ForkResponse {
+        ok: true,
+        model_digest: req.model_digest,
+        schema: SCHEMA_VERSION,
+    })
+    .into_response()
 }
 
 /// Server → client frame body. The wire form has `schema: "v1"` at

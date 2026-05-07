@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   Bot,
@@ -22,6 +16,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { ModelPicker } from "@/components/ModelPicker";
 import {
   connectChatWs,
   createSession,
@@ -81,6 +76,11 @@ export function Chat() {
   const [input, setInput] = useState("");
   const wsRef = useRef<ChatWs | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Bumped after a successful Session Fork (ADR-032). The bootstrap
+  // useEffect depends on this — bumping triggers WS teardown +
+  // fresh `POST /api/v1/sessions` against the swapped backend, so
+  // the new connection picks up the new model.
+  const [sessionEpoch, setSessionEpoch] = useState(0);
 
   const handleFrame = useCallback((frame: ServerFrame) => {
     switch (frame.type) {
@@ -220,7 +220,7 @@ export function Chat() {
       ws?.close();
       wsRef.current = null;
     };
-  }, [handleFrame]);
+  }, [handleFrame, sessionEpoch]);
 
   // Keep the message list scrolled to bottom on append.
   useEffect(() => {
@@ -255,6 +255,27 @@ export function Chat() {
     setInput("");
   }
 
+  // Called by ModelPicker after `POST /api/v1/sessions/fork` returns ok.
+  // The backend has swapped the inner ChatBackend; we tear the WS down,
+  // clear the chat thread (1d.2e.1 has no history replay — that's
+  // 1d.2e.2), emit a system bookmark, and bump the epoch so the
+  // bootstrap useEffect creates a fresh session against the new model.
+  const handleForkComplete = useCallback((modelDigest: string) => {
+    wsRef.current?.close();
+    wsRef.current = null;
+    const short = modelDigest.replace(/^sha256:/, "").slice(0, 8);
+    setMessages([
+      {
+        kind: "text",
+        id: `forked-${Date.now()}`,
+        role: "system",
+        text: `Session forked to model ${short}…. Chat history was cleared (replay lands in 1d.2e.2).`,
+      },
+    ]);
+    setConn({ kind: "connecting" });
+    setSessionEpoch((n) => n + 1);
+  }, []);
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     // Enter sends; Shift+Enter inserts a newline (matches assistant-
     // ui / Claude / ChatGPT convention).
@@ -277,7 +298,10 @@ export function Chat() {
             </p>
           </div>
         </div>
-        <ConnectionPill state={conn} />
+        <div className="flex items-center gap-2">
+          <ModelPicker onForkComplete={handleForkComplete} />
+          <ConnectionPill state={conn} />
+        </div>
       </header>
 
       <Card>
@@ -340,12 +364,7 @@ function MessageBubble({ message }: { message: TextMessage }) {
   }
   const isUser = message.role === "user";
   return (
-    <div
-      className={cn(
-        "flex gap-3",
-        isUser ? "flex-row-reverse" : "flex-row",
-      )}
-    >
+    <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elev)]">
         {isUser ? (
           <User className="h-4 w-4 text-muted" aria-hidden="true" />

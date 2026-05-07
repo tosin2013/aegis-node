@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 
 use aegis_inference_engine::Session;
 use aegis_ui_server::chat::{TurnToolCall, TurnToolCallStatus};
-use aegis_ui_server::{ChatBackend, ChatBackendError, Config, StubBackend, TurnResult};
+use aegis_ui_server::{
+    ChatBackend, ChatBackendError, ChatBackendFactory, Config, StubBackend, TurnResult,
+};
 use anyhow::{Context, Result};
 use clap::Args;
 
@@ -94,7 +96,7 @@ pub fn execute(args: UiArgs) -> Result<()> {
         );
     }
 
-    let chat_backend = build_chat_backend(&args)?;
+    let (chat_backend, factory) = build_chat_backend(&args)?;
 
     let config = Config {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -115,7 +117,7 @@ pub fn execute(args: UiArgs) -> Result<()> {
 
     runtime.block_on(async move {
         tokio::select! {
-            res = aegis_ui_server::serve_with_backend(config, chat_backend) => res,
+            res = aegis_ui_server::serve_with_backend(config, chat_backend, factory) => res,
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("\nshutting down");
                 Ok(())
@@ -124,17 +126,19 @@ pub fn execute(args: UiArgs) -> Result<()> {
     })
 }
 
-/// Resolve the chat backend based on the CLI args. Returns the real
-/// [`SessionBackend`] when both `--manifest` and `--model` are
-/// provided AND the matching Cargo feature is built; otherwise a
-/// [`StubBackend`] so the chat surface stays visibly functional with
-/// an operator hint.
+/// Resolve the chat backend + factory based on the CLI args.
+/// Returns a real [`SessionBackend`] + [`SessionBackendFactory`]
+/// when both `--manifest` and `--model` are provided; otherwise
+/// [`StubBackend`] + `None` factory (fork unavailable in stub mode).
 ///
 /// Half-set inputs (one of `--manifest`/`--model` provided but not
 /// the other) are a usage error — the operator clearly meant to
 /// attach a Session, so failing fast is friendlier than silently
 /// falling back to the stub.
-fn build_chat_backend(args: &UiArgs) -> Result<Arc<dyn ChatBackend>> {
+#[allow(clippy::type_complexity)]
+fn build_chat_backend(
+    args: &UiArgs,
+) -> Result<(Arc<dyn ChatBackend>, Option<Arc<dyn ChatBackendFactory>>)> {
     match (&args.manifest, &args.model) {
         (Some(manifest), Some(model)) => {
             eprintln!(
@@ -155,19 +159,42 @@ fn build_chat_backend(args: &UiArgs) -> Result<Arc<dyn ChatBackend>> {
                 args.backend,
             )
             .context("booting Session for chat surface")?;
-            Ok(Arc::new(SessionBackend::new(session)))
+            let backend: Arc<dyn ChatBackend> = Arc::new(SessionBackend::new(session));
+            let factory: Arc<dyn ChatBackendFactory> = Arc::new(SessionBackendFactory {
+                manifest: manifest.clone(),
+                config: args.config.clone(),
+                chat_template_sidecar: args.chat_template_sidecar.clone(),
+                identity_dir: args.identity_dir.clone(),
+                workload: args.workload.clone(),
+                instance: args.instance.clone(),
+                backend_kind: args.backend,
+                current_digest: Mutex::new(digest_from_model_path(model)),
+            });
+            Ok((backend, Some(factory)))
         }
         (None, None) => {
             eprintln!(
                 "no --manifest/--model provided — chat surface uses StubBackend (echo + hint)",
             );
-            Ok(Arc::new(StubBackend))
+            Ok((Arc::new(StubBackend), None))
         }
         (Some(_), None) | (None, Some(_)) => anyhow::bail!(
             "--manifest and --model must be provided together. Omit both for the stub backend, \
              or pass both for real Session::run_turn integration.",
         ),
     }
+}
+
+/// Pull the cache-directory digest out of a model path like
+/// `~/.cache/aegis/models/<sha>/blob.bin`. Returns `None` when the
+/// path doesn't fit that shape (operators using non-standard layouts
+/// just lose the dropdown's "current model highlighted" cue).
+fn digest_from_model_path(p: &std::path::Path) -> Option<String> {
+    p.parent()
+        .and_then(|d| d.file_name())
+        .and_then(|s| s.to_str())
+        .filter(|s| s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|s| s.to_string())
 }
 
 /// Names of the optional Cargo features the CLI was compiled with.
@@ -262,5 +289,86 @@ fn convert_status(r: aegis_inference_engine::ToolCallResult) -> TurnToolCallStat
         ToolCallResult::Denied(reason) => TurnToolCallStatus::Denied { reason },
         ToolCallResult::RequiresApproval(reason) => TurnToolCallStatus::RequiresApproval { reason },
         ToolCallResult::Unroutable(reason) => TurnToolCallStatus::Unroutable { reason },
+    }
+}
+
+/// Factory that re-boots [`SessionBackend`]s against a different
+/// model digest — the seam the WebUI's model-picker fork endpoint
+/// exercises per ADR-032 §"Session Forking."
+///
+/// Holds the boot args that are *fixed across forks* — manifest,
+/// identity, backend kind, workload/instance segments. The
+/// `current_digest` tracker lets the dropdown highlight which model
+/// is currently loaded; it updates on every successful fork.
+///
+/// **Limitations of 1d.2e.1:**
+/// - Same-backend swap only. The stored `backend_kind` is reused
+///   for every fork; cross-backend swaps (llama → litertlm) need
+///   OCI-media-type detection that lands in 1d.2e.2.
+/// - Each fork allocates a fresh ledger path under the cwd
+///   (`./ledger-ui-fork-<digest8>-<unix>.jsonl`) so the F9 chain
+///   integrity is preserved per-session. The previous ledger stays
+///   on disk for `aegis verify` post-mortem.
+struct SessionBackendFactory {
+    manifest: PathBuf,
+    config: Option<PathBuf>,
+    chat_template_sidecar: Option<PathBuf>,
+    identity_dir: Option<PathBuf>,
+    workload: String,
+    instance: String,
+    backend_kind: BackendKind,
+    current_digest: Mutex<Option<String>>,
+}
+
+impl ChatBackendFactory for SessionBackendFactory {
+    fn fork(&self, model_digest: &str) -> Result<Arc<dyn ChatBackend>, ChatBackendError> {
+        let cache = match dirs::cache_dir() {
+            Some(d) => d.join("aegis").join("models"),
+            None => {
+                return Err(ChatBackendError::new(
+                    "could not resolve user cache dir for model lookup",
+                ));
+            }
+        };
+        let model_path = cache.join(model_digest).join("blob.bin");
+        if !model_path.is_file() {
+            return Err(ChatBackendError::new(format!(
+                "model digest {model_digest} not in local cache (expected {}); \
+                 pull it via `aegis pull <ref>` first",
+                model_path.display(),
+            )));
+        }
+
+        let unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let digest8 = &model_digest[..model_digest.len().min(8)];
+        let ledger_path = std::env::current_dir()
+            .map(|d| d.join(format!("ledger-ui-fork-{digest8}-{unix}.jsonl")))
+            .map_err(|e| ChatBackendError::new(format!("resolving ledger path for fork: {e}")))?;
+
+        let session = boot_session_for_ui(
+            self.manifest.clone(),
+            model_path,
+            self.config.clone(),
+            self.chat_template_sidecar.clone(),
+            self.identity_dir.clone(),
+            self.workload.clone(),
+            self.instance.clone(),
+            Some(ledger_path),
+            self.backend_kind,
+        )
+        .map_err(|e| ChatBackendError::new(format!("forking Session: {e:#}")))?;
+
+        if let Ok(mut guard) = self.current_digest.lock() {
+            *guard = Some(model_digest.to_string());
+        }
+
+        Ok(Arc::new(SessionBackend::new(session)))
+    }
+
+    fn current_model_digest(&self) -> Option<String> {
+        self.current_digest.lock().ok().and_then(|g| g.clone())
     }
 }
