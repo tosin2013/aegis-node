@@ -1,12 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, Hash } from "lucide-react";
+import { Boxes, Hash, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
+interface ModelCosign {
+  verified: boolean;
+  mode: string;
+  keyless_identity_pattern?: string;
+  keyless_oidc_issuer_pattern?: string;
+  key_path?: string;
+}
 
 interface Model {
   digest: string;
   oci_ref: string | null;
+  cosign?: ModelCosign;
   size_bytes: number;
   last_used: string | null;
+  pulled_at?: string;
   has_chat_template: boolean;
 }
 
@@ -26,6 +36,14 @@ function shortDigest(digest: string): string {
   // sha256:<64 hex> → sha256:abcd1234…cdef
   if (digest.length <= 24) return digest;
   return `${digest.slice(0, 18)}…${digest.slice(-8)}`;
+}
+
+function shortRef(ref: string): string {
+  // Trim the @sha256:<64> tail to just the digest's first 8 chars
+  // for compactness; the full ref is still in the title attribute.
+  const idx = ref.indexOf("@sha256:");
+  if (idx === -1) return ref;
+  return `${ref.slice(0, idx)}@sha256:${ref.slice(idx + 8, idx + 16)}…`;
 }
 
 export function Models() {
@@ -96,6 +114,9 @@ export function Models() {
                       <span className="font-mono text-accent">
                         {shortDigest(m.digest)}
                       </span>
+                      {m.cosign?.verified && (
+                        <CosignBadge cosign={m.cosign} />
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -103,8 +124,11 @@ export function Models() {
                       {m.oci_ref && (
                         <>
                           <dt className="text-muted">OCI ref</dt>
-                          <dd className="truncate font-mono text-accent">
-                            {m.oci_ref}
+                          <dd
+                            className="truncate font-mono text-accent"
+                            title={m.oci_ref}
+                          >
+                            {shortRef(m.oci_ref)}
                           </dd>
                         </>
                       )}
@@ -114,6 +138,22 @@ export function Models() {
                       <dd className="font-mono">
                         {m.has_chat_template ? "✓ present" : "—"}
                       </dd>
+                      {m.cosign && (
+                        <>
+                          <dt className="text-muted">Cosign</dt>
+                          <dd className="font-mono">
+                            <CosignDetails cosign={m.cosign} />
+                          </dd>
+                        </>
+                      )}
+                      {m.pulled_at && (
+                        <>
+                          <dt className="text-muted">Pulled at</dt>
+                          <dd className="font-mono">
+                            {new Date(m.pulled_at).toLocaleString()}
+                          </dd>
+                        </>
+                      )}
                       {m.last_used && (
                         <>
                           <dt className="text-muted">Last used</dt>
@@ -131,5 +171,45 @@ export function Models() {
         </>
       )}
     </>
+  );
+}
+
+function CosignBadge({ cosign }: { cosign: ModelCosign }) {
+  const tooltip =
+    cosign.mode === "keyless"
+      ? `verified · keyless · identity ${cosign.keyless_identity_pattern ?? "*"}`
+      : `verified · key ${cosign.key_path ?? "*"}`;
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300"
+      title={tooltip}
+    >
+      <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+      verified
+    </span>
+  );
+}
+
+function CosignDetails({ cosign }: { cosign: ModelCosign }) {
+  if (cosign.mode === "key") {
+    return (
+      <span>
+        <span className="text-emerald-300">✓ keyed</span> ·{" "}
+        <span className="text-muted">key:</span>{" "}
+        {cosign.key_path ?? "(unknown)"}
+      </span>
+    );
+  }
+  return (
+    <span>
+      <span className="text-emerald-300">✓ keyless</span>
+      {cosign.keyless_identity_pattern && (
+        <>
+          {" "}
+          · <span className="text-muted">identity:</span>{" "}
+          <span className="break-all">{cosign.keyless_identity_pattern}</span>
+        </>
+      )}
+    </span>
   );
 }

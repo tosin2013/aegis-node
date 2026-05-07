@@ -10,26 +10,90 @@
 //! ```text
 //! ~/.cache/aegis/models/
 //!   <sha256_hex>/
-//!     <model artifact files>
-//!     chat_template.sha256.txt   (optional sidecar)
+//!     blob.bin
+//!     ref.txt                    (canonical OCI ref)
+//!     sha256.txt                 (blob's actual SHA-256)
+//!     chat_template.sha256.txt   (optional)
+//!     provenance.json            (optional — present for pulls
+//!                                 from sub-phase 1d.1e onward)
 //! ```
 //!
-//! Sub-phase 1d.1b ships read-only enumeration only. The "Add model"
-//! flow that wraps `pull::pull` over WebSocket lands in 1d.1c.
+//! ### `oci_ref` resolution
 //!
-//! ### Future-work notes
+//! Two-tier fallback so the Models page surfaces a usable ref for
+//! every cached model regardless of when it was pulled:
 //!
-//! - The OCI ref the operator originally pulled with isn't preserved
-//!   in the cache today (only the digest is). 1d.1c will add a
-//!   `provenance.json` sidecar capturing the source ref + cosign
-//!   verification result so this handler can surface
-//!   `oci_ref` non-null. Until then, `oci_ref` is always null.
+//! 1. **`provenance.json`** — full record (oci_ref + cosign config +
+//!    pulled_at timestamp). Written by `crates/cli/src/pull.rs::pull`
+//!    after a successful pull.
+//! 2. **`ref.txt`** — canonical OCI ref only. Predates the
+//!    provenance sidecar; legacy cache entries always have it.
+//!
+//! If neither is present, the model is reported with `oci_ref: null`
+//! (an unusual cache state — manually staged blob without sidecars).
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use axum::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// Schema version for the `provenance.json` sidecar this handler
+/// reads. Mirrors `crates/cli/src/pull.rs::PROVENANCE_SCHEMA_VERSION`
+/// — the format is the cross-crate contract. Bumping requires editing
+/// both files in lockstep.
+const PROVENANCE_SCHEMA_VERSION: u32 = 1;
+
+/// Read-side mirror of `crates/cli/src/pull.rs::Provenance`. The two
+/// types are intentionally duplicated rather than shared via a
+/// crate dep — `aegis-cli` already depends on `aegis-ui-server`,
+/// so the reverse would be a circular dep. The JSON schema is the
+/// contract; field names + serde renames must match.
+#[derive(Debug, Deserialize)]
+struct ProvenanceFile {
+    schema_version: u32,
+    oci_ref: String,
+    #[serde(default)]
+    cosign: Option<CosignFile>,
+    #[serde(default)]
+    pulled_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CosignFile {
+    verified: bool,
+    mode: String,
+    #[serde(default)]
+    keyless_identity_pattern: Option<String>,
+    #[serde(default)]
+    keyless_oidc_issuer_pattern: Option<String>,
+    #[serde(default)]
+    key_path: Option<String>,
+}
+
+/// Cosign verification context surfaced to the SPA. Distilled from
+/// the on-disk `provenance.json::cosign` block; the SPA renders
+/// "verified · keyless ⟨pattern⟩" / "verified · key ⟨path⟩" badges.
+#[derive(Debug, Serialize)]
+pub struct ModelCosign {
+    /// Always `true` when present — failed verifications never get
+    /// written. Surfaced as a field so the SPA can pattern-match
+    /// without inferring from absence.
+    pub verified: bool,
+    /// `"key"` or `"keyless"` per the validator's enum.
+    pub mode: String,
+    /// Identity-regex pattern that cosign accepted (keyless mode
+    /// only). For operators reading the Model Library to confirm
+    /// the constraint they configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyless_identity_pattern: Option<String>,
+    /// OIDC-issuer regex pattern (keyless mode only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyless_oidc_issuer_pattern: Option<String>,
+    /// Operator-supplied public key path (keyed mode only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+}
 
 #[derive(Debug, Serialize)]
 pub struct Model {
@@ -37,10 +101,15 @@ pub struct Model {
     /// artifact's manifest. Stable for the lifetime of the cached
     /// copy.
     pub digest: String,
-    /// Original OCI reference the artifact was pulled with. Always
-    /// `null` in 1d.1b; 1d.1c populates this from a `provenance.json`
-    /// sidecar.
+    /// Original OCI reference the artifact was pulled with. Sourced
+    /// from `provenance.json` when present, falling back to
+    /// `ref.txt` for legacy cache entries. `null` only if neither
+    /// sidecar exists (an unusual manually-staged-blob case).
     pub oci_ref: Option<String>,
+    /// Cosign verification details from `provenance.json`. `None`
+    /// for legacy cache entries that predate the sidecar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cosign: Option<ModelCosign>,
     /// Total size of all files under the model's cache directory,
     /// in bytes.
     pub size_bytes: u64,
@@ -48,6 +117,13 @@ pub struct Model {
     /// time. Approximates "last used" until we add explicit
     /// access-tracking sidecars.
     pub last_used: Option<String>,
+    /// RFC3339 timestamp recorded in `provenance.json::pulled_at`,
+    /// set by `aegis pull` at the moment cosign verification
+    /// succeeded. Distinct from `last_used`: pulled_at is the
+    /// supply-chain-relevant timestamp; last_used is the local
+    /// access timestamp. `None` for legacy cache entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pulled_at: Option<String>,
     /// Whether a `chat_template.sha256.txt` sidecar is present
     /// (per ADR-022 / OCI-B). Indicates the F1 chat-template-binding
     /// extension is available for sessions booted against this model.
@@ -133,16 +209,92 @@ fn enumerate_cache(cache_dir: &Path) -> std::io::Result<Vec<Model>> {
             .ok()
             .and_then(format_rfc3339);
         let has_chat_template = path.join("chat_template.sha256.txt").is_file();
+        let provenance = read_provenance(&path);
+        let oci_ref = provenance
+            .as_ref()
+            .map(|p| p.oci_ref.clone())
+            .or_else(|| read_ref_txt(&path));
+        let pulled_at = provenance.as_ref().and_then(|p| p.pulled_at.clone());
+        let cosign = provenance.and_then(|p| p.cosign.map(into_model_cosign));
 
         out.push(Model {
             digest: format!("sha256:{digest}"),
-            oci_ref: None,
+            oci_ref,
+            cosign,
             size_bytes,
             last_used,
+            pulled_at,
             has_chat_template,
         });
     }
     Ok(out)
+}
+
+/// Read + parse `provenance.json` from a cache subdir. Returns
+/// `None` for legacy entries that don't have one OR for parse
+/// failures (logged but non-fatal — a malformed sidecar shouldn't
+/// hide the model from the listing). Schema-version mismatch
+/// is also treated as "ignore"; the read-side type accepts only
+/// the version it knows.
+fn read_provenance(dir: &Path) -> Option<ProvenanceFile> {
+    let path = dir.join("provenance.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::warn!(
+                target: "aegis_ui_server",
+                err = %e,
+                path = %path.display(),
+                "reading provenance.json failed; falling back to ref.txt",
+            );
+            return None;
+        }
+    };
+    let parsed: ProvenanceFile = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                target: "aegis_ui_server",
+                err = %e,
+                path = %path.display(),
+                "provenance.json malformed; falling back to ref.txt",
+            );
+            return None;
+        }
+    };
+    if parsed.schema_version != PROVENANCE_SCHEMA_VERSION {
+        tracing::warn!(
+            target: "aegis_ui_server",
+            got = parsed.schema_version,
+            expected = PROVENANCE_SCHEMA_VERSION,
+            path = %path.display(),
+            "provenance.json schema_version mismatch; falling back to ref.txt",
+        );
+        return None;
+    }
+    Some(parsed)
+}
+
+/// Read the legacy `ref.txt` sidecar — present on every cache entry
+/// pulled via `aegis pull` regardless of when. Returns `None` if
+/// the file is missing or unreadable.
+fn read_ref_txt(dir: &Path) -> Option<String> {
+    let path = dir.join("ref.txt");
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn into_model_cosign(c: CosignFile) -> ModelCosign {
+    ModelCosign {
+        verified: c.verified,
+        mode: c.mode,
+        keyless_identity_pattern: c.keyless_identity_pattern,
+        keyless_oidc_issuer_pattern: c.keyless_oidc_issuer_pattern,
+        key_path: c.key_path,
+    }
 }
 
 fn dir_size_bytes(dir: &Path) -> std::io::Result<u64> {

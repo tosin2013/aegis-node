@@ -54,9 +54,93 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+/// Filename of the per-pull provenance sidecar written into the
+/// model cache directory by [`pull`]. Captures the OCI ref + cosign
+/// verification configuration + pull timestamp so the WebUI's Model
+/// Library (per [ADR-032](../../docs/adrs/032-webui-model-library-and-session-forking.md))
+/// can surface "verified by …" for each cached model without
+/// re-running cosign or re-parsing the registry manifest. Cache
+/// entries from before this sidecar was introduced fall back to
+/// the older `ref.txt` for `oci_ref` only — no cosign metadata.
+pub const PROVENANCE_FILENAME: &str = "provenance.json";
+
+/// Schema version for [`Provenance`]. Bumped when the on-disk format
+/// changes incompatibly. Readers (the ui-server's Models handler)
+/// MUST reject unknown major versions rather than silently misread.
+pub const PROVENANCE_SCHEMA_VERSION: u32 = 1;
+
+/// On-disk record written next to each cached model's `blob.bin`.
+/// Persists the verification context [`pull`] established so that
+/// downstream consumers — the WebUI Model Library, future evidence-
+/// pack generators — don't need to re-run cosign or contact the
+/// registry to know how the blob got here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Provenance {
+    /// Format version. Currently always [`PROVENANCE_SCHEMA_VERSION`].
+    pub schema_version: u32,
+    /// Canonical OCI reference the operator pulled (with `@sha256:` pin).
+    pub oci_ref: String,
+    /// Manifest digest extracted from the reference. Same value as
+    /// the cache subdirectory name; included here so the file is
+    /// self-describing without requiring path-context to read.
+    pub manifest_digest: String,
+    /// SHA-256 of `blob.bin`, lowercase hex. Equals
+    /// [`PulledArtifact::sha256_hex`] at write time.
+    pub blob_sha256: String,
+    /// Optional chat-template hash extracted from the cosign-covered
+    /// manifest annotation `dev.aegis-node.chat-template.sha256`.
+    /// `None` for non-model artifacts.
+    pub chat_template_sha256: Option<String>,
+    /// How cosign verified the manifest signature.
+    pub cosign: CosignVerification,
+    /// RFC3339 UTC timestamp at which the pull completed. Useful for
+    /// the Model Library's "last used" / "pulled at" columns and for
+    /// evidence-pack generation later.
+    pub pulled_at: String,
+}
+
+/// The cosign-verification configuration that succeeded at pull
+/// time. `verified` is always `true` in a written provenance file —
+/// [`pull`] only writes the sidecar after cosign returned exit 0.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CosignVerification {
+    /// Whether cosign verification succeeded. Always `true` in a
+    /// written sidecar (failed pulls never reach the persist step).
+    /// Kept as a field so future consumers can pattern-match
+    /// without inferring from the file's mere existence.
+    pub verified: bool,
+    /// Verification mode used: keyed (operator-supplied public key)
+    /// or keyless (Sigstore Fulcio + Rekor).
+    pub mode: CosignMode,
+    /// Path to the operator-supplied public key, if the keyed mode
+    /// was used. `None` for keyless.
+    pub key_path: Option<String>,
+    /// Identity-regex constraint passed to cosign in keyless mode
+    /// (`--certificate-identity-regexp`). `None` for keyed.
+    pub keyless_identity_pattern: Option<String>,
+    /// OIDC-issuer-regex constraint passed to cosign in keyless mode
+    /// (`--certificate-oidc-issuer-regexp`). `None` for keyed.
+    pub keyless_oidc_issuer_pattern: Option<String>,
+}
+
+/// Cosign verification mode. Kept as a separate enum (rather than an
+/// `Option<KeyPath>` union) so the JSON shape names the choice
+/// explicitly — auditors reading the sidecar see "keyless" rather
+/// than inferring it from a missing field.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CosignMode {
+    /// Keyed verification — `--cosign-key <path>` was supplied.
+    Key,
+    /// Keyless verification — Sigstore Fulcio + Rekor (the default).
+    Keyless,
+}
 
 /// OCI media type for a single-blob GGUF model artifact published by
 /// Aegis-Node's `models-publish.yml` (per ADR-021). Publishers that use
@@ -416,12 +500,145 @@ pub fn pull(reference: &str, cfg: &PullConfig) -> Result<PulledArtifact> {
     }
     std::fs::rename(&blob, &target_blob)?;
 
+    // Persist provenance LAST — its presence implies the blob and
+    // every other sidecar are in place. Downstream readers (the
+    // ui-server's Models handler per ADR-032) treat a missing
+    // provenance.json as "legacy cache entry" and fall back to
+    // ref.txt; partial-write recovery scans treat its absence as
+    // "incomplete pull, needs cleanup."
+    let provenance = Provenance {
+        schema_version: PROVENANCE_SCHEMA_VERSION,
+        oci_ref: parsed.canonical(),
+        manifest_digest: parsed.sha256_hex.clone(),
+        blob_sha256: blob_sha256_hex.clone(),
+        chat_template_sha256: chat_template_sha256_hex.clone(),
+        cosign: cosign_record(cfg),
+        pulled_at: rfc3339_now(),
+    };
+    write_provenance(&target_dir, &provenance)?;
+
     Ok(PulledArtifact {
         reference: parsed.clone(),
         blob_path: target_blob,
         sha256_hex: blob_sha256_hex,
         chat_template_sha256_hex,
     })
+}
+
+/// Build the [`CosignVerification`] record from the operator's
+/// [`PullConfig`]. Verified is hardcoded to `true` because we only
+/// reach this code path after [`run_cosign_verify`] returned exit 0.
+fn cosign_record(cfg: &PullConfig) -> CosignVerification {
+    if let Some(key) = &cfg.cosign_key {
+        CosignVerification {
+            verified: true,
+            mode: CosignMode::Key,
+            key_path: Some(key.display().to_string()),
+            keyless_identity_pattern: None,
+            keyless_oidc_issuer_pattern: None,
+        }
+    } else {
+        CosignVerification {
+            verified: true,
+            mode: CosignMode::Keyless,
+            key_path: None,
+            // Match the regex-default fallbacks used in
+            // `run_cosign_verify` so the recorded values reflect
+            // exactly what cosign was told.
+            keyless_identity_pattern: Some(
+                cfg.keyless_identity
+                    .clone()
+                    .unwrap_or_else(|| ".*".to_string()),
+            ),
+            keyless_oidc_issuer_pattern: Some(
+                cfg.keyless_oidc_issuer
+                    .clone()
+                    .unwrap_or_else(|| ".*".to_string()),
+            ),
+        }
+    }
+}
+
+/// Atomically write a [`Provenance`] record into the cache dir.
+/// Uses a temp-file-and-rename so a partial write never produces a
+/// truncated `provenance.json`.
+pub fn write_provenance(dir: &Path, prov: &Provenance) -> Result<()> {
+    let target = dir.join(PROVENANCE_FILENAME);
+    let json = serde_json::to_vec_pretty(prov)
+        .map_err(|e| PullError::Io(std::io::Error::other(format!("serialize provenance: {e}"))))?;
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".provenance.")
+        .suffix(".tmp")
+        .tempfile_in(dir)?;
+    use std::io::Write;
+    tmp.write_all(&json)?;
+    tmp.flush()?;
+    tmp.persist(&target).map_err(|e| PullError::Io(e.error))?;
+    Ok(())
+}
+
+/// Read + validate the provenance sidecar from a cache dir. Returns
+/// `Ok(None)` for a legacy entry that doesn't have one, `Err` only
+/// for genuine I/O / parse failures. Schema-version mismatch is an
+/// error — readers shouldn't try to interpret an unknown major.
+pub fn read_provenance(dir: &Path) -> Result<Option<Provenance>> {
+    let path = dir.join(PROVENANCE_FILENAME);
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(PullError::Io(e)),
+    };
+    let prov: Provenance = serde_json::from_slice(&bytes).map_err(|e| {
+        PullError::Io(std::io::Error::other(format!(
+            "parsing {}: {e}",
+            path.display(),
+        )))
+    })?;
+    if prov.schema_version != PROVENANCE_SCHEMA_VERSION {
+        return Err(PullError::Io(std::io::Error::other(format!(
+            "{} schema_version={} unsupported (expected {})",
+            path.display(),
+            prov.schema_version,
+            PROVENANCE_SCHEMA_VERSION,
+        ))));
+    }
+    Ok(Some(prov))
+}
+
+/// RFC3339 timestamp without pulling in `chrono`. Uses the same
+/// pure-stdlib civil-from-days conversion that
+/// `crates/ui-server/src/handlers/models.rs` uses; kept independent
+/// here so pull.rs has no cross-crate timestamp dep.
+fn rfc3339_now() -> String {
+    let dur = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs() as i64;
+    let nanos = dur.subsec_nanos();
+    naive_rfc3339_from_unix(secs, nanos)
+}
+
+fn naive_rfc3339_from_unix(secs: i64, nanos: u32) -> String {
+    const SECONDS_PER_DAY: i64 = 86_400;
+    let days = secs.div_euclid(SECONDS_PER_DAY);
+    let time_of_day = secs.rem_euclid(SECONDS_PER_DAY);
+    let hh = time_of_day / 3600;
+    let mm = (time_of_day % 3600) / 60;
+    let ss = time_of_day % 60;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{millis:03}Z",
+        millis = nanos / 1_000_000,
+    )
 }
 
 /// Read the chat-template sidecar from a populated cache dir, if it
@@ -698,6 +915,89 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, PullError::BadRef { .. }), "{err}");
+    }
+
+    #[test]
+    fn provenance_round_trips_through_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let prov = Provenance {
+            schema_version: PROVENANCE_SCHEMA_VERSION,
+            oci_ref: "ghcr.io/x/m@sha256:abc".to_string(),
+            manifest_digest: "abc".to_string(),
+            blob_sha256: "deadbeef".to_string(),
+            chat_template_sha256: Some("cafef00d".to_string()),
+            cosign: CosignVerification {
+                verified: true,
+                mode: CosignMode::Keyless,
+                key_path: None,
+                keyless_identity_pattern: Some(".*".to_string()),
+                keyless_oidc_issuer_pattern: Some(".*".to_string()),
+            },
+            pulled_at: "2026-05-07T00:00:00.000Z".to_string(),
+        };
+        write_provenance(dir.path(), &prov).expect("write");
+        let read_back = read_provenance(dir.path()).expect("read").expect("present");
+        assert_eq!(read_back, prov);
+    }
+
+    #[test]
+    fn read_provenance_returns_none_for_legacy_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        // No file written — simulates a cache entry from before the
+        // sidecar was introduced.
+        assert!(read_provenance(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_provenance_rejects_unknown_schema_version() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(PROVENANCE_FILENAME),
+            r#"{"schema_version":99,"oci_ref":"x","manifest_digest":"x","blob_sha256":"x","chat_template_sha256":null,"cosign":{"verified":true,"mode":"keyless","key_path":null,"keyless_identity_pattern":".*","keyless_oidc_issuer_pattern":".*"},"pulled_at":"2026-05-07T00:00:00.000Z"}"#,
+        )
+        .unwrap();
+        let err = read_provenance(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("schema_version=99"));
+    }
+
+    #[test]
+    fn cosign_record_keyless_defaults_to_dotstar_patterns() {
+        let cfg = PullConfig {
+            cache_dir: PathBuf::from("/tmp"),
+            cosign_key: None,
+            keyless_identity: None,
+            keyless_oidc_issuer: None,
+        };
+        let rec = cosign_record(&cfg);
+        assert!(rec.verified);
+        assert_eq!(rec.mode, CosignMode::Keyless);
+        assert_eq!(rec.keyless_identity_pattern.as_deref(), Some(".*"));
+        assert_eq!(rec.keyless_oidc_issuer_pattern.as_deref(), Some(".*"));
+        assert!(rec.key_path.is_none());
+    }
+
+    #[test]
+    fn cosign_record_keyed_passes_through_key_path() {
+        let cfg = PullConfig {
+            cache_dir: PathBuf::from("/tmp"),
+            cosign_key: Some(PathBuf::from("/etc/cosign/team.pub")),
+            keyless_identity: None,
+            keyless_oidc_issuer: None,
+        };
+        let rec = cosign_record(&cfg);
+        assert_eq!(rec.mode, CosignMode::Key);
+        assert_eq!(rec.key_path.as_deref(), Some("/etc/cosign/team.pub"));
+        assert!(rec.keyless_identity_pattern.is_none());
+        assert!(rec.keyless_oidc_issuer_pattern.is_none());
+    }
+
+    #[test]
+    fn rfc3339_now_has_canonical_shape() {
+        let s = rfc3339_now();
+        // YYYY-MM-DDTHH:MM:SS.mmmZ → 24 chars, ends with Z, has T at index 10.
+        assert_eq!(s.len(), 24, "got: {s}");
+        assert!(s.ends_with('Z'));
+        assert_eq!(&s[10..11], "T");
     }
 
     #[test]
