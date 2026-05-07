@@ -257,6 +257,16 @@ fn sort_findings(v: &mut [Finding]) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes the env-var-touching tests below. `AEGIS_VALIDATE_BIN`
+    /// is process-global; without this lock, parallel test threads
+    /// can clobber each other's `set_var` / `remove_var` calls
+    /// (one test's cleanup `remove_var` runs between another test's
+    /// `set_var` and `resolve_validate_binary`, leaving the resolver
+    /// to fall through to the dev-path / PATH search and return None).
+    /// CI surfaced this race intermittently after enough re-runs.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     const SAMPLE_JSONL: &str = concat!(
         r#"{"file":"/tmp/m.yaml","rule_id":"AEGIS007","severity":"warn","field":"tools.filesystem.write","message":"broad write coverage","rationale":"explain"}"#,
@@ -308,6 +318,7 @@ mod tests {
 
     #[test]
     fn resolve_uses_env_var_when_set() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         // Real binary path that exists on the system, just to test
         // resolution logic. Use this binary itself.
         let me = std::env::current_exe().unwrap();
@@ -319,6 +330,7 @@ mod tests {
 
     #[test]
     fn resolve_falls_back_to_path_when_env_invalid() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         std::env::set_var(ENV_VALIDATE_BIN, "/this/path/does/not/exist");
         // The fallback chain may or may not find aegis-validate
         // depending on the test environment; we just assert that
