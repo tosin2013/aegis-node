@@ -573,8 +573,7 @@ pub fn write_provenance(dir: &Path, prov: &Provenance) -> Result<()> {
     use std::io::Write;
     tmp.write_all(&json)?;
     tmp.flush()?;
-    tmp.persist(&target)
-        .map_err(|e| PullError::Io(e.error))?;
+    tmp.persist(&target).map_err(|e| PullError::Io(e.error))?;
     Ok(())
 }
 
@@ -937,9 +936,7 @@ mod tests {
             pulled_at: "2026-05-07T00:00:00.000Z".to_string(),
         };
         write_provenance(dir.path(), &prov).expect("write");
-        let read_back = read_provenance(dir.path())
-            .expect("read")
-            .expect("present");
+        let read_back = read_provenance(dir.path()).expect("read").expect("present");
         assert_eq!(read_back, prov);
     }
 
