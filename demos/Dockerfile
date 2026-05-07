@@ -96,12 +96,26 @@ ENV PATH=/root/.cargo/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin
 # encoding subtly; locking to v0.11.0 keeps GIF SHAs stable.
 RUN go install github.com/charmbracelet/vhs@v0.11.0
 
-# MCP filesystem server (Anthropic) — Demo 1 uses this. npm-global
-# default places the binary at /usr/local/bin/mcp-server-filesystem;
-# the demo manifests reference /usr/bin/mcp-server-filesystem, which
-# the symlink below resolves to the npm-global binary.
+# MCP filesystem server (Anthropic) — Demo 1 uses this. The
+# demo manifests reference /usr/bin/mcp-server-filesystem; the
+# install location depends on the npm distribution:
+#
+#   - NodeSource Node 20 (this image): npm prefix=/usr → binary
+#     at /usr/bin/mcp-server-filesystem (already at the expected
+#     location, no symlink needed)
+#   - Legacy apt npm: prefix=/usr/local → binary at
+#     /usr/local/bin/mcp-server-filesystem (symlink needed)
+#
+# The conditional symlink below handles both, and explicitly
+# avoids the `ln -sf` footgun that overwrote npm's working
+# /usr/bin link with a broken /usr/local target on Node 20.
 RUN npm install -g @modelcontextprotocol/server-filesystem \
-    && ln -sf /usr/local/bin/mcp-server-filesystem /usr/bin/mcp-server-filesystem
+    && actual="$(command -v mcp-server-filesystem)" \
+    && test -n "$actual" \
+    && if [ "$actual" != "/usr/bin/mcp-server-filesystem" ]; then \
+         ln -sf "$actual" /usr/bin/mcp-server-filesystem; \
+       fi \
+    && test -x /usr/bin/mcp-server-filesystem
 
 # pnpm — required by `crates/ui-server`'s build.rs (per ADR-031). The
 # demo build path runs `cargo build --release -p aegis-cli --features
