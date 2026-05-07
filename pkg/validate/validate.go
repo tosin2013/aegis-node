@@ -46,14 +46,22 @@ func (s Severity) String() string {
 // Finding is one lint result. Field is a JSON-pointer-ish path into the
 // manifest (e.g. "tools.filesystem.read[0]" or "write_grants[2].resource")
 // so output formatters can produce file:line:col when paired with the
-// raw YAML AST. The pkg/manifest schema validator owns line/column
-// extraction; this package emits paths only.
+// raw YAML AST. Lint rules emit Field; the runner (cmd/aegis/validate.go)
+// resolves Line+Col by feeding Field through pkg/manifest.LookupPosition
+// before format.Render. Both default to 0 when the runner can't resolve
+// a precise position (malformed YAML, unresolved field path) — formatters
+// fall back to (1,1) so the marker still appears at the top of the file.
 type Finding struct {
 	RuleID    string   `json:"rule_id"`
 	Severity  Severity `json:"-"`
 	Field     string   `json:"field"`
 	Message   string   `json:"message"`
 	Rationale string   `json:"rationale,omitempty"`
+	// Line is the 1-indexed source line of the YAML node Field
+	// resolves to, or 0 when no precise position is available.
+	Line int `json:"line,omitempty"`
+	// Col is the 1-indexed source column of the same node, or 0.
+	Col int `json:"col,omitempty"`
 }
 
 // SeverityName is the JSON form of Severity (for output formatters).

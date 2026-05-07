@@ -82,10 +82,14 @@ func renderText(w io.Writer, file string, findings []validate.Finding) error {
 		return err
 	}
 	for _, f := range findings {
-		// `path:line:col: severity rule message`. Line/col are 0 until
-		// the YAML AST hookup lands; the slot is reserved.
-		if _, err := fmt.Fprintf(w, "%s:0:0: %s %s %s — %s\n",
+		// `path:line:col: severity rule message`. Line/col come from
+		// the runner's pkg/manifest.LookupPosition lookup; 0 means
+		// the path didn't resolve (fall back to top-of-file in
+		// IDE markers).
+		line, col := positionFor(f)
+		if _, err := fmt.Fprintf(w, "%s:%d:%d: %s %s %s — %s\n",
 			filenameOr(file, "<stdin>"),
+			line, col,
 			f.SeverityName(),
 			f.RuleID,
 			f.Field,
@@ -116,8 +120,9 @@ func renderGitHub(w io.Writer, file string, findings []validate.Finding) error {
 		// Newlines in message must be %0A-encoded.
 		title := fmt.Sprintf("%s %s", f.RuleID, f.Field)
 		msg := encodeGHA(f.Message)
-		if _, err := fmt.Fprintf(w, "::%s file=%s,line=1,col=1,title=%s::%s\n",
-			level, file, encodeGHA(title), msg); err != nil {
+		line, col := positionFor(f)
+		if _, err := fmt.Fprintf(w, "::%s file=%s,line=%d,col=%d,title=%s::%s\n",
+			level, file, line, col, encodeGHA(title), msg); err != nil {
 			return err
 		}
 	}
@@ -215,6 +220,12 @@ func renderJUnit(w io.Writer, file string, findings []validate.Finding) error {
 // jsonRecord is the on-disk representation of one Finding. The JSON
 // schema for this type lives at schemas/validate/findings.schema.json
 // so consumers can build typed tooling (SIEM rules, CI dashboards).
+//
+// `line` / `col` are 1-indexed when the runner could resolve the
+// finding's Field to a YAML AST node; both are `0` (and the fields
+// are omitted from the JSON output) when the lookup failed —
+// downstream consumers fall back to `(1,1)` per the Marker spec
+// the SPA's Monaco renderer uses.
 type jsonRecord struct {
 	File      string `json:"file,omitempty"`
 	RuleID    string `json:"rule_id"`
@@ -222,6 +233,8 @@ type jsonRecord struct {
 	Field     string `json:"field"`
 	Message   string `json:"message"`
 	Rationale string `json:"rationale,omitempty"`
+	Line      int    `json:"line,omitempty"`
+	Col       int    `json:"col,omitempty"`
 }
 
 func renderJSON(w io.Writer, file string, findings []validate.Finding) error {
@@ -235,6 +248,8 @@ func renderJSON(w io.Writer, file string, findings []validate.Finding) error {
 			Field:     f.Field,
 			Message:   f.Message,
 			Rationale: f.Rationale,
+			Line:      f.Line,
+			Col:       f.Col,
 		}
 		if err := enc.Encode(rec); err != nil {
 			return err
@@ -246,6 +261,22 @@ func renderJSON(w io.Writer, file string, findings []validate.Finding) error {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+// positionFor returns the (line, col) to display for a finding,
+// falling back to (1, 1) when the runner couldn't resolve the
+// Field path to a YAML AST node. Centralizes the fallback so each
+// formatter stays consistent.
+func positionFor(f validate.Finding) (line, col int) {
+	line = f.Line
+	col = f.Col
+	if line == 0 {
+		line = 1
+	}
+	if col == 0 {
+		col = 1
+	}
+	return
+}
 
 func tally(findings []validate.Finding) (errs, warns, infos int) {
 	for _, f := range findings {
