@@ -279,8 +279,7 @@ async fn run_stub_turn(
         socket,
         &ServerFrame::AssistantText {
             turn_id: turn_id.clone(),
-            text: "\n\n(stub backend — Session::run_turn integration ships in 1d.2b)"
-                .to_string(),
+            text: "\n\n(stub backend — Session::run_turn integration ships in 1d.2b)".to_string(),
         },
     )
     .await?;

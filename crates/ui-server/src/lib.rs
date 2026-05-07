@@ -108,10 +108,7 @@ pub fn router(config: Config) -> Router {
             "/api/v1/manifests/validate",
             post(handlers::validate::validate_manifest),
         )
-        .route(
-            "/api/v1/sessions",
-            post(handlers::sessions::create_session),
-        )
+        .route("/api/v1/sessions", post(handlers::sessions::create_session))
         .route("/api/v1/stream", get(handlers::sessions::stream))
         .fallback(handlers::assets::serve_embedded)
         .with_state(state)
