@@ -28,16 +28,26 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Base toolchain. fonts-firacode is what the .tape files render with;
 # changing it changes every committed GIF SHA. ttyd + ffmpeg are vhs's
-# transitive dependencies. npm is needed for the upstream MCP file-
-# system server (Demo 1).
+# transitive dependencies. Node 20 (installed below from NodeSource)
+# is needed for the upstream MCP filesystem server (Demo 1) and for
+# the SPA build under `ui/` per ADR-031 — Ubuntu 24.04's apt `npm`
+# package pulls Node 18, which is too old for Vite 6 + Tailwind 4
+# (`@tailwindcss/oxide` native binding fails to load under Node 18).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl wget git \
+        ca-certificates curl wget git gnupg \
         build-essential cmake libclang-dev clang lld \
         pkg-config \
         ffmpeg ttyd fonts-firacode \
-        npm \
         jq \
         gdb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 20 from NodeSource — Vite 6 + Tailwind 4 (per ADR-031's
+# locked UI stack) require Node >= 20, and Ubuntu 24.04's apt repo
+# only ships Node 18. The setup script adds NodeSource's apt source;
+# the subsequent install pulls a Node-20 + matching-npm bundle.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Chrome (vhs renders its terminal frames through headless chrome).
@@ -97,8 +107,11 @@ RUN npm install -g @modelcontextprotocol/server-filesystem \
 # demo build path runs `cargo build --release -p aegis-cli --features
 # llama` inside this image, which transitively triggers the SPA
 # build script. Pinned to pnpm@10 to match `ui/package.json`'s
-# `packageManager` field. See #142 for the corresponding host-side
-# CI fixes (rust.yml / llama.yml / litertlm.yml).
+# `packageManager` field. Runs against the Node 20 install above —
+# Tailwind 4's `@tailwindcss/oxide` native binding fails to resolve
+# under the bundled npm + Node 18 combination Ubuntu apt provides.
+# See #142 for the corresponding host-side CI fixes (rust.yml /
+# llama.yml / litertlm.yml).
 RUN npm install -g pnpm@10
 
 WORKDIR /work
