@@ -28,15 +28,18 @@
 //! accidentally expose the surface either.
 
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
 use axum::extract::FromRef;
 use axum::routing::{get, post};
 use axum::Router;
 use serde::Serialize;
 
+pub mod chat;
 mod embed;
 mod handlers;
 
+pub use chat::{ChatBackend, ChatBackendError, StubBackend, TurnResult};
 pub use embed::UiDist;
 pub use handlers::sessions::SessionRegistry;
 
@@ -63,14 +66,18 @@ pub struct Config {
 
 /// Composite handler state. axum's `FromRef` impls below let
 /// individual handlers extract whichever sub-state they need
-/// (`State<Config>` or `State<SessionRegistry>`) without the router
-/// having to thread a tuple of states. Sub-phase 1d.2a introduces
-/// `SessionRegistry` for the chat surface; future surfaces add their
-/// own sub-states as new fields here.
+/// (`State<Config>` / `State<SessionRegistry>` / `State<Arc<dyn ChatBackend>>`)
+/// without the router having to thread a tuple of states.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
     pub sessions: SessionRegistry,
+    /// The chat surface's backend. Sub-phase 1d.2b plumbs the real
+    /// `Session::run_turn`-driven implementation through here when
+    /// `aegis ui --manifest <m> --model <m>` is provided; otherwise
+    /// [`StubBackend`] keeps the chat UI visibly functional with an
+    /// operator hint.
+    pub chat_backend: Arc<dyn ChatBackend>,
 }
 
 impl FromRef<AppState> for Config {
@@ -85,16 +92,33 @@ impl FromRef<AppState> for SessionRegistry {
     }
 }
 
-/// Build the axum router for the UI server. Pure: no I/O, no socket
-/// binding — call [`serve`] to actually run it.
+impl FromRef<AppState> for Arc<dyn ChatBackend> {
+    fn from_ref(state: &AppState) -> Arc<dyn ChatBackend> {
+        state.chat_backend.clone()
+    }
+}
+
+/// Build the axum router for the UI server with the default
+/// [`StubBackend`] attached. Convenience wrapper around
+/// [`router_with_backend`] for callers who don't have a real
+/// backend ready (tests, the CLI's no-model path).
+pub fn router(config: Config) -> Router {
+    router_with_backend(config, Arc::new(StubBackend))
+}
+
+/// Build the axum router with a caller-supplied [`ChatBackend`].
+/// `aegis-cli`'s `aegis ui` subcommand uses this overload when
+/// `--manifest`/`--model` are provided so the chat surface drives a
+/// real `Session::run_turn` instead of the stub echo.
 ///
 /// `SessionRegistry` is constructed fresh inside the router; sessions
 /// don't survive a process restart (per ADR-031 §"Single agent, single
 /// user" — persistence-across-restart is a v1.0.0 multi-turn concern).
-pub fn router(config: Config) -> Router {
+pub fn router_with_backend(config: Config, chat_backend: Arc<dyn ChatBackend>) -> Router {
     let state = AppState {
         config,
         sessions: SessionRegistry::new(),
+        chat_backend,
     };
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
@@ -123,6 +147,17 @@ pub fn router(config: Config) -> Router {
 /// [ADR-031](../../docs/adrs/031-community-webui-for-local-collaboration.md)
 /// §"Localhost-only" there is no escape hatch.
 pub async fn serve(config: Config) -> anyhow::Result<()> {
+    serve_with_backend(config, Arc::new(StubBackend)).await
+}
+
+/// `serve` + a caller-supplied [`ChatBackend`]. The CLI's `aegis ui`
+/// subcommand uses this overload when it has a Session ready to
+/// drive the chat surface; the no-backend path uses [`serve`] which
+/// falls back to [`StubBackend`].
+pub async fn serve_with_backend(
+    config: Config,
+    chat_backend: Arc<dyn ChatBackend>,
+) -> anyhow::Result<()> {
     let addr = config.listen;
     if !is_loopback(addr.ip()) {
         anyhow::bail!(
@@ -134,7 +169,7 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     tracing::info!(target: "aegis_ui_server", addr = %bound, "ui-server listening");
-    axum::serve(listener, router(config)).await?;
+    axum::serve(listener, router_with_backend(config, chat_backend)).await?;
     Ok(())
 }
 
