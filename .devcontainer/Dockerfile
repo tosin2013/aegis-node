@@ -4,8 +4,15 @@
 # ghcr.io/<owner>/aegis-node-devbox.
 #
 # Tool versions are kept aligned with mise.toml at the repo root.
+#
+# Base: ubuntu-24.04 — matches the project's platform floor per
+# ADR-017 §"Supported platforms" (glibc ≥ 2.38, GLIBCXX ≥ 3.4.31).
+# 22.04 (jammy) is best-effort llama-only; LiteRT-LM (Gemma 4 family)
+# fails at link time on jammy because the upstream prebuilt
+# libaegis_litertlm_engine_cpu.so requires a newer glibc / libstdc++.
+# See #157 / docs/CHAT.md for the operator-facing guidance.
 
-FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 ARG TARGETARCH
 

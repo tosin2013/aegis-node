@@ -1,7 +1,7 @@
 # 17. Local Development Environment: Devcontainer (Canonical) + mise (Native Fallback)
 
 **Status:** Accepted
-**Date:** 2026-04-27
+**Date:** 2026-04-27 (amended 2026-05-07 — added §"Supported platforms" platform-floor clause)
 **Domain:** Developer Experience / Supply Chain
 
 ## Context
@@ -38,6 +38,50 @@ Adopt a two-track local development environment with a single source of truth fo
 - Two paths to test (devcontainer + native via `mise`); CI should validate both.
 - `mise` is less ubiquitous than `asdf`; teams already invested in `asdf` can consume a generated `.tool-versions` file as a courtesy export.
 - Devcontainer requires Docker/Podman, which some restricted enterprise laptops still cannot run; the `mise` path exists exactly for that reason but does require host-level installs.
+
+## Supported platforms
+
+*Amendment 2026-05-07 (per [#157](https://github.com/tosin2013/aegis-node/issues/157)).*
+
+The project's **minimum supported Linux platform** is anything providing
+**glibc ≥ 2.38** and **GLIBCXX ≥ 3.4.31** (libstdc++ from GCC ≥ 13.2).
+Concretely:
+
+| Platform | glibc | GLIBCXX max | Status |
+|---|---|---|---|
+| Ubuntu 24.04 LTS (Noble) | 2.39 | 3.4.32 | ✅ Fully supported (devcontainer base; CI runners) |
+| Debian 13 (Trixie) | 2.41 | 3.4.33 | ✅ Fully supported |
+| RHEL 10 / Rocky 10 / AlmaLinux 10 | 2.39 | 3.4.32 | ✅ Fully supported |
+| Fedora 40+ | 2.39+ | 3.4.32+ | ✅ Fully supported |
+| Ubuntu 22.04 LTS (Jammy) | 2.35 | 3.4.30 | ⚠️ `--features llama` only |
+| Debian 12 (Bookworm) | 2.36 | 3.4.30 | ⚠️ `--features llama` only |
+| RHEL 9 / Rocky 9 | 2.34 | 3.4.30 | ⚠️ `--features llama` only |
+
+**Why the floor:** the LiteRT-LM backend (per [ADR-023](023-litertlm-as-second-inference-backend.md))
+ships as a **prebuilt** `libaegis_litertlm_engine_cpu.so` published as
+an OCI artifact. The upstream publish runs on a 24.04-class sysroot,
+so the `.so` carries `GLIBC_2.38` + `GLIBCXX_3.4.31` symbol references.
+Linking it on an older host fails with `undefined reference to
+__isoc23_strtoull@GLIBC_2.38` (and similar) — not a code bug, an ABI
+mismatch we can't avoid without forcing every operator to rebuild
+LiteRT-LM from Bazel sources.
+
+**Best-effort vs. unsupported:** "best-effort llama-only" platforms
+(jammy, bookworm, RHEL 9) build cleanly with `--features llama` —
+Qwen / Llama / Mistral via llama.cpp work end-to-end. Operators just
+can't run `--features litertlm` (Gemma 4 family) without upgrading.
+Aegis-Node accepts patches that improve the older-platform
+experience but does not test against them in CI.
+
+**CI alignment:** every workflow's `runs-on:` is pinned to
+`ubuntu-24.04` (PR 1 of #157 / [#158](https://github.com/tosin2013/aegis-node/pull/158)).
+The devcontainer base image is `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`.
+Bumping the floor requires updating both in lockstep + this clause.
+
+**Operator guidance:** [docs/CHAT.md](../CHAT.md) §"Build feature
+flags" describes the operator-facing consequences (when to use
+`--features llama` only vs. `--features "llama litertlm"`) and how
+to detect the platform-floor mismatch from a link error.
 
 ## Domain Considerations
 

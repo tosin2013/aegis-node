@@ -88,7 +88,10 @@ cargo install --locked --path crates/cli --features "llama litertlm" --force
 > Ubuntu 24.04 / Debian Trixie / RHEL 10 territory. Older distros
 > (Ubuntu 22.04, RHEL 9, Debian Bookworm) will fail at link time
 > with `undefined reference to __isoc23_strtoull@GLIBC_2.38`. CI's
-> `litertlm.yml` job runs on `ubuntu-24.04` for this reason.
+> `litertlm.yml` job runs on `ubuntu-24.04` for this reason. See
+> [ADR-017 §"Supported platforms"](adrs/017-local-development-environment-devcontainer-mise.md#supported-platforms)
+> for the full compatibility table and the project's platform-floor
+> rationale.
 
 ## Running the chat surface
 
