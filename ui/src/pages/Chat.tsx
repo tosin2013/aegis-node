@@ -37,9 +37,12 @@ interface TextMessage {
   text: string;
   /** Set on the assistant message that's currently streaming. */
   pending?: boolean;
-  /** Set on assistant messages once `turn_end` arrives. The 1d.2c
-   *  verifiable-badge surface uses this hook. */
-  verifiable?: boolean;
+  /** UUIDv7 of the F5 reasoning-step ledger entry, set by `turn_end`
+   *  for backends that write to a ledger (real `Session::run_turn`,
+   *  not the StubBackend). The verifiable badge tooltip shows the
+   *  full anchor; click-through to a future `/replay/<anchor>` route
+   *  is queued for ADR-010 viewer integration. */
+  verifiableAnchor?: string;
 }
 
 interface ToolCallMessage {
@@ -139,10 +142,15 @@ export function Chat() {
       }
       case "turn_end": {
         const turnId = frame.turn_id;
+        const anchor = frame.verifiable_anchor;
         setMessages((prev) =>
           prev.map((m) =>
             m.kind === "text" && m.id === turnId
-              ? { ...m, pending: false, verifiable: true }
+              ? {
+                  ...m,
+                  pending: false,
+                  verifiableAnchor: anchor,
+                }
               : m,
           ),
         );
@@ -359,13 +367,13 @@ function MessageBubble({ message }: { message: TextMessage }) {
             <span className="ml-1 inline-block h-3 w-3 animate-pulse rounded-full bg-accent align-middle" />
           )}
         </div>
-        {message.verifiable && (
+        {message.verifiableAnchor && (
           <span
-            className="inline-flex items-center gap-1 self-start font-mono text-[10px] text-muted"
-            title="Sub-phase 1d.2c.2 will hook this badge to the F9 ledger entry for this turn"
+            className="inline-flex cursor-help items-center gap-1 self-start rounded bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300"
+            title={`F9 reasoning-step uuid: ${message.verifiableAnchor} — click-through to /replay/<anchor> lands when the ADR-010 viewer wires up`}
           >
             <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-            verifiable (1d.2c.2)
+            verifiable · {message.verifiableAnchor.slice(0, 8)}…
           </span>
         )}
       </div>
@@ -486,7 +494,7 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
           <div className="border-t border-[var(--color-border)] px-3 py-2 text-xs">
             <div className="mb-2">
               <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-muted">
-                args (1d.2c.2: full args land when the engine preserves them)
+                args
               </div>
               <pre className="overflow-x-auto rounded bg-[var(--color-bg-elev)] p-2 font-mono text-[11px] text-[var(--color-fg)]">
                 {argsJson}

@@ -53,7 +53,15 @@ export type ServerFrame =
       value?: unknown;
       reason?: string;
     }
-  | { schema: "v1"; type: "turn_end"; turn_id: string }
+  | {
+      schema: "v1";
+      type: "turn_end";
+      turn_id: string;
+      /** UUIDv7 of the F5 reasoning-step ledger entry the engine
+       *  wrote during this turn. Absent for stub backends that
+       *  don't write to a ledger. */
+      verifiable_anchor?: string;
+    }
   | { schema: "v1"; type: "error"; message: string };
 
 export type ClientFrame = {
@@ -139,8 +147,13 @@ function isServerFrame(v: unknown): v is ServerFrame {
   if (o.schema !== "v1" || typeof o.type !== "string") return false;
   switch (o.type) {
     case "turn_start":
-    case "turn_end":
       return typeof o.turn_id === "string";
+    case "turn_end":
+      return (
+        typeof o.turn_id === "string" &&
+        (o.verifiable_anchor === undefined ||
+          typeof o.verifiable_anchor === "string")
+      );
     case "assistant_text":
       return typeof o.turn_id === "string" && typeof o.text === "string";
     case "tool_call":

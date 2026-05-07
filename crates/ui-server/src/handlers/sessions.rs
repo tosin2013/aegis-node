@@ -185,7 +185,16 @@ pub enum ServerFrame {
     },
     /// Turn complete. No more frames will arrive for this `turn_id`
     /// until a fresh `user_prompt` triggers another turn.
-    TurnEnd { turn_id: String },
+    /// `verifiable_anchor` carries the UUIDv7 of the F5 reasoning-
+    /// step ledger entry the engine wrote during this turn — the
+    /// SPA's verifiable badge links to a future `/replay/<anchor>`
+    /// route. Omitted (and absent on the wire) for stub / mock
+    /// backends that don't write to a ledger.
+    TurnEnd {
+        turn_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        verifiable_anchor: Option<String>,
+    },
     /// Protocol or runtime error. Non-fatal — the connection stays
     /// open so the operator can retry.
     Error { message: String },
@@ -312,10 +321,18 @@ async fn run_turn(
         Ok(o) => o,
         Err(e) => {
             send_error(socket, &format!("backend error: {e}")).await?;
-            send_frame(socket, &ServerFrame::TurnEnd { turn_id }).await?;
+            send_frame(
+                socket,
+                &ServerFrame::TurnEnd {
+                    turn_id,
+                    verifiable_anchor: None,
+                },
+            )
+            .await?;
             return Ok(());
         }
     };
+    let verifiable_anchor = outcome.verifiable_anchor.clone();
 
     let mut emitted_anything = false;
     if let Some(text) = outcome.assistant_text.as_ref() {
@@ -393,7 +410,14 @@ async fn run_turn(
         .await?;
     }
 
-    send_frame(socket, &ServerFrame::TurnEnd { turn_id }).await?;
+    send_frame(
+        socket,
+        &ServerFrame::TurnEnd {
+            turn_id,
+            verifiable_anchor,
+        },
+    )
+    .await?;
     Ok(())
 }
 
@@ -587,6 +611,37 @@ mod tests {
         assert_eq!(v["status"], "denied");
         assert_eq!(v["reason"], "path /etc not in allowlist");
         assert!(v.get("value").is_none(), "value must be omitted when None");
+    }
+
+    #[test]
+    fn turn_end_with_anchor_emits_verifiable_field() {
+        let f = ServerFrame::TurnEnd {
+            turn_id: "t-1".to_string(),
+            verifiable_anchor: Some("019e0284-c183-7f21-94a2-620bdabca8a8".to_string()),
+        };
+        let s = encode(&f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["type"], "turn_end");
+        assert_eq!(v["turn_id"], "t-1");
+        assert_eq!(
+            v["verifiable_anchor"],
+            "019e0284-c183-7f21-94a2-620bdabca8a8"
+        );
+    }
+
+    #[test]
+    fn turn_end_without_anchor_omits_field() {
+        let f = ServerFrame::TurnEnd {
+            turn_id: "t-1".to_string(),
+            verifiable_anchor: None,
+        };
+        let s = encode(&f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["type"], "turn_end");
+        assert!(
+            v.get("verifiable_anchor").is_none(),
+            "verifiable_anchor must be omitted when None (stub-backend case)",
+        );
     }
 
     #[test]

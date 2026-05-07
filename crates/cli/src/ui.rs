@@ -219,12 +219,9 @@ impl ChatBackend for SessionBackend {
 
         // Convert each engine-side `ToolCallOutcome` into the
         // structured `TurnToolCall` shape the WS handler emits as
-        // `tool_call` + `tool_result` frames. Args are not yet
-        // preserved on `ToolCallOutcome` (the engine drops them
-        // after dispatch — adding them is an additive engine API
-        // change scoped to a follow-up); for 1d.2c.1 we surface
-        // an empty-object placeholder so the SPA's card has a
-        // stable shape to render.
+        // `tool_call` + `tool_result` frames. Args come straight
+        // from the engine now (1d.2c.2 added preservation); the
+        // SPA renders them in the card's expandable detail panel.
         let tool_calls = outcome
             .tool_calls
             .into_iter()
@@ -237,7 +234,7 @@ impl ChatBackend for SessionBackend {
                 // overkill here.
                 call_id: format!("call-{i}"),
                 name: call.name,
-                args: serde_json::json!({}),
+                args: call.arguments,
                 status: convert_status(call.result),
             })
             .collect();
@@ -245,6 +242,12 @@ impl ChatBackend for SessionBackend {
         Ok(TurnResult {
             assistant_text: outcome.assistant_text,
             tool_calls,
+            // F5 reasoning-step UUID the engine just wrote — the
+            // SPA's verifiable badge anchors to this for the future
+            // `/replay/<anchor>` route. Always populated for the
+            // real backend (every `Session::run_turn` writes a
+            // reasoning_step entry); only `None` on stub backends.
+            verifiable_anchor: Some(outcome.reasoning_step_id),
         })
     }
 }

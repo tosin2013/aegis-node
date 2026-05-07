@@ -53,6 +53,12 @@ pub struct TurnResult {
     /// flattened this into plain-text summaries; 1d.2c switches to
     /// structured frames so the SPA renders gate decisions inline.
     pub tool_calls: Vec<TurnToolCall>,
+    /// Cryptographic anchor for the turn — UUIDv7 of the F5
+    /// reasoning-step ledger entry the engine just wrote. Surfaced
+    /// to the SPA via the `turn_end` frame so the verifiable badge
+    /// can link to a future `/replay/<anchor>` route. `None` for
+    /// stub / mock backends that don't write to a ledger.
+    pub verifiable_anchor: Option<String>,
 }
 
 /// One model-emitted tool call + its mediator outcome, structured
@@ -164,6 +170,10 @@ impl ChatBackend for StubBackend {
                 "echo: {prompt}\n\n(stub backend — start `aegis ui --manifest <m> --model <m> [--backend llama|litertlm]` to attach a real Session::run_turn)"
             )),
             tool_calls: Vec::new(),
+            // Stub doesn't write to a ledger, so there's no F9
+            // anchor to surface. The SPA suppresses the verifiable
+            // badge when this is `None`.
+            verifiable_anchor: None,
         })
     }
 }
@@ -198,6 +208,7 @@ mod tests {
             Ok(TurnResult {
                 assistant_text: Some(self.response.clone()),
                 tool_calls: Vec::new(),
+                verifiable_anchor: None,
             })
         }
     }
