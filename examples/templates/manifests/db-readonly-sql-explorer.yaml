@@ -1,0 +1,58 @@
+# === Aegis-Node Manifest Template ===
+# id: db-readonly-sql-explorer
+# title: Read-only SQL agent over SQLite MCP
+# category: Database & SQL
+# difficulty: starter
+# pain: Natural-language-to-SQL agents have caused production data
+#       loss when prompt-injected. LangChain's SQLDatabaseChain
+#       actually executed `DROP TABLE` from a user prompt
+#       (https://github.com/langchain-ai/langchain/issues/5923);
+#       resolution acknowledged that prompt-level guardrails alone
+#       are insufficient — the constraint must be enforced at the
+#       connection layer. Aegis enforces it at the MCP allowlist.
+# adrs: [018, 024]
+# ====================================
+#
+# Two layers, both deny-by-default:
+#   1. tools.mcp[].allowed_tools restricts the SQLite MCP to
+#      SELECT-shape verbs only. write_query, create_table,
+#      drop_table are deliberately omitted; closed-by-default
+#      denies them at the protocol layer regardless of what the
+#      upstream server advertises in its tools/list.
+#   2. tools.filesystem.write is absent — even if a write tool
+#      somehow leaked through, no path is grantable.
+#
+# Fork this for Postgres MCP, MySQL MCP, etc. The integrity
+# property (no DDL/DML) holds across SQL backends.
+
+schemaVersion: "1"
+agent:
+  name: "sql-explorer"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/sql-explorer/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/database/dir"
+  network:
+    outbound: deny
+    inbound: deny
+  mcp:
+    - server_name: "sqlite"
+      server_uri: "stdio:uvx mcp-server-sqlite --db-path /path/to/your/database/data.db"
+      allowed_tools:
+        - "read_query"
+        - "list_tables"
+        - "describe_table"
+      # write_query / create_table / drop_table deliberately omitted.
+      # Closed-by-default at the MCP allowlist denies them regardless
+      # of what mcp-server-sqlite reports in its tools/list response.
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0
