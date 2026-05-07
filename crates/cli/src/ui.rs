@@ -257,9 +257,7 @@ fn convert_status(r: aegis_inference_engine::ToolCallResult) -> TurnToolCallStat
     match r {
         ToolCallResult::Success(value) => TurnToolCallStatus::Success { value },
         ToolCallResult::Denied(reason) => TurnToolCallStatus::Denied { reason },
-        ToolCallResult::RequiresApproval(reason) => {
-            TurnToolCallStatus::RequiresApproval { reason }
-        }
+        ToolCallResult::RequiresApproval(reason) => TurnToolCallStatus::RequiresApproval { reason },
         ToolCallResult::Unroutable(reason) => TurnToolCallStatus::Unroutable { reason },
     }
 }

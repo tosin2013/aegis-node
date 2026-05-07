@@ -222,24 +222,15 @@ mod tests {
             "success",
         );
         assert_eq!(
-            TurnToolCallStatus::Denied {
-                reason: "x".into()
-            }
-            .kind(),
+            TurnToolCallStatus::Denied { reason: "x".into() }.kind(),
             "denied",
         );
         assert_eq!(
-            TurnToolCallStatus::RequiresApproval {
-                reason: "y".into()
-            }
-            .kind(),
+            TurnToolCallStatus::RequiresApproval { reason: "y".into() }.kind(),
             "requires_approval",
         );
         assert_eq!(
-            TurnToolCallStatus::Unroutable {
-                reason: "z".into()
-            }
-            .kind(),
+            TurnToolCallStatus::Unroutable { reason: "z".into() }.kind(),
             "unroutable",
         );
     }

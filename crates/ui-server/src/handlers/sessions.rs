@@ -567,7 +567,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["status"], "success");
         assert_eq!(v["value"]["bytes_read"], 42);
-        assert!(v.get("reason").is_none(), "reason must be omitted when None");
+        assert!(
+            v.get("reason").is_none(),
+            "reason must be omitted when None"
+        );
     }
 
     #[test]
