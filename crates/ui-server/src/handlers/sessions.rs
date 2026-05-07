@@ -158,6 +158,31 @@ pub enum ServerFrame {
     /// Streaming assistant-output chunk. May arrive multiple times per
     /// turn; the client appends each `text` to the active turn's buffer.
     AssistantText { turn_id: String, text: String },
+    /// One model-emitted tool call about to be dispatched. The
+    /// `tool_call_id` pairs this frame with the subsequent
+    /// `tool_result` so the SPA renders both into the same inline
+    /// card. `args` is the JSON the model produced; the
+    /// engine's mediators have already validated it against the
+    /// manifest's allowlist by the time this frame fires.
+    ToolCall {
+        turn_id: String,
+        tool_call_id: String,
+        name: String,
+        args: serde_json::Value,
+    },
+    /// The mediator's terminal decision for one tool call.
+    /// `status` is one of `success` / `denied` / `requires_approval` /
+    /// `unroutable`; `result` carries the tool's value on success or
+    /// the human-readable reason on the other three.
+    ToolResult {
+        turn_id: String,
+        tool_call_id: String,
+        status: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     /// Turn complete. No more frames will arrive for this `turn_id`
     /// until a fresh `user_prompt` triggers another turn.
     TurnEnd { turn_id: String },
@@ -292,48 +317,69 @@ async fn run_turn(
         }
     };
 
-    let mut emitted_any_text = false;
+    let mut emitted_anything = false;
     if let Some(text) = outcome.assistant_text.as_ref() {
         if !text.is_empty() {
             stream_chunked(socket, &turn_id, text).await?;
-            emitted_any_text = true;
+            emitted_anything = true;
         }
     }
 
-    // Tool-call summaries get appended as plain text for 1d.2b.
-    // Structured `tool_call` / `tool_result` frames per ADR-031
-    // §"Inline tool-call cards" land in sub-phase 1d.2c; the
-    // protocol enum is already designed to extend without breaking
-    // older clients.
-    if !outcome.tool_call_summaries.is_empty() {
-        let header = if emitted_any_text {
-            "\n\n---\n"
-        } else {
-            "---\n"
-        };
+    // Structured tool-call frames per ADR-031 §"Inline tool-call cards"
+    // (sub-phase 1d.2c). One `tool_call` frame announces the call;
+    // one `tool_result` frame carries the mediator's terminal
+    // decision. The `tool_call_id` pairs them so the SPA renders
+    // both into the same inline card. Sub-phase 1d.2b flattened
+    // these into plain-text summaries; the structured form lets
+    // the SPA render the gate decision (success / denied /
+    // requires_approval / unroutable) as a colored status pill on
+    // the card.
+    for call in &outcome.tool_calls {
         send_frame(
             socket,
-            &ServerFrame::AssistantText {
+            &ServerFrame::ToolCall {
                 turn_id: turn_id.clone(),
-                text: header.to_string(),
+                tool_call_id: call.call_id.clone(),
+                name: call.name.clone(),
+                args: call.args.clone(),
             },
         )
         .await?;
-        for summary in &outcome.tool_call_summaries {
-            send_frame(
-                socket,
-                &ServerFrame::AssistantText {
-                    turn_id: turn_id.clone(),
-                    text: format!("· {summary}\n"),
-                },
-            )
-            .await?;
-            tokio::time::sleep(Duration::from_millis(CHUNK_DELAY_MS)).await;
-        }
-        emitted_any_text = true;
+        // A small delay between announce + result so the SPA can
+        // animate the card's status pill flipping from "pending" to
+        // the terminal state. Negligible cost; gives the rendering
+        // visible kinetic feedback.
+        tokio::time::sleep(Duration::from_millis(CHUNK_DELAY_MS)).await;
+
+        let (status, value, reason) = match &call.status {
+            crate::chat::TurnToolCallStatus::Success { value } => {
+                ("success", Some(value.clone()), None)
+            }
+            crate::chat::TurnToolCallStatus::Denied { reason } => {
+                ("denied", None, Some(reason.clone()))
+            }
+            crate::chat::TurnToolCallStatus::RequiresApproval { reason } => {
+                ("requires_approval", None, Some(reason.clone()))
+            }
+            crate::chat::TurnToolCallStatus::Unroutable { reason } => {
+                ("unroutable", None, Some(reason.clone()))
+            }
+        };
+        send_frame(
+            socket,
+            &ServerFrame::ToolResult {
+                turn_id: turn_id.clone(),
+                tool_call_id: call.call_id.clone(),
+                status,
+                value,
+                reason,
+            },
+        )
+        .await?;
+        emitted_anything = true;
     }
 
-    if !emitted_any_text {
+    if !emitted_anything {
         // Either no text + no tool calls, or text was empty. The SPA
         // still needs *something* to render so the assistant bubble
         // doesn't appear empty.
@@ -488,6 +534,59 @@ mod tests {
         assert_eq!(v["type"], "assistant_text");
         assert_eq!(v["text"], "hello");
         assert_eq!(v["turn_id"], "t-1");
+    }
+
+    #[test]
+    fn tool_call_frame_carries_name_and_args() {
+        let f = ServerFrame::ToolCall {
+            turn_id: "t-1".to_string(),
+            tool_call_id: "call-0".to_string(),
+            name: "filesystem__read".to_string(),
+            args: serde_json::json!({"path": "/etc/hosts"}),
+        };
+        let s = encode(&f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["schema"], "v1");
+        assert_eq!(v["type"], "tool_call");
+        assert_eq!(v["turn_id"], "t-1");
+        assert_eq!(v["tool_call_id"], "call-0");
+        assert_eq!(v["name"], "filesystem__read");
+        assert_eq!(v["args"]["path"], "/etc/hosts");
+    }
+
+    #[test]
+    fn tool_result_success_skips_reason() {
+        let f = ServerFrame::ToolResult {
+            turn_id: "t-1".to_string(),
+            tool_call_id: "call-0".to_string(),
+            status: "success",
+            value: Some(serde_json::json!({"bytes_read": 42})),
+            reason: None,
+        };
+        let s = encode(&f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["status"], "success");
+        assert_eq!(v["value"]["bytes_read"], 42);
+        assert!(
+            v.get("reason").is_none(),
+            "reason must be omitted when None"
+        );
+    }
+
+    #[test]
+    fn tool_result_denied_skips_value() {
+        let f = ServerFrame::ToolResult {
+            turn_id: "t-1".to_string(),
+            tool_call_id: "call-0".to_string(),
+            status: "denied",
+            value: None,
+            reason: Some("path /etc not in allowlist".to_string()),
+        };
+        let s = encode(&f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["status"], "denied");
+        assert_eq!(v["reason"], "path /etc not in allowlist");
+        assert!(v.get("value").is_none(), "value must be omitted when None");
     }
 
     #[test]

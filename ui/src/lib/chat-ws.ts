@@ -19,6 +19,15 @@ export interface SessionCreated {
   schema: string;
 }
 
+/** Mediator's terminal decision for one tool call. Mirrors the
+ *  Rust enum `TurnToolCallStatus` — the four reachable outcomes from
+ *  `aegis_inference_engine::ToolCallResult`. */
+export type ToolStatus =
+  | "success"
+  | "denied"
+  | "requires_approval"
+  | "unroutable";
+
 export type ServerFrame =
   | { schema: "v1"; type: "turn_start"; turn_id: string }
   | {
@@ -26,6 +35,23 @@ export type ServerFrame =
       type: "assistant_text";
       turn_id: string;
       text: string;
+    }
+  | {
+      schema: "v1";
+      type: "tool_call";
+      turn_id: string;
+      tool_call_id: string;
+      name: string;
+      args: unknown;
+    }
+  | {
+      schema: "v1";
+      type: "tool_result";
+      turn_id: string;
+      tool_call_id: string;
+      status: ToolStatus;
+      value?: unknown;
+      reason?: string;
     }
   | { schema: "v1"; type: "turn_end"; turn_id: string }
   | { schema: "v1"; type: "error"; message: string };
@@ -100,6 +126,13 @@ export function connectChatWs(
   };
 }
 
+const TOOL_STATUSES: ReadonlySet<string> = new Set([
+  "success",
+  "denied",
+  "requires_approval",
+  "unroutable",
+]);
+
 function isServerFrame(v: unknown): v is ServerFrame {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
@@ -110,6 +143,19 @@ function isServerFrame(v: unknown): v is ServerFrame {
       return typeof o.turn_id === "string";
     case "assistant_text":
       return typeof o.turn_id === "string" && typeof o.text === "string";
+    case "tool_call":
+      return (
+        typeof o.turn_id === "string" &&
+        typeof o.tool_call_id === "string" &&
+        typeof o.name === "string"
+      );
+    case "tool_result":
+      return (
+        typeof o.turn_id === "string" &&
+        typeof o.tool_call_id === "string" &&
+        typeof o.status === "string" &&
+        TOOL_STATUSES.has(o.status)
+      );
     case "error":
       return typeof o.message === "string";
     default:

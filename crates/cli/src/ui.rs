@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use aegis_inference_engine::Session;
+use aegis_ui_server::chat::{TurnToolCall, TurnToolCallStatus};
 use aegis_ui_server::{ChatBackend, ChatBackendError, Config, StubBackend, TurnResult};
 use anyhow::{Context, Result};
 use clap::Args;
@@ -216,31 +217,47 @@ impl ChatBackend for SessionBackend {
             .run_turn(prompt)
             .map_err(|e| ChatBackendError::new(format!("Session::run_turn: {e}")))?;
 
-        let summaries = outcome
+        // Convert each engine-side `ToolCallOutcome` into the
+        // structured `TurnToolCall` shape the WS handler emits as
+        // `tool_call` + `tool_result` frames. Args are not yet
+        // preserved on `ToolCallOutcome` (the engine drops them
+        // after dispatch — adding them is an additive engine API
+        // change scoped to a follow-up); for 1d.2c.1 we surface
+        // an empty-object placeholder so the SPA's card has a
+        // stable shape to render.
+        let tool_calls = outcome
             .tool_calls
-            .iter()
-            .map(|call| format_tool_call_summary(&call.name, &call.result))
+            .into_iter()
+            .enumerate()
+            .map(|(i, call)| TurnToolCall {
+                // Until the engine emits per-call ids, derive a
+                // turn-local one from the index. Stable within the
+                // turn (which is what the SPA needs to pair
+                // `tool_call` + `tool_result` frames); a UUID is
+                // overkill here.
+                call_id: format!("call-{i}"),
+                name: call.name,
+                args: serde_json::json!({}),
+                status: convert_status(call.result),
+            })
             .collect();
 
         Ok(TurnResult {
             assistant_text: outcome.assistant_text,
-            tool_call_summaries: summaries,
+            tool_calls,
         })
     }
 }
 
-/// Render one tool-call outcome as a human-readable single line.
-/// Mirrors the rendering logic in `aegis run --prompt`; sub-phase
-/// 1d.2c will replace this with structured frames the SPA renders
-/// as inline cards with the gate decision.
-fn format_tool_call_summary(name: &str, result: &aegis_inference_engine::ToolCallResult) -> String {
+/// Map an `aegis_inference_engine::ToolCallResult` onto the wire
+/// `TurnToolCallStatus`. The two enums are isomorphic by design —
+/// the engine's mediator decides; this trait converts.
+fn convert_status(r: aegis_inference_engine::ToolCallResult) -> TurnToolCallStatus {
     use aegis_inference_engine::ToolCallResult;
-    match result {
-        ToolCallResult::Success(_) => format!("{name} → success"),
-        ToolCallResult::Denied(reason) => format!("{name} → DENIED: {reason}"),
-        ToolCallResult::RequiresApproval(reason) => {
-            format!("{name} → REQUIRES_APPROVAL: {reason}")
-        }
-        ToolCallResult::Unroutable(reason) => format!("{name} → UNROUTABLE: {reason}"),
+    match r {
+        ToolCallResult::Success(value) => TurnToolCallStatus::Success { value },
+        ToolCallResult::Denied(reason) => TurnToolCallStatus::Denied { reason },
+        ToolCallResult::RequiresApproval(reason) => TurnToolCallStatus::RequiresApproval { reason },
+        ToolCallResult::Unroutable(reason) => TurnToolCallStatus::Unroutable { reason },
     }
 }
