@@ -1,0 +1,69 @@
+# === Aegis-Node Manifest Template ===
+# id: destructive-shell-blocker
+# title: Shell-using agent with destructive-verb screening
+# category: Approval & destructive ops
+# difficulty: starter
+# pain: The Replit incident (July 2025) deleted a production
+#       database during an explicit code freeze
+#       (AI Incident DB #1152, Fortune coverage:
+#       https://fortune.com/2025/07/23/ai-coding-tool-replit-wiped-database-called-it-a-catastrophic-failure/).
+#       Cursor users have repeatedly reported the agent issuing
+#       `rm -rf ~`
+#       (https://forum.cursor.com/t/cursor-ai-executes-destructive-command-rm-rf-during-development-session/129401).
+#       This template scopes exec to a single operator-owned wrapper
+#       that screens argv before forwarding to the real shell.
+# adrs: [005, 009, 011]
+# ====================================
+#
+# The agent can call exactly ONE program: a wrapper script the
+# operator owns. The wrapper's job is to inspect argv for
+# destructive verbs (rm -rf, git reset --hard, DROP, TRUNCATE,
+# sudo, etc.) and refuse them before any real shell sees them.
+#
+# Sample wrapper implementations live under examples/ — fork
+# them, harden them, and pin the absolute path here. AEGIS003
+# refuses bare basenames precisely so a stray "/bin/rm" on PATH
+# can't accidentally match.
+#
+# Approval-gated writes catch any attempt to modify the wrapper
+# itself or scripts in the agent's workdir.
+
+schemaVersion: "1"
+agent:
+  name: "shell-agent"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/shell-agent/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/workdir"
+    write:
+      - "/path/to/your/workdir/output"
+  network:
+    outbound: deny
+    inbound: deny
+
+# Single program. Absolute path binds to a specific binary;
+# AEGIS003 refuses bare basenames. The wrapper at this path is
+# operator-owned and screens argv for destructive verbs before
+# forwarding to the real shell.
+exec_grants:
+  - program: "/usr/local/bin/aegis-shell-wrapper"
+
+# F3 approval gate on writes. Even if the wrapper is somehow
+# tricked, modifying it (or any script in the workdir) requires
+# explicit human sign-off via the file or web channel.
+write_grants:
+  - resource: "/path/to/your/workdir/output"
+    actions: ["write"]
+    duration: "PT1H"
+    approval_required: true
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

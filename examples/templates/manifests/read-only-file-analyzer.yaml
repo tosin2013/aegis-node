@@ -1,0 +1,41 @@
+# === Aegis-Node Manifest Template ===
+# id: read-only-file-analyzer
+# title: Read-only file analyzer
+# category: Filesystem
+# difficulty: starter
+# pain: An agent that needs to read files but never write them. Most
+#       common shape; baseline against which other patterns layer.
+#       Closed-by-default keeps everything else denied.
+# adrs: [007, 011]
+# ====================================
+#
+# Use this when an agent needs to summarize, extract, or answer
+# questions about files on disk and produce its output in the chat
+# reply (not by writing to disk). The single read path is the only
+# host-side capability the agent has — every write, every network
+# call, every exec is denied at the F2 enforcement layer.
+
+schemaVersion: "1"
+agent:
+  name: "file-analyzer"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/file-analyzer/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/data"
+    # No write block — closed-by-default per ADR-009 keeps every
+    # write denied. Add a write_grants block below if the agent
+    # needs to produce a file artifact.
+  network:
+    outbound: deny
+    inbound: deny
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

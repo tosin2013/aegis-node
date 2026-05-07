@@ -1,0 +1,69 @@
+# === Aegis-Node Manifest Template ===
+# id: github-scoped-token-agent
+# title: GitHub MCP agent with cross-repo read denied
+# category: MCP integrity
+# difficulty: intermediate
+# pain: Invariant Labs (May 2025) showed a malicious public-repo
+#       issue could prompt-inject the GitHub MCP into exfiltrating
+#       a private repo because the GitHub token spanned both
+#       (https://invariantlabs.ai/blog/mcp-github-vulnerability,
+#       Simon Willison summary
+#       https://simonwillison.net/2025/May/26/github-mcp-exploited/).
+# adrs: [018, 024]
+# ====================================
+#
+# Two-layer scope:
+#
+#   1. tools.mcp[].allowed_tools restricts the GitHub MCP to
+#      issue/PR comment operations only. Even if the attached
+#      token has private-repo scope, the agent literally cannot
+#      request the file-read or content-fetch tools — they're
+#      not in the allowlist.
+#
+#   2. tools.network.outbound pins egress to api.github.com. The
+#      agent can't be tricked into an out-of-band exfiltration
+#      to attacker.tld even via a tool that accidentally accepts
+#      arbitrary URLs.
+#
+# Pair with F3 approval gates on issue creation if the agent runs
+# in an environment where comment spam would be a concern. For
+# private-repo workflows, narrow the allowlist further.
+
+schemaVersion: "1"
+agent:
+  name: "github-issue-agent"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/github-issue-agent/inst-001"
+tools:
+  filesystem:
+    read: []
+  network:
+    outbound:
+      allowlist:
+        - host: "api.github.com"
+          port: 443
+          protocol: https
+    inbound: deny
+  mcp:
+    - server_name: "github"
+      server_uri: "stdio:npx -y @modelcontextprotocol/server-github"
+      # Read access to issues + PRs and the ability to comment.
+      # Critically: no get_file_contents, no list_branches, no
+      # clone. If the token attached to this MCP has broader
+      # scope (private repos, org secrets), this allowlist is
+      # the actual security boundary.
+      allowed_tools:
+        - "list_issues"
+        - "get_issue"
+        - "list_pull_requests"
+        - "get_pull_request"
+        - "add_issue_comment"
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

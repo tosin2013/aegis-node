@@ -1,0 +1,70 @@
+# === Aegis-Node Manifest Template ===
+# id: mcp-fs-traversal-hardened
+# title: MCP filesystem with traversal + symlink containment
+# category: MCP integrity
+# difficulty: intermediate
+# pain: CVE-2025-53109 — the official MCP filesystem server didn't
+#       resolve symlinks before its containment check, allowing
+#       escape from the allowlisted directory. Chained with
+#       mcp-server-git CVEs (68143/68144/68145) to reach RCE via a
+#       malicious .git/config
+#       (https://www.sentinelone.com/vulnerability-database/cve-2025-53109/,
+#       https://authzed.com/blog/timeline-mcp-breaches).
+# adrs: [018, 024]
+# ====================================
+#
+# Two independent layers protect the filesystem boundary:
+#
+#   1. tools.filesystem.read narrows the host-side view to one
+#      directory. Aegis canonicalizes the requested path and
+#      compares against this allowlist before any file open —
+#      symlinks pointing outside the prefix are rejected.
+#
+#   2. tools.mcp[].allowed_tools restricts which MCP verbs are
+#      callable. ADR-024 pre_validate then rewrites the call so
+#      the path arg is checked against tools.filesystem.read
+#      *before* the MCP server sees it.
+#
+# Combined effect: a malicious or tampered MCP server that
+# returns a misleading tools/list cannot reach files outside the
+# allowlist even if the operator forgot to update allowed_tools
+# after the server changed.
+
+schemaVersion: "1"
+agent:
+  name: "fs-agent-hardened"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/fs-agent-hardened/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/data"
+  network:
+    outbound: deny
+    inbound: deny
+  mcp:
+    - server_name: "fs"
+      server_uri: "stdio:npx -y @modelcontextprotocol/server-filesystem /path/to/your/data"
+      allowed_tools:
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        - name: "list_directory"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - "list_allowed_directories"
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0
