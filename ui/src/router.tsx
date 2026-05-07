@@ -5,6 +5,7 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 import { TopNav } from "@/components/TopNav";
+import { Chat } from "@/pages/Chat";
 import { Home } from "@/pages/Home";
 import { Manifest } from "@/pages/Manifest";
 import { Models } from "@/pages/Models";
@@ -39,10 +40,17 @@ const modelsRoute = createRoute({
   component: Models,
 });
 
+const chatRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/chat",
+  component: Chat,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   manifestRoute,
   modelsRoute,
+  chatRoute,
 ]);
 
 export const router = createRouter({

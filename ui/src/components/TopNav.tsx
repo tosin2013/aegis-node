@@ -1,5 +1,11 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Boxes, FileCode, Home as HomeIcon, ShieldCheck } from "lucide-react";
+import {
+  Boxes,
+  FileCode,
+  Home as HomeIcon,
+  MessageSquare,
+  ShieldCheck,
+} from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +17,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Home", icon: HomeIcon },
+  { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/manifest", label: "Manifest Builder", icon: FileCode },
   { to: "/models", label: "Model Library", icon: Boxes },
 ];
