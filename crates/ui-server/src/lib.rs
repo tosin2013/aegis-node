@@ -78,6 +78,10 @@ pub fn router(config: Config) -> Router {
             "/api/v1/manifests",
             post(handlers::manifests::save_manifest),
         )
+        .route(
+            "/api/v1/manifests/validate",
+            post(handlers::validate::validate_manifest),
+        )
         .fallback(handlers::assets::serve_embedded)
         .with_state(config)
 }

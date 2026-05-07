@@ -14,8 +14,20 @@ help: ## Show available targets
 
 build: build-go build-rust ## Build everything (Go + Rust)
 
-build-go:
+build-go: build-go-validate ## Build all Go binaries (writes bin/aegis-validate)
 	$(GO) build ./...
+
+# Build the Go control-plane CLI as `bin/aegis-validate` to avoid a
+# binary-name collision with the Rust `aegis` runtime CLI (per ADR-002,
+# both are called `aegis` from the source perspective). The Phase 1d
+# Manifest Builder UI (ADR-031) shells out to this binary for its
+# live `aegis validate` integration; the env var
+# `AEGIS_VALIDATE_BIN` overrides the lookup. Operators packaging
+# Aegis-Node should ship both binaries — the Rust runtime and the
+# Go validator — under their canonical names.
+build-go-validate: ## Build the Go validator as bin/aegis-validate
+	@mkdir -p bin
+	$(GO) build -o bin/aegis-validate ./cmd/aegis
 
 build-rust:
 	$(CARGO) build --workspace

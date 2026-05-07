@@ -1,9 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from "react";
-import { FileCode, Save } from "lucide-react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import type * as Monaco from "monaco-editor";
+import { CircleAlert, FileCode, Info, Save, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TemplatePicker } from "@/components/TemplatePicker";
 import type { Template } from "@/templates/types";
+import { useValidate, type ValidateState } from "@/lib/validate";
 
 // Locally-bundled Monaco. The dynamic imports below — `monaco-setup`
 // (which pulls in `monaco-editor` + the worker `?worker` chunks) and
@@ -23,7 +25,7 @@ const MonacoEditor = lazy(async () => {
 const FALLBACK_YAML = `# Aegis-Node permission manifest.
 # Load a curated template from the dropdown above to get started, or
 # hand-author here. Save writes the file the CLI consumes; live
-# \`aegis validate\` diagnostics land in sub-phase 1d.1d.
+# \`aegis validate\` diagnostics render inline as you type.
 
 schemaVersion: "1"
 agent:
@@ -54,6 +56,13 @@ interface SaveResponse {
   bytes: number;
 }
 
+/**
+ * Diagnostic owner string — Monaco scopes markers per (model URI,
+ * owner). Using a stable owner means subsequent validate runs
+ * REPLACE prior markers cleanly rather than accumulating.
+ */
+const VALIDATE_MARKER_OWNER = "aegis-validate";
+
 export function Manifest() {
   const [yaml, setYaml] = useState<string>(FALLBACK_YAML);
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(
@@ -63,9 +72,54 @@ export function Manifest() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
+  const validateState = useValidate(yaml);
+
+  // Hold a ref to the underlying Monaco editor instance so the
+  // marker-applying effect can call setModelMarkers on the active
+  // model. The ref is set in onMount; it stays stable across re-
+  // renders and survives hot-reload during dev.
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+
   useEffect(() => {
     setDirty(yaml !== FALLBACK_YAML || savedPath !== null);
   }, [yaml, savedPath]);
+
+  // Apply the latest validate findings as Monaco markers. Runs
+  // every time validateState transitions; clears markers on idle
+  // / loading / error so stale diagnostics don't linger when the
+  // operator's still typing.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+    const model = editor.getModel();
+    if (!model) return;
+
+    if (validateState.kind !== "ready") {
+      monaco.editor.setModelMarkers(model, VALIDATE_MARKER_OWNER, []);
+      return;
+    }
+
+    const markers = validateState.response.findings.map((f) => {
+      // Validator emits 0/0 today; fall back to highlighting line 1
+      // until the YAML AST hookup ships precise positions.
+      const startLine = f.line > 0 ? f.line : 1;
+      const startCol = f.col > 0 ? f.col : 1;
+      return {
+        severity: monacoSeverity(monaco, f.severity),
+        startLineNumber: startLine,
+        startColumn: startCol,
+        endLineNumber: startLine,
+        endColumn: startCol + Math.max(f.field.length, 1),
+        message: `[${f.rule_id}] ${f.message}${
+          f.rationale ? `\n\n${f.rationale}` : ""
+        }`,
+        source: "aegis validate",
+      };
+    });
+    monaco.editor.setModelMarkers(model, VALIDATE_MARKER_OWNER, markers);
+  }, [validateState]);
 
   function handleTemplateSelect(t: Template) {
     setYaml(t.yaml);
@@ -111,11 +165,12 @@ export function Manifest() {
             <p className="text-sm text-muted">
               Pick a curated starter, edit, save · live{" "}
               <code className="font-mono text-accent">aegis validate</code>{" "}
-              diagnostics land in 1d.1d
+              diagnostics render as you type
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <ValidateStatus state={validateState} />
           <TemplatePicker onSelect={handleTemplateSelect} />
           <button
             type="button"
@@ -146,8 +201,7 @@ export function Manifest() {
           <p className="mb-4 text-sm text-muted">
             Monaco editor served from the embedded SPA bundle (no CDN). Each
             curated template ships with a metadata block + pain-point citation
-            anchored in a documented incident (CVE, postmortem, forum
-            thread); source files live at{" "}
+            anchored in a documented incident; source files live at{" "}
             <code className="font-mono text-accent">
               examples/templates/manifests/
             </code>
@@ -181,6 +235,10 @@ export function Manifest() {
                 defaultLanguage="yaml"
                 value={yaml}
                 onChange={(v) => setYaml(v ?? "")}
+                onMount={(editor, monaco) => {
+                  editorRef.current = editor;
+                  monacoRef.current = monaco;
+                }}
                 theme="vs-dark"
                 options={{
                   minimap: { enabled: false },
@@ -191,8 +249,136 @@ export function Manifest() {
               />
             </Suspense>
           </div>
+
+          <ValidateFindings state={validateState} />
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function monacoSeverity(
+  monaco: typeof Monaco,
+  severity: string,
+): Monaco.MarkerSeverity {
+  switch (severity) {
+    case "error":
+      return monaco.MarkerSeverity.Error;
+    case "warn":
+      return monaco.MarkerSeverity.Warning;
+    case "info":
+      return monaco.MarkerSeverity.Info;
+    default:
+      return monaco.MarkerSeverity.Hint;
+  }
+}
+
+function ValidateStatus({ state }: { state: ValidateState }) {
+  if (state.kind === "idle") {
+    return (
+      <span className="inline-flex items-center font-mono text-xs text-muted">
+        validate idle
+      </span>
+    );
+  }
+  if (state.kind === "loading") {
+    return (
+      <span className="inline-flex items-center font-mono text-xs text-muted">
+        validating…
+      </span>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 font-mono text-xs text-red-400"
+        title={state.message}
+      >
+        <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+        validator error
+      </span>
+    );
+  }
+  const { errors, warnings, infos } = state.summary;
+  if (errors === 0 && warnings === 0 && infos === 0) {
+    return (
+      <span className="inline-flex items-center font-mono text-xs text-emerald-400">
+        ✓ clean
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-2 font-mono text-xs">
+      {errors > 0 && (
+        <span className="inline-flex items-center gap-1 text-red-400">
+          <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+          {errors} error{errors === 1 ? "" : "s"}
+        </span>
+      )}
+      {warnings > 0 && (
+        <span className="inline-flex items-center gap-1 text-amber-300">
+          <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+          {warnings} warn{warnings === 1 ? "" : "s"}
+        </span>
+      )}
+      {infos > 0 && (
+        <span className="inline-flex items-center gap-1 text-sky-300">
+          <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          {infos} info
+        </span>
+      )}
+    </span>
+  );
+}
+
+function ValidateFindings({ state }: { state: ValidateState }) {
+  if (state.kind === "error") {
+    return (
+      <div className="mt-4 rounded-md border border-amber-700 bg-amber-950/40 p-3 text-xs">
+        <p className="mb-1 font-semibold text-amber-200">
+          Live validate unavailable
+        </p>
+        <p className="font-mono text-amber-200/70">{state.message}</p>
+        <p className="mt-2 text-amber-200/70">
+          Install via{" "}
+          <code className="font-mono">make build-go-validate</code>, put{" "}
+          <code className="font-mono">aegis-validate</code> on PATH, or set the{" "}
+          <code className="font-mono">AEGIS_VALIDATE_BIN</code> env var.
+        </p>
+      </div>
+    );
+  }
+  if (state.kind !== "ready" || state.response.findings.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="mt-4 space-y-2">
+      {state.response.findings.map((f, i) => (
+        <li
+          key={`${f.rule_id}-${f.field}-${i}`}
+          className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs"
+        >
+          <div className="mb-1 flex items-baseline gap-2">
+            <span
+              className={
+                f.severity === "error"
+                  ? "font-mono text-red-400"
+                  : f.severity === "warn"
+                    ? "font-mono text-amber-300"
+                    : "font-mono text-sky-300"
+              }
+            >
+              {f.severity}
+            </span>
+            <span className="font-mono text-accent">{f.rule_id}</span>
+            <span className="font-mono text-muted">{f.field}</span>
+          </div>
+          <p className="text-[var(--color-fg)]">{f.message}</p>
+          {f.rationale && (
+            <p className="mt-1 text-muted">{f.rationale}</p>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
