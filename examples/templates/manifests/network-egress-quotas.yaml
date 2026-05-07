@@ -1,0 +1,67 @@
+# === Aegis-Node Manifest Template ===
+# id: network-egress-quotas
+# title: Targeted outbound network with explicit allowlist
+# category: Network/egress
+# difficulty: starter
+# pain: Network egress is the forgotten dimension in agent
+#       runtimes. SSRF-to-IMDS, env-var exfil over HTTP
+#       (LangGrinch CVE-2025-68664:
+#       https://cyata.ai/blog/langgrinch-langchain-core-cve-2025-68664/),
+#       RAG content leakage to attacker.tld, slopsquat callbacks —
+#       all funnel through outbound HTTP. Operators ship agents
+#       with default-allow egress and only think about it after
+#       an incident. Closed-by-default plus an explicit allowlist
+#       inverts the posture.
+# adrs: [008, 011]
+# ====================================
+#
+# Closed-by-default outbound. Replace the allowlist below with
+# the legitimate hostnames your agent needs. Everything else is
+# denied at the connect layer; F6 NetworkAttestation at session
+# shutdown summarises every connect attempt (allowed or denied)
+# with a signed digest.
+#
+# When ADR-027 aggregate quotas land in v1.0.0, this template
+# extends to:
+#
+#   tools:
+#     network:
+#       outbound:
+#         allowlist: [...]
+#         quota:
+#           max_bytes_outbound_per_session: 10485760    # 10 MiB
+#           max_calls_per_session: 100
+#
+# That bounds blast radius even when an allowlisted host is
+# tricked into serving attacker content. Until v1.0.0 ships
+# quotas, the allowlist alone is the defense.
+
+schemaVersion: "1"
+agent:
+  name: "egress-bounded"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/egress-bounded/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/workdir"
+  network:
+    outbound:
+      allowlist:
+        # Replace with your legitimate API endpoints.
+        - host: "api.your-service.com"
+          port: 443
+          protocol: https
+        - host: "api.partner.com"
+          port: 443
+          protocol: https
+    inbound: deny
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

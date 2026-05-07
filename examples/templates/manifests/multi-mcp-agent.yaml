@@ -1,0 +1,82 @@
+# === Aegis-Node Manifest Template ===
+# id: multi-mcp-agent
+# title: Multi-MCP agent (filesystem + web)
+# category: MCP integrity
+# difficulty: starter
+# pain: Operators wiring up two or more MCP servers routinely
+#       get the allowlist wrong — copy-pasting from one server's
+#       allowed_tools to another, mis-naming tools that the
+#       upstream server doesn't actually expose, or forgetting
+#       per-arg pre_validate. The MCP ecosystem's churn means
+#       the same server can advertise different tool names across
+#       releases (see GitGuardian's MCP config audit identifying
+#       24,008 secrets in MCP-server configs:
+#       https://cyata.ai/blog/whispering-secrets-loudly-inside-mcps-quiet-crisis-of-credential-exposure/).
+# adrs: [018, 024]
+# ====================================
+#
+# Two MCP servers, each with its own allowlist + pre_validate
+# block. The shape mirrors examples/02-mcp-research-assistant —
+# fork it for any combination of MCP servers.
+#
+# Naming gotcha worth knowing: small models tend to abbreviate
+# "<server>__<tool>" calls when the server name overlaps with
+# the tool prefix (e.g. server "firecrawl" + tool "firecrawl_search"
+# becomes "firecrawl__search" which the upstream rejects). When
+# composing servers like this, name them by their *role* (web,
+# fs, db) rather than by their upstream package name.
+
+schemaVersion: "1"
+agent:
+  name: "research-agent"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/research-agent/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/local/docs"
+    # No write block — a research agent's output flows through
+    # the chat reply, not through file artifacts. If you need
+    # to write a report, fork the `approved-write-agent`
+    # template and merge in its write_grants block.
+  network:
+    outbound:
+      allowlist:
+        - host: "api.your-search-provider.com"
+          port: 443
+          protocol: https
+    inbound: deny
+  mcp:
+    - server_name: "fs"
+      server_uri: "stdio:npx -y @modelcontextprotocol/server-filesystem /path/to/your/local/docs"
+      allowed_tools:
+        - name: "read_text_file"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - name: "read_multiple_files"
+          pre_validate:
+            - kind: filesystem_read
+              arg_array: paths
+        - name: "list_directory"
+          pre_validate:
+            - kind: filesystem_read
+              arg: path
+        - "list_allowed_directories"
+    - server_name: "web"
+      # Replace with your search provider's MCP package. The token
+      # is read from env by the MCP-server process; the manifest
+      # never touches the secret.
+      server_uri: "stdio:npx -y your-search-mcp"
+      allowed_tools:
+        - "search"
+        - "fetch_url"
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

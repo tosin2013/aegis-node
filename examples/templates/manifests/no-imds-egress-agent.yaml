@@ -1,0 +1,62 @@
+# === Aegis-Node Manifest Template ===
+# id: no-imds-egress-agent
+# title: Cloud-VM agent that can't reach instance metadata (SSRF defense)
+# category: Network/egress
+# difficulty: intermediate
+# pain: SSRF-to-IMDS credential theft is the canonical cloud-LLM
+#       exploit pattern. 93% of EC2 instances still don't enforce
+#       IMDSv2; an agent making outbound requests on behalf of a
+#       user inherits the SSRF risk and can pivot to steal
+#       instance-role credentials
+#       (Datadog Security Labs:
+#       https://securitylabs.datadoghq.com/articles/misconfiguration-spotlight-imds/,
+#       Hacking the Cloud:
+#       https://hackingthe.cloud/aws/exploitation/ec2-metadata-ssrf/).
+# adrs: [008, 011]
+# ====================================
+#
+# Closed-by-default outbound + targeted allowlist. Cloud metadata
+# endpoints are NOT in the allowlist and therefore unreachable —
+# the agent literally cannot connect to:
+#
+#   - 169.254.169.254 (AWS / Azure / GCP IMDS)
+#   - fd00:ec2::254 (AWS IPv6 IMDS)
+#   - metadata.google.internal (GCP)
+#   - Any link-local 169.254.0.0/16 range
+#
+# Even if the agent is prompt-injected into "fetch this URL," the
+# F2 enforcement layer denies the connect. The F6 NetworkAttestation
+# at session shutdown summarises every blocked attempt — useful
+# evidence for incident response.
+#
+# Pair with Aegis-Node deployments on EC2/GCE/Azure where the
+# instance role has IAM/scope you don't want the agent to assume.
+
+schemaVersion: "1"
+agent:
+  name: "cloud-egress-agent"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/cloud-egress-agent/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/workdir"
+  network:
+    outbound:
+      allowlist:
+        # Replace with your legitimate API endpoints. The IMDS
+        # endpoints are deliberately absent — closed-by-default
+        # denies them at the connect layer.
+        - host: "api.your-service.com"
+          port: 443
+          protocol: https
+    inbound: deny
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0

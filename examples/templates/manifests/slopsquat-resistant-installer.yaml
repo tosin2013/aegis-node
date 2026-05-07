@@ -1,0 +1,92 @@
+# === Aegis-Node Manifest Template ===
+# id: slopsquat-resistant-installer
+# title: Package-install agent with registry-pinned outbound
+# category: Supply chain
+# difficulty: intermediate
+# pain: ~20% of LLM-recommended package names don't exist;
+#       attackers register the most-hallucinated names so an
+#       agent that runs `npm install <hallucination>` ships
+#       attacker code into the build. Real cases:
+#       react-codeshift hallucinated into 237 repos;
+#       @hash-validator/v2 in the PromptMink campaign
+#       (Trend Micro:
+#       https://www.trendmicro.com/vinfo/us/security/news/cybercrime-and-digital-threats/slopsquatting-when-ai-agents-hallucinate-malicious-packages,
+#       Aikido:
+#       https://www.aikido.dev/blog/slopsquatting-ai-package-hallucination-attacks).
+# adrs: [008, 009]
+# ====================================
+#
+# Three layers narrow the agent's installer surface:
+#
+#   1. tools.network.outbound allows ONLY the official registries
+#      (registry.npmjs.org, pypi.org). Mirrors / typo'd hostnames
+#      are denied at the connect layer.
+#
+#   2. exec_grants pins the agent to wrapper scripts that the
+#      operator owns — the wrapper screens argv for `--no-frozen-lockfile`,
+#      `--ignore-scripts`-bypass, force-resolution flags, etc.
+#      before forwarding to the real npm/pip.
+#
+#   3. write_grants with approval_required: true on lockfiles —
+#      a new dependency name lands as an approval prompt, not a
+#      silent "yarn add malicious-pkg".
+#
+# Operators fork this for `apt`, `cargo`, `gem`, `composer` —
+# the integrity property (registry-pinned + wrapper-screened +
+# lockfile-approved) is package-manager-agnostic.
+
+schemaVersion: "1"
+agent:
+  name: "package-installer"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/package-installer/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/project"
+    write:
+      - "/path/to/your/project"
+  network:
+    outbound:
+      allowlist:
+        - host: "registry.npmjs.org"
+          port: 443
+          protocol: https
+        - host: "pypi.org"
+          port: 443
+          protocol: https
+        - host: "files.pythonhosted.org"
+          port: 443
+          protocol: https
+    inbound: deny
+
+# Wrapper scripts. The operator owns these, screens argv for
+# integrity-bypass flags, and forwards to the real npm/pip.
+# AEGIS003 refuses bare basenames so a stray /npm on PATH
+# can't accidentally match.
+exec_grants:
+  - program: "/usr/local/bin/aegis-npm-wrapper"
+  - program: "/usr/local/bin/aegis-pip-wrapper"
+
+# Approval gate on lockfile mutations. Adding a new dependency
+# routes through the F3 channel — humans see the package name
+# before it lands, defeating slopsquat by introducing a check
+# at the only point where a hallucinated name matters.
+write_grants:
+  - resource: "/path/to/your/project/package-lock.json"
+    actions: ["write"]
+    duration: "PT1H"
+    approval_required: true
+  - resource: "/path/to/your/project/requirements.txt"
+    actions: ["write"]
+    duration: "PT1H"
+    approval_required: true
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0
