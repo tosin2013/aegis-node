@@ -29,6 +29,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
+use axum::extract::FromRef;
 use axum::routing::{get, post};
 use axum::Router;
 use serde::Serialize;
@@ -37,6 +38,7 @@ mod embed;
 mod handlers;
 
 pub use embed::UiDist;
+pub use handlers::sessions::SessionRegistry;
 
 /// Construction-time configuration passed in by the CLI. Carries the
 /// values the `/api/v1/version` endpoint surfaces back to the UI;
@@ -59,17 +61,41 @@ pub struct Config {
     pub listen: SocketAddr,
 }
 
+/// Composite handler state. axum's `FromRef` impls below let
+/// individual handlers extract whichever sub-state they need
+/// (`State<Config>` or `State<SessionRegistry>`) without the router
+/// having to thread a tuple of states. Sub-phase 1d.2a introduces
+/// `SessionRegistry` for the chat surface; future surfaces add their
+/// own sub-states as new fields here.
+#[derive(Clone)]
+pub struct AppState {
+    pub config: Config,
+    pub sessions: SessionRegistry,
+}
+
+impl FromRef<AppState> for Config {
+    fn from_ref(state: &AppState) -> Config {
+        state.config.clone()
+    }
+}
+
+impl FromRef<AppState> for SessionRegistry {
+    fn from_ref(state: &AppState) -> SessionRegistry {
+        state.sessions.clone()
+    }
+}
+
 /// Build the axum router for the UI server. Pure: no I/O, no socket
 /// binding — call [`serve`] to actually run it.
 ///
-/// Routes installed by sub-phase 1d.0:
-///
-/// | Path                  | Handler                                  |
-/// |-----------------------|------------------------------------------|
-/// | `GET /healthz`        | [`handlers::health::healthz`]            |
-/// | `GET /api/v1/version` | [`handlers::health::version`]            |
-/// | `GET /*`              | embedded `ui/dist/` via [`UiDist`]       |
+/// `SessionRegistry` is constructed fresh inside the router; sessions
+/// don't survive a process restart (per ADR-031 §"Single agent, single
+/// user" — persistence-across-restart is a v1.0.0 multi-turn concern).
 pub fn router(config: Config) -> Router {
+    let state = AppState {
+        config,
+        sessions: SessionRegistry::new(),
+    };
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
         .route("/api/v1/version", get(handlers::health::version))
@@ -82,8 +108,10 @@ pub fn router(config: Config) -> Router {
             "/api/v1/manifests/validate",
             post(handlers::validate::validate_manifest),
         )
+        .route("/api/v1/sessions", post(handlers::sessions::create_session))
+        .route("/api/v1/stream", get(handlers::sessions::stream))
         .fallback(handlers::assets::serve_embedded)
-        .with_state(config)
+        .with_state(state)
 }
 
 /// Bind the server to `addr`, refusing any non-loopback address, and
