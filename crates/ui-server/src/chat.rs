@@ -34,6 +34,7 @@
 //! live behind an `Arc` shared across connections.
 
 use std::fmt;
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -154,6 +155,39 @@ pub trait ChatBackend: Send + Sync {
     /// caller wraps in `tokio::task::spawn_blocking` to keep the
     /// async runtime free.
     fn run_turn(&self, prompt: &str) -> Result<TurnResult, ChatBackendError>;
+}
+
+/// Constructor for [`ChatBackend`]s — the seam that lets the
+/// WebUI's model-picker dropdown swap models at runtime per
+/// [ADR-032](../../../docs/adrs/032-webui-model-library-and-session-forking.md)
+/// §"Session Forking" without a process restart.
+///
+/// `aegis-cli` provides the real implementation (`SessionBackendFactory`)
+/// which holds the original boot args (manifest, backend kind,
+/// identity dir, etc.) and re-uses them when forking — the manifest
+/// stays fixed, only the model digest changes. Sub-phase 1d.2e.1
+/// ships same-backend swaps only (Qwen → another GGUF model);
+/// cross-backend swaps (Qwen llama → Gemma 4 litertlm) land in
+/// 1d.2e.2 alongside the chat-history replay.
+///
+/// `Send + Sync` because the trait object lives behind an `Arc`
+/// shared across handler invocations.
+pub trait ChatBackendFactory: Send + Sync {
+    /// Build a fresh [`ChatBackend`] bound to the model identified
+    /// by `model_digest`. The digest is the cache subdirectory
+    /// name produced by `aegis pull` (the SHA-256 of the artifact's
+    /// OCI manifest). Callers that supply a digest the local cache
+    /// doesn't know about get an error.
+    ///
+    /// The previous backend is dropped only after the new one is
+    /// successfully constructed; failure leaves the existing backend
+    /// in place so a botched fork doesn't take down the chat surface.
+    fn fork(&self, model_digest: &str) -> Result<Arc<dyn ChatBackend>, ChatBackendError>;
+
+    /// The currently-loaded model's digest, surfaced so the UI
+    /// dropdown can highlight the active row. `None` for stub /
+    /// mock backends without a digest.
+    fn current_model_digest(&self) -> Option<String>;
 }
 
 /// Default backend when `aegis ui` is started without

@@ -34,12 +34,13 @@ use axum::extract::FromRef;
 use axum::routing::{get, post};
 use axum::Router;
 use serde::Serialize;
+use tokio::sync::RwLock;
 
 pub mod chat;
 mod embed;
 mod handlers;
 
-pub use chat::{ChatBackend, ChatBackendError, StubBackend, TurnResult};
+pub use chat::{ChatBackend, ChatBackendError, ChatBackendFactory, StubBackend, TurnResult};
 pub use embed::UiDist;
 pub use handlers::sessions::SessionRegistry;
 
@@ -65,19 +66,32 @@ pub struct Config {
 }
 
 /// Composite handler state. axum's `FromRef` impls below let
-/// individual handlers extract whichever sub-state they need
-/// (`State<Config>` / `State<SessionRegistry>` / `State<Arc<dyn ChatBackend>>`)
-/// without the router having to thread a tuple of states.
+/// individual handlers extract whichever sub-state they need.
+///
+/// Sub-phase 1d.2e.1 wraps `chat_backend` in `Arc<RwLock<…>>` so
+/// the model-picker fork endpoint can swap the inner backend at
+/// runtime per [ADR-032](../../docs/adrs/032-webui-model-library-and-session-forking.md)
+/// §"Session Forking." Reads happen at WebSocket-connect time —
+/// active connections keep their captured backend for the connection's
+/// lifetime, which is fine because the SPA closes + reopens the WS
+/// after a successful fork.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
     pub sessions: SessionRegistry,
-    /// The chat surface's backend. Sub-phase 1d.2b plumbs the real
+    /// The chat surface's backend, behind `Arc<RwLock<…>>` so the
+    /// fork endpoint can swap it. Sub-phase 1d.2b plumbed the real
     /// `Session::run_turn`-driven implementation through here when
-    /// `aegis ui --manifest <m> --model <m>` is provided; otherwise
+    /// `aegis ui --manifest <m> --model <m>` is provided; 1d.2e.1
+    /// adds the swap mechanism. Without `--manifest`/`--model`,
     /// [`StubBackend`] keeps the chat UI visibly functional with an
     /// operator hint.
-    pub chat_backend: Arc<dyn ChatBackend>,
+    pub chat_backend: Arc<RwLock<Arc<dyn ChatBackend>>>,
+    /// Optional factory for forking. `Some` when the CLI booted with
+    /// `--manifest`/`--model` (real backend); `None` for stub mode
+    /// (no manifest/model context to re-boot against). The fork
+    /// endpoint returns 503 when this is `None`.
+    pub chat_backend_factory: Option<Arc<dyn ChatBackendFactory>>,
 }
 
 impl FromRef<AppState> for Config {
@@ -92,33 +106,42 @@ impl FromRef<AppState> for SessionRegistry {
     }
 }
 
-impl FromRef<AppState> for Arc<dyn ChatBackend> {
-    fn from_ref(state: &AppState) -> Arc<dyn ChatBackend> {
+impl FromRef<AppState> for Arc<RwLock<Arc<dyn ChatBackend>>> {
+    fn from_ref(state: &AppState) -> Arc<RwLock<Arc<dyn ChatBackend>>> {
         state.chat_backend.clone()
     }
 }
 
-/// Build the axum router for the UI server with the default
-/// [`StubBackend`] attached. Convenience wrapper around
-/// [`router_with_backend`] for callers who don't have a real
-/// backend ready (tests, the CLI's no-model path).
-pub fn router(config: Config) -> Router {
-    router_with_backend(config, Arc::new(StubBackend))
+impl FromRef<AppState> for Option<Arc<dyn ChatBackendFactory>> {
+    fn from_ref(state: &AppState) -> Option<Arc<dyn ChatBackendFactory>> {
+        state.chat_backend_factory.clone()
+    }
 }
 
-/// Build the axum router with a caller-supplied [`ChatBackend`].
-/// `aegis-cli`'s `aegis ui` subcommand uses this overload when
-/// `--manifest`/`--model` are provided so the chat surface drives a
-/// real `Session::run_turn` instead of the stub echo.
+/// Build the axum router for the UI server with the default
+/// [`StubBackend`] attached and no factory (so the fork endpoint
+/// returns 503). Convenience for tests and the CLI's no-model path.
+pub fn router(config: Config) -> Router {
+    router_with_backend(config, Arc::new(StubBackend), None)
+}
+
+/// Build the axum router with a caller-supplied [`ChatBackend`] and
+/// optional [`ChatBackendFactory`]. `aegis-cli`'s `aegis ui` subcommand
+/// uses this when `--manifest`/`--model` are provided.
 ///
 /// `SessionRegistry` is constructed fresh inside the router; sessions
 /// don't survive a process restart (per ADR-031 §"Single agent, single
 /// user" — persistence-across-restart is a v1.0.0 multi-turn concern).
-pub fn router_with_backend(config: Config, chat_backend: Arc<dyn ChatBackend>) -> Router {
+pub fn router_with_backend(
+    config: Config,
+    chat_backend: Arc<dyn ChatBackend>,
+    chat_backend_factory: Option<Arc<dyn ChatBackendFactory>>,
+) -> Router {
     let state = AppState {
         config,
         sessions: SessionRegistry::new(),
-        chat_backend,
+        chat_backend: Arc::new(RwLock::new(chat_backend)),
+        chat_backend_factory,
     };
     Router::new()
         .route("/healthz", get(handlers::health::healthz))
@@ -133,6 +156,10 @@ pub fn router_with_backend(config: Config, chat_backend: Arc<dyn ChatBackend>) -
             post(handlers::validate::validate_manifest),
         )
         .route("/api/v1/sessions", post(handlers::sessions::create_session))
+        .route(
+            "/api/v1/sessions/fork",
+            post(handlers::sessions::fork_session),
+        )
         .route("/api/v1/stream", get(handlers::sessions::stream))
         .fallback(handlers::assets::serve_embedded)
         .with_state(state)
@@ -147,16 +174,18 @@ pub fn router_with_backend(config: Config, chat_backend: Arc<dyn ChatBackend>) -
 /// [ADR-031](../../docs/adrs/031-community-webui-for-local-collaboration.md)
 /// §"Localhost-only" there is no escape hatch.
 pub async fn serve(config: Config) -> anyhow::Result<()> {
-    serve_with_backend(config, Arc::new(StubBackend)).await
+    serve_with_backend(config, Arc::new(StubBackend), None).await
 }
 
-/// `serve` + a caller-supplied [`ChatBackend`]. The CLI's `aegis ui`
-/// subcommand uses this overload when it has a Session ready to
-/// drive the chat surface; the no-backend path uses [`serve`] which
-/// falls back to [`StubBackend`].
+/// `serve` + a caller-supplied [`ChatBackend`] + optional factory.
+/// The CLI's `aegis ui` subcommand uses this overload when it has a
+/// Session ready to drive the chat surface and a factory ready to
+/// fork to other models; the no-backend path uses [`serve`] which
+/// falls back to [`StubBackend`] without a factory.
 pub async fn serve_with_backend(
     config: Config,
     chat_backend: Arc<dyn ChatBackend>,
+    chat_backend_factory: Option<Arc<dyn ChatBackendFactory>>,
 ) -> anyhow::Result<()> {
     let addr = config.listen;
     if !is_loopback(addr.ip()) {
@@ -169,7 +198,11 @@ pub async fn serve_with_backend(
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     tracing::info!(target: "aegis_ui_server", addr = %bound, "ui-server listening");
-    axum::serve(listener, router_with_backend(config, chat_backend)).await?;
+    axum::serve(
+        listener,
+        router_with_backend(config, chat_backend, chat_backend_factory),
+    )
+    .await?;
     Ok(())
 }
 
