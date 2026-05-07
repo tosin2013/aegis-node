@@ -55,7 +55,7 @@ permissions:
 jobs:
   build-renderer:
     name: Build demo renderer image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -101,7 +101,7 @@ jobs:
   snapshot:
     name: ${{ matrix.demo }}
     needs: build-renderer
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

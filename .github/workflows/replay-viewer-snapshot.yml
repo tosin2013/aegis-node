@@ -23,7 +23,7 @@ on:
 jobs:
   snapshot:
     name: F8-C DOM snapshot
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: tools/replay-viewer/snapshot

@@ -15,7 +15,7 @@ on:
 jobs:
   validate:
     name: aegis validate (every committed manifest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
