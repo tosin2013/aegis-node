@@ -530,6 +530,71 @@ fn default_identity_dir() -> Result<PathBuf> {
     Ok(base.join("aegis").join("identity"))
 }
 
+/// Boot a [`Session`] for the chat surface (sub-phase 1d.2b) using
+/// the same path `aegis run --prompt` takes: `BootConfig` →
+/// `Session::boot` → optional approval/MCP wiring → load backend →
+/// `set_loaded_model`. The returned session is ready for any number
+/// of `run_turn` calls.
+///
+/// Why a dedicated function rather than reusing [`execute`]:
+/// `execute` runs exactly one turn and shuts down; the chat surface
+/// keeps the session alive for the lifetime of the `aegis ui`
+/// process. This split keeps both code paths legible without
+/// branching `execute` on a "don't shut down" flag.
+#[allow(clippy::too_many_arguments)]
+pub fn boot_session_for_ui(
+    manifest_path: PathBuf,
+    model_path: PathBuf,
+    config_path: Option<PathBuf>,
+    chat_template_sidecar: Option<PathBuf>,
+    identity_dir: Option<PathBuf>,
+    workload: String,
+    instance: String,
+    ledger_path: Option<PathBuf>,
+    backend: BackendKind,
+) -> Result<Session> {
+    let session_id = format!("session-ui-{}", uuid_v7_like());
+    let ledger_path = ledger_path
+        .unwrap_or_else(|| PathBuf::from(format!("ledger-ui-{session_id}.jsonl")));
+    let identity_dir = match identity_dir {
+        Some(p) => p,
+        None => default_identity_dir()?,
+    };
+
+    let cfg = BootConfig {
+        session_id,
+        manifest_path,
+        model_path: model_path.clone(),
+        config_path,
+        chat_template_sidecar,
+        identity_dir,
+        workload_name: workload,
+        instance,
+        ledger_path,
+    };
+    let mut session = Session::boot(cfg).context("boot")?;
+
+    // Mirror `execute`'s optional wiring so the chat surface picks
+    // up F3 file approvals + MCP servers when configured the same
+    // way operators configure them for `aegis run --prompt`.
+    if let Ok(approval_path) = std::env::var("AEGIS_APPROVAL_FILE") {
+        let channel = aegis_approval_gate::FileApprovalChannel::new(approval_path);
+        session = session.with_approval_channel(Box::new(channel));
+    }
+    if !session.policy().manifest().tools.mcp.is_empty() {
+        let mcp_client = aegis_mcp_client::StdioMcpClient::new();
+        session = session.with_mcp_client(Box::new(mcp_client));
+    }
+
+    let loaded = match backend {
+        BackendKind::Llama => load_llama_backend(&session, &model_path)?,
+        BackendKind::Litertlm => load_litertlm_backend(&session, &model_path)?,
+    };
+    session.set_loaded_model(loaded);
+
+    Ok(session)
+}
+
 /// Tiny v7-shaped session-id generator without pulling the `uuid`
 /// crate into `crates/cli` (it's already a transitive dep but adding
 /// it directly is unnecessary churn). Format: hex of an `u128`

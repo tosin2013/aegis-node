@@ -134,6 +134,7 @@ pub async fn stream(
     ws: WebSocketUpgrade,
     Query(params): Query<ConnectParams>,
     State(reg): State<SessionRegistry>,
+    State(backend): State<std::sync::Arc<dyn crate::ChatBackend>>,
 ) -> Response {
     if !reg.exists(&params.sid).await {
         return (
@@ -142,7 +143,7 @@ pub async fn stream(
         )
             .into_response();
     }
-    ws.on_upgrade(move |socket| handle_socket(socket, params.sid))
+    ws.on_upgrade(move |socket| handle_socket(socket, params.sid, backend))
 }
 
 /// Server → client frame body. The wire form has `schema: "v1"` at
@@ -197,7 +198,11 @@ fn encode(frame: &ServerFrame) -> Result<String, serde_json::Error> {
     serde_json::to_string(&value)
 }
 
-async fn handle_socket(mut socket: WebSocket, session_id: String) {
+async fn handle_socket(
+    mut socket: WebSocket,
+    session_id: String,
+    backend: std::sync::Arc<dyn crate::ChatBackend>,
+) {
     tracing::info!(target: "aegis_ui_server", session_id = %session_id, "ws connected");
     while let Some(msg) = socket.next().await {
         let msg = match msg {
@@ -209,7 +214,9 @@ async fn handle_socket(mut socket: WebSocket, session_id: String) {
         };
         match msg {
             Message::Text(text) => {
-                if let Err(e) = handle_text_frame(&mut socket, &session_id, text).await {
+                if let Err(e) =
+                    handle_text_frame(&mut socket, &session_id, text, &backend).await
+                {
                     tracing::warn!(target: "aegis_ui_server", session_id = %session_id, err = %e, "frame handler errored");
                 }
             }
@@ -228,6 +235,7 @@ async fn handle_text_frame(
     socket: &mut WebSocket,
     session_id: &str,
     text: String,
+    backend: &std::sync::Arc<dyn crate::ChatBackend>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let frame: ClientFrame = match serde_json::from_str(&text) {
         Ok(f) => f,
@@ -237,22 +245,28 @@ async fn handle_text_frame(
         }
     };
     match frame {
-        ClientFrame::UserPrompt { prompt } => run_stub_turn(socket, session_id, &prompt).await,
+        ClientFrame::UserPrompt { prompt } => {
+            run_turn(socket, session_id, &prompt, backend).await
+        }
     }
 }
 
-/// Stub turn: emit `turn_start`, a single `assistant_text` echoing
-/// the prompt, then `turn_end`. Sub-phase 1d.2b replaces this body
-/// with `Session::run_turn` driving the real engine.
+/// Drive one chat turn against the configured [`ChatBackend`]. Emits
+/// `turn_start`, then char-chunked `assistant_text` frames so the
+/// SPA's streaming-append rendering animates even though the
+/// backend currently returns the response whole. Tool-call summaries
+/// (1d.2b) trail as plain text; structured tool-call frames land in
+/// 1d.2c per ADR-031.
 ///
-/// The intentional 50 ms delay between frames lets the SPA prove its
-/// streaming-append rendering works (frames arrive separately) without
-/// any backend-side complexity. Drop the sleep when the real engine
-/// integration lands — token-by-token streaming gives natural pacing.
-async fn run_stub_turn(
+/// The synchronous `ChatBackend::run_turn` runs on a `spawn_blocking`
+/// thread so the inference step doesn't stall the async runtime —
+/// llama.cpp / LiteRT-LM tokens are CPU-bound and would otherwise
+/// block other WebSocket connections sharing the executor.
+async fn run_turn(
     socket: &mut WebSocket,
     _session_id: &str,
     prompt: &str,
+    backend: &std::sync::Arc<dyn crate::ChatBackend>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let turn_id = Uuid::now_v7().to_string();
 
@@ -264,27 +278,127 @@ async fn run_stub_turn(
     )
     .await?;
 
-    // Two chunks so the SPA's append-on-streaming path is exercised.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    send_frame(
-        socket,
-        &ServerFrame::AssistantText {
-            turn_id: turn_id.clone(),
-            text: format!("echo: {prompt}"),
-        },
-    )
-    .await?;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    send_frame(
-        socket,
-        &ServerFrame::AssistantText {
-            turn_id: turn_id.clone(),
-            text: "\n\n(stub backend — Session::run_turn integration ships in 1d.2b)".to_string(),
-        },
-    )
-    .await?;
+    // Hand the inference call to a blocking thread. `Backend::run_turn`
+    // is sync (Session::run_turn is sync); blocking the executor would
+    // freeze every other WebSocket on this process.
+    let prompt_owned = prompt.to_string();
+    let backend_for_blocking = backend.clone();
+    let result = tokio::task::spawn_blocking(move || backend_for_blocking.run_turn(&prompt_owned))
+        .await
+        .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e.to_string()))?;
+
+    let outcome = match result {
+        Ok(o) => o,
+        Err(e) => {
+            send_error(socket, &format!("backend error: {e}")).await?;
+            send_frame(socket, &ServerFrame::TurnEnd { turn_id }).await?;
+            return Ok(());
+        }
+    };
+
+    let mut emitted_any_text = false;
+    if let Some(text) = outcome.assistant_text.as_ref() {
+        if !text.is_empty() {
+            stream_chunked(socket, &turn_id, text).await?;
+            emitted_any_text = true;
+        }
+    }
+
+    // Tool-call summaries get appended as plain text for 1d.2b.
+    // Structured `tool_call` / `tool_result` frames per ADR-031
+    // §"Inline tool-call cards" land in sub-phase 1d.2c; the
+    // protocol enum is already designed to extend without breaking
+    // older clients.
+    if !outcome.tool_call_summaries.is_empty() {
+        let header = if emitted_any_text {
+            "\n\n---\n"
+        } else {
+            "---\n"
+        };
+        send_frame(
+            socket,
+            &ServerFrame::AssistantText {
+                turn_id: turn_id.clone(),
+                text: header.to_string(),
+            },
+        )
+        .await?;
+        for summary in &outcome.tool_call_summaries {
+            send_frame(
+                socket,
+                &ServerFrame::AssistantText {
+                    turn_id: turn_id.clone(),
+                    text: format!("· {summary}\n"),
+                },
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(CHUNK_DELAY_MS)).await;
+        }
+        emitted_any_text = true;
+    }
+
+    if !emitted_any_text {
+        // Either no text + no tool calls, or text was empty. The SPA
+        // still needs *something* to render so the assistant bubble
+        // doesn't appear empty.
+        send_frame(
+            socket,
+            &ServerFrame::AssistantText {
+                turn_id: turn_id.clone(),
+                text: "(no output from backend)".to_string(),
+            },
+        )
+        .await?;
+    }
 
     send_frame(socket, &ServerFrame::TurnEnd { turn_id }).await?;
+    Ok(())
+}
+
+/// Per-frame char budget for chunked streaming. ~80 chars per frame
+/// gives the SPA enough granularity to show the typing animation
+/// without flooding the WebSocket.
+const CHUNK_SIZE_CHARS: usize = 80;
+/// Delay between chunks in chunked streaming. 30 ms feels like
+/// natural typing pace; lower values make the animation feel
+/// jittery on slow connections.
+const CHUNK_DELAY_MS: u64 = 30;
+
+/// Split `text` into UTF-8-safe chunks of roughly [`CHUNK_SIZE_CHARS`]
+/// characters and emit each as its own `assistant_text` frame with a
+/// small delay. Once the inference backends grow real token-by-token
+/// streaming, this body gets replaced with a token stream consumer
+/// (the wire shape stays identical).
+async fn stream_chunked(
+    socket: &mut WebSocket,
+    turn_id: &str,
+    text: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut buf = String::with_capacity(CHUNK_SIZE_CHARS + 4);
+    for ch in text.chars() {
+        buf.push(ch);
+        if buf.chars().count() >= CHUNK_SIZE_CHARS {
+            send_frame(
+                socket,
+                &ServerFrame::AssistantText {
+                    turn_id: turn_id.to_string(),
+                    text: std::mem::take(&mut buf),
+                },
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(CHUNK_DELAY_MS)).await;
+        }
+    }
+    if !buf.is_empty() {
+        send_frame(
+            socket,
+            &ServerFrame::AssistantText {
+                turn_id: turn_id.to_string(),
+                text: buf,
+            },
+        )
+        .await?;
+    }
     Ok(())
 }
 
