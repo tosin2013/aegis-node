@@ -8,10 +8,16 @@ import {
 import {
   ArrowDown,
   Bot,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
+  Hammer,
+  HelpCircle,
+  Lock,
   MessageSquare,
   Send,
   ShieldCheck,
+  ShieldOff,
   User,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,9 +27,11 @@ import {
   createSession,
   type ChatWs,
   type ServerFrame,
+  type ToolStatus,
 } from "@/lib/chat-ws";
 
-interface ChatMessage {
+interface TextMessage {
+  kind: "text";
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
@@ -33,6 +41,23 @@ interface ChatMessage {
    *  verifiable-badge surface uses this hook. */
   verifiable?: boolean;
 }
+
+interface ToolCallMessage {
+  kind: "tool";
+  id: string;
+  turnId: string;
+  name: string;
+  args: unknown;
+  /** `undefined` while the call is pending; set by the matching
+   *  `tool_result` frame to one of the four mediator outcomes. */
+  status?: ToolStatus;
+  /** Mediator value on success. */
+  value?: unknown;
+  /** Reason text on denied / requires_approval / unroutable. */
+  reason?: string;
+}
+
+type ChatMessage = TextMessage | ToolCallMessage;
 
 type ConnState =
   | { kind: "connecting" }
@@ -44,28 +69,24 @@ export function Chat() {
   const [conn, setConn] = useState<ConnState>({ kind: "connecting" });
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
+      kind: "text",
       id: "intro",
       role: "system",
-      text: 'Welcome to the Aegis-Node chat surface (sub-phase 1d.2a). The backend is a stub — your prompts come back as "echo: …". Real Session::run_turn integration ships in 1d.2b.',
+      text: 'Welcome to the Aegis-Node chat surface. Without `--manifest`/`--model` the backend is a stub — your prompts come back as "echo: …". Start `aegis ui --manifest <m> --model <m>` to attach a real `Session::run_turn` against an inference backend.',
     },
   ]);
   const [input, setInput] = useState("");
   const wsRef = useRef<ChatWs | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Track which assistant turn is currently appending so streaming
-  // chunks land on the same message bubble instead of creating new
-  // ones. Cleared when turn_end fires.
-  const activeTurnRef = useRef<string | null>(null);
-
   const handleFrame = useCallback((frame: ServerFrame) => {
     switch (frame.type) {
       case "turn_start": {
         const turnId = frame.turn_id;
-        activeTurnRef.current = turnId;
         setMessages((prev) => [
           ...prev,
           {
+            kind: "text",
             id: turnId,
             role: "assistant",
             text: "",
@@ -78,17 +99,49 @@ export function Chat() {
         const turnId = frame.turn_id;
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === turnId ? { ...m, text: m.text + frame.text } : m,
+            m.kind === "text" && m.id === turnId
+              ? { ...m, text: m.text + frame.text }
+              : m,
+          ),
+        );
+        break;
+      }
+      case "tool_call": {
+        // A new tool-call card lands here; status will flip when
+        // the matching tool_result arrives.
+        setMessages((prev) => [
+          ...prev,
+          {
+            kind: "tool",
+            id: `${frame.turn_id}:${frame.tool_call_id}`,
+            turnId: frame.turn_id,
+            name: frame.name,
+            args: frame.args,
+          },
+        ]);
+        break;
+      }
+      case "tool_result": {
+        const id = `${frame.turn_id}:${frame.tool_call_id}`;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.kind === "tool" && m.id === id
+              ? {
+                  ...m,
+                  status: frame.status,
+                  value: frame.value,
+                  reason: frame.reason,
+                }
+              : m,
           ),
         );
         break;
       }
       case "turn_end": {
         const turnId = frame.turn_id;
-        activeTurnRef.current = null;
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === turnId
+            m.kind === "text" && m.id === turnId
               ? { ...m, pending: false, verifiable: true }
               : m,
           ),
@@ -99,6 +152,7 @@ export function Chat() {
         setMessages((prev) => [
           ...prev,
           {
+            kind: "text",
             id: `err-${Date.now()}`,
             role: "system",
             text: `error: ${frame.message}`,
@@ -179,6 +233,7 @@ export function Chat() {
     setMessages((prev) => [
       ...prev,
       {
+        kind: "text",
         id: `user-${Date.now()}`,
         role: "user",
         text: prompt,
@@ -209,8 +264,8 @@ export function Chat() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Chat</h1>
             <p className="text-sm text-muted">
-              Stub backend (sub-phase 1d.2a) · real engine integration
-              ships in 1d.2b
+              Inline tool-call cards render gate decisions per ADR-031 ·
+              verifiable-badge wiring lands in 1d.2c.2
             </p>
           </div>
         </div>
@@ -224,9 +279,13 @@ export function Chat() {
             className="flex-1 overflow-y-auto px-6 pt-5 pb-2"
           >
             <div className="flex flex-col gap-4">
-              {messages.map((m) => (
-                <MessageBubble key={m.id} message={m} />
-              ))}
+              {messages.map((m) =>
+                m.kind === "tool" ? (
+                  <ToolCallCard key={m.id} call={m} />
+                ) : (
+                  <MessageBubble key={m.id} message={m} />
+                ),
+              )}
             </div>
           </div>
 
@@ -263,7 +322,7 @@ export function Chat() {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({ message }: { message: TextMessage }) {
   if (message.role === "system") {
     return (
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-xs text-muted">
@@ -303,11 +362,157 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {message.verifiable && (
           <span
             className="inline-flex items-center gap-1 self-start font-mono text-[10px] text-muted"
-            title="Sub-phase 1d.2c will hook this badge to the F9 ledger entry for this turn"
+            title="Sub-phase 1d.2c.2 will hook this badge to the F9 ledger entry for this turn"
           >
             <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-            verifiable (1d.2c)
+            verifiable (1d.2c.2)
           </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const TOOL_STATUS_META: Record<
+  ToolStatus,
+  {
+    label: string;
+    color: string;
+    bg: string;
+    Icon: typeof CircleAlert;
+  }
+> = {
+  success: {
+    label: "success",
+    color: "text-emerald-300",
+    bg: "bg-emerald-950/40",
+    Icon: ShieldCheck,
+  },
+  denied: {
+    label: "denied",
+    color: "text-red-400",
+    bg: "bg-red-950/40",
+    Icon: ShieldOff,
+  },
+  requires_approval: {
+    label: "approval required",
+    color: "text-amber-300",
+    bg: "bg-amber-950/40",
+    Icon: Lock,
+  },
+  unroutable: {
+    label: "unroutable",
+    color: "text-sky-300",
+    bg: "bg-sky-950/40",
+    Icon: HelpCircle,
+  },
+};
+
+function ToolCallCard({ call }: { call: ToolCallMessage }) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = call.status ? TOOL_STATUS_META[call.status] : null;
+  const StatusIcon = meta?.Icon;
+
+  // The card layout intentionally mirrors the gate-decision pattern
+  // ADR-031 §"Inline tool-call cards" calls out: name + status pill
+  // top-line, expandable args + result detail. What makes Aegis-Node's
+  // chat surface visibly different from a generic LLM front-end is
+  // that every tool call carries the manifest's allow / deny / approve
+  // verdict right next to it.
+  const argsJson = useMemo(() => {
+    try {
+      return JSON.stringify(call.args, null, 2);
+    } catch {
+      return String(call.args);
+    }
+  }, [call.args]);
+
+  const valueJson = useMemo(() => {
+    if (call.value === undefined) return null;
+    try {
+      return JSON.stringify(call.value, null, 2);
+    } catch {
+      return String(call.value);
+    }
+  }, [call.value]);
+
+  return (
+    <div className="flex gap-3">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elev)]">
+        <Hammer className="h-4 w-4 text-accent" aria-hidden="true" />
+      </div>
+      <div className="flex max-w-[80%] flex-1 flex-col rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="flex items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--color-bg-elev)]"
+          aria-expanded={expanded}
+        >
+          <div className="flex items-center gap-2 truncate">
+            {expanded ? (
+              <ChevronDown
+                className="h-3.5 w-3.5 shrink-0 text-muted"
+                aria-hidden="true"
+              />
+            ) : (
+              <ChevronRight
+                className="h-3.5 w-3.5 shrink-0 text-muted"
+                aria-hidden="true"
+              />
+            )}
+            <span className="font-mono text-xs text-accent">{call.name}</span>
+          </div>
+          {meta ? (
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px]",
+                meta.bg,
+                meta.color,
+              )}
+            >
+              {StatusIcon && (
+                <StatusIcon className="h-3 w-3" aria-hidden="true" />
+              )}
+              {meta.label}
+            </span>
+          ) : (
+            <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] text-muted">
+              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent" />
+              dispatching…
+            </span>
+          )}
+        </button>
+        {expanded && (
+          <div className="border-t border-[var(--color-border)] px-3 py-2 text-xs">
+            <div className="mb-2">
+              <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-muted">
+                args (1d.2c.2: full args land when the engine preserves them)
+              </div>
+              <pre className="overflow-x-auto rounded bg-[var(--color-bg-elev)] p-2 font-mono text-[11px] text-[var(--color-fg)]">
+                {argsJson}
+              </pre>
+            </div>
+            {call.reason && (
+              <div className="mb-2">
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-muted">
+                  reason
+                </div>
+                <p className="font-mono text-[11px] text-[var(--color-fg)]">
+                  {call.reason}
+                </p>
+              </div>
+            )}
+            {valueJson && (
+              <div>
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-muted">
+                  result
+                </div>
+                <pre className="overflow-x-auto rounded bg-[var(--color-bg-elev)] p-2 font-mono text-[11px] text-[var(--color-fg)]">
+                  {valueJson}
+                </pre>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

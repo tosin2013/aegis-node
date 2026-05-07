@@ -35,6 +35,8 @@
 
 use std::fmt;
 
+use serde_json::Value;
+
 /// Result of one chat turn — what the trait impl returns to the
 /// WebSocket handler. Strips the inference-engine types so this
 /// crate stays leaf-level on the dep graph.
@@ -45,11 +47,67 @@ pub struct TurnResult {
     /// render *something*; the WS handler synthesizes a placeholder
     /// in that case).
     pub assistant_text: Option<String>,
-    /// Per-tool-call summary lines, one per call in emission order.
-    /// 1d.2b renders these as plain text appended to the assistant
-    /// reply; 1d.2c introduces structured tool-call frames per
-    /// ADR-031 §"Inline tool-call cards."
-    pub tool_call_summaries: Vec<String>,
+    /// Per-tool-call structured outcome, in emission order. The WS
+    /// handler emits one `tool_call` + `tool_result` frame pair per
+    /// entry per ADR-031 §"Inline tool-call cards." Sub-phase 1d.2b
+    /// flattened this into plain-text summaries; 1d.2c switches to
+    /// structured frames so the SPA renders gate decisions inline.
+    pub tool_calls: Vec<TurnToolCall>,
+}
+
+/// One model-emitted tool call + its mediator outcome, structured
+/// for the SPA's inline tool-call cards. The fields mirror what the
+/// inference engine's `ToolCallOutcome` carries plus a stable
+/// `call_id` the SPA uses to scope the `tool_call` → `tool_result`
+/// frame pair.
+#[derive(Debug, Clone)]
+pub struct TurnToolCall {
+    /// Unique-within-turn call id (UUIDv7 string). The WS handler
+    /// pairs the `tool_call` and `tool_result` frames it emits via
+    /// this id so the SPA knows which card to update when the
+    /// result lands.
+    pub call_id: String,
+    /// Tool name as the model emitted it
+    /// (`<namespace>__<tool>`, e.g. `filesystem__read`).
+    pub name: String,
+    /// Args the model passed. JSON for SPA-side rendering; the
+    /// engine has already validated them against the manifest's
+    /// allowlist + ADR-024 `pre_validate` clauses by the time this
+    /// surfaces here.
+    pub args: Value,
+    /// Mediator outcome — what F2 / F3 / F6 / F7 decided.
+    pub status: TurnToolCallStatus,
+}
+
+/// The four terminal mediator outcomes per
+/// `aegis_inference_engine::ToolCallResult`. Encoded as an
+/// externally-tagged enum so the wire JSON ends up with
+/// `{"status":"success", "value": …}` style records that the SPA's
+/// discriminated union consumes directly.
+#[derive(Debug, Clone)]
+pub enum TurnToolCallStatus {
+    /// Mediator allowed and the upstream tool returned a value.
+    Success { value: Value },
+    /// Mediator denied — `reason` is the policy / runtime reason
+    /// already in the F9 ledger as a Violation entry.
+    Denied { reason: String },
+    /// Mediator demanded F3 approval and the call short-circuited.
+    RequiresApproval { reason: String },
+    /// Tool call wasn't routable (malformed name, malformed args,
+    /// unknown native namespace tool).
+    Unroutable { reason: String },
+}
+
+impl TurnToolCallStatus {
+    /// Lowercase-snake-case discriminator used in the wire JSON.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Success { .. } => "success",
+            Self::Denied { .. } => "denied",
+            Self::RequiresApproval { .. } => "requires_approval",
+            Self::Unroutable { .. } => "unroutable",
+        }
+    }
 }
 
 /// Failure mode for a chat turn. Plain message — the WS handler
@@ -105,7 +163,7 @@ impl ChatBackend for StubBackend {
             assistant_text: Some(format!(
                 "echo: {prompt}\n\n(stub backend — start `aegis ui --manifest <m> --model <m> [--backend llama|litertlm]` to attach a real Session::run_turn)"
             )),
-            tool_call_summaries: Vec::new(),
+            tool_calls: Vec::new(),
         })
     }
 }
@@ -139,7 +197,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(TurnResult {
                 assistant_text: Some(self.response.clone()),
-                tool_call_summaries: Vec::new(),
+                tool_calls: Vec::new(),
             })
         }
     }
@@ -151,7 +209,39 @@ mod tests {
         assert!(text.contains("echo: hi"));
         assert!(text.contains("--manifest"));
         assert!(text.contains("--model"));
-        assert!(r.tool_call_summaries.is_empty());
+        assert!(r.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn turn_tool_call_status_kind_round_trips_to_wire() {
+        assert_eq!(
+            TurnToolCallStatus::Success {
+                value: serde_json::json!({"ok": true})
+            }
+            .kind(),
+            "success",
+        );
+        assert_eq!(
+            TurnToolCallStatus::Denied {
+                reason: "x".into()
+            }
+            .kind(),
+            "denied",
+        );
+        assert_eq!(
+            TurnToolCallStatus::RequiresApproval {
+                reason: "y".into()
+            }
+            .kind(),
+            "requires_approval",
+        );
+        assert_eq!(
+            TurnToolCallStatus::Unroutable {
+                reason: "z".into()
+            }
+            .kind(),
+            "unroutable",
+        );
     }
 
     #[test]
