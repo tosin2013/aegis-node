@@ -233,10 +233,7 @@ impl ChatBackend for SessionBackend {
 /// Mirrors the rendering logic in `aegis run --prompt`; sub-phase
 /// 1d.2c will replace this with structured frames the SPA renders
 /// as inline cards with the gate decision.
-fn format_tool_call_summary(
-    name: &str,
-    result: &aegis_inference_engine::ToolCallResult,
-) -> String {
+fn format_tool_call_summary(name: &str, result: &aegis_inference_engine::ToolCallResult) -> String {
     use aegis_inference_engine::ToolCallResult;
     match result {
         ToolCallResult::Success(_) => format!("{name} → success"),

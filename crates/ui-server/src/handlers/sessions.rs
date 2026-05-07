@@ -214,9 +214,7 @@ async fn handle_socket(
         };
         match msg {
             Message::Text(text) => {
-                if let Err(e) =
-                    handle_text_frame(&mut socket, &session_id, text, &backend).await
-                {
+                if let Err(e) = handle_text_frame(&mut socket, &session_id, text, &backend).await {
                     tracing::warn!(target: "aegis_ui_server", session_id = %session_id, err = %e, "frame handler errored");
                 }
             }
@@ -245,9 +243,7 @@ async fn handle_text_frame(
         }
     };
     match frame {
-        ClientFrame::UserPrompt { prompt } => {
-            run_turn(socket, session_id, &prompt, backend).await
-        }
+        ClientFrame::UserPrompt { prompt } => run_turn(socket, session_id, &prompt, backend).await,
     }
 }
 

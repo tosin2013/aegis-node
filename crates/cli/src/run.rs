@@ -554,8 +554,8 @@ pub fn boot_session_for_ui(
     backend: BackendKind,
 ) -> Result<Session> {
     let session_id = format!("session-ui-{}", uuid_v7_like());
-    let ledger_path = ledger_path
-        .unwrap_or_else(|| PathBuf::from(format!("ledger-ui-{session_id}.jsonl")));
+    let ledger_path =
+        ledger_path.unwrap_or_else(|| PathBuf::from(format!("ledger-ui-{session_id}.jsonl")));
     let identity_dir = match identity_dir {
         Some(p) => p,
         None => default_identity_dir()?,
