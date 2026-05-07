@@ -157,10 +157,7 @@ pub async fn validate_manifest(body: String) -> Response {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "validator usage error (exit 2): {}",
-                stderr.trim()
-            ),
+            format!("validator usage error (exit 2): {}", stderr.trim()),
         )
             .into_response();
     }
