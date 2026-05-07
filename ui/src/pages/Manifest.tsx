@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { FileCode, Save } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TemplatePicker } from "@/components/TemplatePicker";
+import type { Template } from "@/templates/types";
 
 // Locally-bundled Monaco. The dynamic imports below — `monaco-setup`
 // (which pulls in `monaco-editor` + the worker `?worker` chunks) and
@@ -18,38 +20,32 @@ const MonacoEditor = lazy(async () => {
   return { default: mod.default };
 });
 
-const SAMPLE_YAML = `# Sample Aegis-Node permission manifest.
-# Sub-phase 1d.1d wires live \`aegis validate\` diagnostics into this
-# editor (ADR-031 §"Visual manifest builder"). For now it edits + saves;
-# validation runs against the saved file via \`aegis validate\` from the
-# CLI.
+const FALLBACK_YAML = `# Aegis-Node permission manifest.
+# Load a curated template from the dropdown above to get started, or
+# hand-author here. Save writes the file the CLI consumes; live
+# \`aegis validate\` diagnostics land in sub-phase 1d.1d.
 
+schemaVersion: "1"
+agent:
+  name: "my-agent"
+  version: "1.0.0"
 identity:
-  workload: example-agent
-  instance: dev-1
+  spiffeId: "spiffe://aegis-node.local/agent/my-agent/inst-001"
+tools:
+  filesystem:
+    read:
+      - /path/to/your/data
+  network:
+    outbound: deny
+    inbound: deny
 
 inference:
   determinism:
     seed: 42
     temperature: 0.0
-
-tools:
-  filesystem:
-    read:
-      - /home/agent/data
-    write:
-      - path: /home/agent/out
-        ttl: PT1H
-  network:
-    outbound:
-      - host: api.example.com
-        port: 443
-        protocol: tcp
-  mcp:
-    - server_name: fs-mcp
-      server_uri: stdio:npx -y @modelcontextprotocol/server-filesystem /tmp
-      allowed_tools:
-        - read_text_file
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0
 `;
 
 interface SaveResponse {
@@ -59,14 +55,22 @@ interface SaveResponse {
 }
 
 export function Manifest() {
-  const [yaml, setYaml] = useState<string>(SAMPLE_YAML);
+  const [yaml, setYaml] = useState<string>(FALLBACK_YAML);
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(
+    null,
+  );
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    setDirty(yaml !== SAMPLE_YAML || savedPath !== null);
+    setDirty(yaml !== FALLBACK_YAML || savedPath !== null);
   }, [yaml, savedPath]);
+
+  function handleTemplateSelect(t: Template) {
+    setYaml(t.yaml);
+    setActiveTemplateId(t.id);
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -105,34 +109,53 @@ export function Manifest() {
               Manifest Builder
             </h1>
             <p className="text-sm text-muted">
-              Edit + save · live validate diagnostics land in sub-phase 1d.1d
+              Pick a curated starter, edit, save · live{" "}
+              <code className="font-mono text-accent">aegis validate</code>{" "}
+              diagnostics land in 1d.1d
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elev)] px-3 py-1.5 text-sm transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-          aria-label="Save manifest"
-        >
-          <Save className="h-4 w-4" aria-hidden="true" />
-          <span>{saving ? "Saving…" : dirty ? "Save" : "Saved"}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <TemplatePicker onSelect={handleTemplateSelect} />
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elev)] px-3 py-1.5 text-sm transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            aria-label="Save manifest"
+          >
+            <Save className="h-4 w-4" aria-hidden="true" />
+            <span>{saving ? "Saving…" : dirty ? "Save" : "Saved"}</span>
+          </button>
+        </div>
       </header>
 
       <Card>
         <CardHeader>
-          <CardTitle>manifest.yaml</CardTitle>
+          <CardTitle>
+            manifest.yaml{" "}
+            {activeTemplateId && (
+              <span className="font-mono text-xs text-muted">
+                / template:{" "}
+                <span className="text-accent">{activeTemplateId}</span>
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <p className="mb-4 text-sm text-muted">
-            Monaco editor served from the embedded SPA bundle (no CDN). Save
-            writes to{" "}
+            Monaco editor served from the embedded SPA bundle (no CDN). Each
+            curated template ships with a metadata block + pain-point citation
+            anchored in a documented incident (CVE, postmortem, forum
+            thread); source files live at{" "}
+            <code className="font-mono text-accent">
+              examples/templates/manifests/
+            </code>
+            . Save writes to{" "}
             <code className="font-mono text-accent">
               ~/.config/aegis/manifests/draft.yaml
-            </code>{" "}
-            — load it with{" "}
+            </code>
+            ; load it with{" "}
             <code className="font-mono text-accent">
               aegis run --manifest …
             </code>

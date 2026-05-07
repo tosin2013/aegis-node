@@ -1,0 +1,64 @@
+# === Aegis-Node Manifest Template ===
+# id: approved-write-agent
+# title: Write-capable agent with F3 approval gate
+# category: Approval & destructive ops
+# difficulty: starter
+# pain: "The agent shouldn't be deciding alone whether this write
+#       is safe" — the canonical compliance reviewer's question.
+#       Every postmortem on agent-driven data loss boils down to
+#       "the write happened without a human in the loop"
+#       (Replit prod-DB wipe AI Incident DB #1152, Cursor
+#       destructive-rm reports). Time-bounded write_grants +
+#       approval_required is the answer the runtime gives.
+# adrs: [005, 009, 019]
+# ====================================
+#
+# The shape every "agent that can write something but a human
+# signs off first" workflow needs:
+#
+#   1. tools.filesystem.write declares the dir the agent can see;
+#      closed-by-default keeps everything else denied
+#   2. write_grants per ADR-019 carries an explicit grant for the
+#      target file with approval_required: true and a TTL (ISO 8601
+#      duration). Per ADR-019, explicit grants take precedence —
+#      this single-file grant overrides anything broader
+#   3. F3 approval gate (per ADR-005) routes the request through
+#      one of: TTY (interactive operator), file (drop approval.json),
+#      web UI (browser), or signed-API (mTLS for headless flows)
+#
+# Operators fork this for refund letters, code reviews, draft
+# emails — anywhere "agent drafts → human approves → write lands"
+# is the flow.
+
+schemaVersion: "1"
+agent:
+  name: "approved-writer"
+  version: "1.0.0"
+identity:
+  spiffeId: "spiffe://aegis-node.local/agent/approved-writer/inst-001"
+tools:
+  filesystem:
+    read:
+      - "/path/to/your/inputs"
+    # Broad write coverage to output/, narrowed by the explicit
+    # write_grant below (approval_required: true). Per ADR-019,
+    # the explicit grant takes precedence.
+    write:
+      - "/path/to/your/output"
+  network:
+    outbound: deny
+    inbound: deny
+
+write_grants:
+  - resource: "/path/to/your/output/draft.md"
+    actions: ["write"]
+    duration: "PT1H"
+    approval_required: true
+
+inference:
+  determinism:
+    seed: 42
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    repeat_penalty: 1.0
