@@ -28,16 +28,26 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Base toolchain. fonts-firacode is what the .tape files render with;
 # changing it changes every committed GIF SHA. ttyd + ffmpeg are vhs's
-# transitive dependencies. npm is needed for the upstream MCP file-
-# system server (Demo 1).
+# transitive dependencies. Node 20 (installed below from NodeSource)
+# is needed for the upstream MCP filesystem server (Demo 1) and for
+# the SPA build under `ui/` per ADR-031 — Ubuntu 24.04's apt `npm`
+# package pulls Node 18, which is too old for Vite 6 + Tailwind 4
+# (`@tailwindcss/oxide` native binding fails to load under Node 18).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl wget git \
+        ca-certificates curl wget git gnupg \
         build-essential cmake libclang-dev clang lld \
         pkg-config \
         ffmpeg ttyd fonts-firacode \
-        npm \
         jq \
         gdb \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 20 from NodeSource — Vite 6 + Tailwind 4 (per ADR-031's
+# locked UI stack) require Node >= 20, and Ubuntu 24.04's apt repo
+# only ships Node 18. The setup script adds NodeSource's apt source;
+# the subsequent install pulls a Node-20 + matching-npm bundle.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Chrome (vhs renders its terminal frames through headless chrome).
@@ -86,12 +96,37 @@ ENV PATH=/root/.cargo/bin:/usr/local/go/bin:/root/go/bin:/usr/local/bin:/usr/bin
 # encoding subtly; locking to v0.11.0 keeps GIF SHAs stable.
 RUN go install github.com/charmbracelet/vhs@v0.11.0
 
-# MCP filesystem server (Anthropic) — Demo 1 uses this. npm-global
-# default places the binary at /usr/local/bin/mcp-server-filesystem;
-# the demo manifests reference /usr/bin/mcp-server-filesystem, which
-# the symlink below resolves to the npm-global binary.
+# MCP filesystem server (Anthropic) — Demo 1 uses this. The
+# demo manifests reference /usr/bin/mcp-server-filesystem; the
+# install location depends on the npm distribution:
+#
+#   - NodeSource Node 20 (this image): npm prefix=/usr → binary
+#     at /usr/bin/mcp-server-filesystem (already at the expected
+#     location, no symlink needed)
+#   - Legacy apt npm: prefix=/usr/local → binary at
+#     /usr/local/bin/mcp-server-filesystem (symlink needed)
+#
+# The conditional symlink below handles both, and explicitly
+# avoids the `ln -sf` footgun that overwrote npm's working
+# /usr/bin link with a broken /usr/local target on Node 20.
 RUN npm install -g @modelcontextprotocol/server-filesystem \
-    && ln -sf /usr/local/bin/mcp-server-filesystem /usr/bin/mcp-server-filesystem
+    && actual="$(command -v mcp-server-filesystem)" \
+    && test -n "$actual" \
+    && if [ "$actual" != "/usr/bin/mcp-server-filesystem" ]; then \
+         ln -sf "$actual" /usr/bin/mcp-server-filesystem; \
+       fi \
+    && test -x /usr/bin/mcp-server-filesystem
+
+# pnpm — required by `crates/ui-server`'s build.rs (per ADR-031). The
+# demo build path runs `cargo build --release -p aegis-cli --features
+# llama` inside this image, which transitively triggers the SPA
+# build script. Pinned to pnpm@10 to match `ui/package.json`'s
+# `packageManager` field. Runs against the Node 20 install above —
+# Tailwind 4's `@tailwindcss/oxide` native binding fails to resolve
+# under the bundled npm + Node 18 combination Ubuntu apt provides.
+# See #142 for the corresponding host-side CI fixes (rust.yml /
+# llama.yml / litertlm.yml).
+RUN npm install -g pnpm@10
 
 WORKDIR /work
 CMD ["/bin/bash"]

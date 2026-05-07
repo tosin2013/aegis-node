@@ -29,7 +29,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use serde::Serialize;
 
@@ -74,6 +74,10 @@ pub fn router(config: Config) -> Router {
         .route("/healthz", get(handlers::health::healthz))
         .route("/api/v1/version", get(handlers::health::version))
         .route("/api/v1/models", get(handlers::models::list_models))
+        .route(
+            "/api/v1/manifests",
+            post(handlers::manifests::save_manifest),
+        )
         .fallback(handlers::assets::serve_embedded)
         .with_state(config)
 }

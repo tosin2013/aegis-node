@@ -3,4 +3,5 @@
 
 pub mod assets;
 pub mod health;
+pub mod manifests;
 pub mod models;
