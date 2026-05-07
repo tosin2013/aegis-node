@@ -93,5 +93,13 @@ RUN go install github.com/charmbracelet/vhs@v0.11.0
 RUN npm install -g @modelcontextprotocol/server-filesystem \
     && ln -sf /usr/local/bin/mcp-server-filesystem /usr/bin/mcp-server-filesystem
 
+# pnpm — required by `crates/ui-server`'s build.rs (per ADR-031). The
+# demo build path runs `cargo build --release -p aegis-cli --features
+# llama` inside this image, which transitively triggers the SPA
+# build script. Pinned to pnpm@10 to match `ui/package.json`'s
+# `packageManager` field. See #142 for the corresponding host-side
+# CI fixes (rust.yml / llama.yml / litertlm.yml).
+RUN npm install -g pnpm@10
+
 WORKDIR /work
 CMD ["/bin/bash"]
