@@ -14,7 +14,9 @@ import {
   ShieldOff,
   User,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ModelPicker } from "@/components/ModelPicker";
 import {
@@ -323,7 +325,7 @@ export function Chat() {
 
           <div className="border-t border-[var(--color-border)] px-6 py-4">
             <div className="flex items-end gap-2">
-              <textarea
+              <Textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -334,18 +336,19 @@ export function Chat() {
                 }
                 disabled={conn.kind !== "open"}
                 rows={2}
-                className="min-h-[44px] flex-1 resize-none rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm placeholder:text-muted focus:border-accent focus:outline-none disabled:opacity-50"
+                className="min-h-[44px] flex-1 bg-[var(--color-bg)]"
               />
-              <button
+              <Button
                 type="button"
+                variant="secondary"
+                size="lg"
                 onClick={handleSend}
                 disabled={!canSend}
-                className="inline-flex h-11 items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elev)] px-3 text-sm transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
                 aria-label="Send"
               >
-                <Send className="h-4 w-4" aria-hidden="true" />
+                <Send aria-hidden="true" />
                 <span>Send</span>
-              </button>
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -469,10 +472,11 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
         <Hammer className="h-4 w-4 text-accent" aria-hidden="true" />
       </div>
       <div className="flex max-w-[80%] flex-1 flex-col rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => setExpanded((e) => !e)}
-          className="flex items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--color-bg-elev)]"
+          className="h-auto justify-between gap-3 rounded-none px-3 py-2 text-left text-sm font-normal text-[var(--color-fg)] hover:text-[var(--color-fg)]"
           aria-expanded={expanded}
         >
           <div className="flex items-center gap-2 truncate">
@@ -508,7 +512,7 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
               dispatching…
             </span>
           )}
-        </button>
+        </Button>
         {expanded && (
           <div className="border-t border-[var(--color-border)] px-3 py-2 text-xs">
             <div className="mb-2">
