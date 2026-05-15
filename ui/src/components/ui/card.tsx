@@ -15,7 +15,9 @@ export const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elev)] text-[var(--color-fg)] shadow-sm",
+      // Flat by default — 1px hairline border replaces drop shadow
+      // (Geist pattern). Surface differential against `bg` does the rest.
+      "rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elev)] text-[var(--color-fg)]",
       className,
     )}
     {...props}
@@ -29,7 +31,7 @@ export const CardHeader = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("flex flex-col gap-1 px-6 pt-5 pb-3", className)}
+    className={cn("flex flex-col gap-1 px-5 pt-4 pb-3", className)}
     {...props}
   />
 ));
@@ -42,7 +44,7 @@ export const CardTitle = React.forwardRef<
   <h2
     ref={ref}
     className={cn(
-      "text-base font-semibold tracking-tight text-[var(--color-fg)]",
+      "text-sm font-semibold tracking-tight text-[var(--color-fg)]",
       className,
     )}
     {...props}
@@ -54,6 +56,6 @@ export const CardContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn("px-6 pb-6", className)} {...props} />
+  <div ref={ref} className={cn("px-5 pb-5", className)} {...props} />
 ));
 CardContent.displayName = "CardContent";

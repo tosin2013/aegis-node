@@ -17,13 +17,13 @@ export const Input = React.forwardRef<
     type={type}
     ref={ref}
     className={cn(
-      "flex h-9 w-full min-w-0 rounded-md border border-[var(--color-border)]",
+      "flex h-8 w-full min-w-0 rounded-md border border-[var(--color-border)]",
       "bg-[var(--color-bg-elev)] px-3 py-1 text-sm text-[var(--color-fg)]",
       "placeholder:text-muted",
       "transition-colors",
-      "focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30",
+      "focus:border-[var(--color-border-strong)] focus:outline-none focus:ring-3 focus:ring-[color:var(--color-focus-ring)]/25",
       "disabled:cursor-not-allowed disabled:opacity-60",
-      "aria-invalid:border-[var(--color-danger)] aria-invalid:focus:ring-[var(--color-danger)]/30",
+      "aria-invalid:border-[var(--color-danger)] aria-invalid:focus:ring-[var(--color-danger)]/25",
       className,
     )}
     {...props}

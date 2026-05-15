@@ -8,22 +8,25 @@ description: >
 
 colors:
   bg:
-    dark: "#0b0d10"
+    dark: "#0b0c0e"
     light: "#ffffff"
   bg-elev:
-    dark: "#11151a"
+    dark: "#15171a"
     light: "#f5f6f8"
   fg:
-    dark: "#e5e9ef"
-    light: "#0b0d10"
+    dark: "#edeef0"
+    light: "#0b0c0e"
   muted:
-    dark: "#8a93a3"
+    dark: "#9aa0a8"
     light: "#5b6573"
   border:
-    dark: "#1f2630"
+    dark: "#272a2d"
     light: "#d8dde5"
+  border-strong:
+    dark: "#363a3f"
+    light: "#c0c6d0"
   accent:
-    dark: "#7cc4ff"
+    dark: "#7dd3fc"
     light: "#1e6fb8"
   success:
     dark: "#4ade80"
@@ -35,37 +38,37 @@ colors:
     dark: "#f87171"
     light: "#b91c1c"
   focus-ring:
-    dark: "#7cc4ff"
+    dark: "#7dd3fc"
     light: "#1e6fb8"
 
 typography:
   body:
     fontFamily: "{font.sans}"
-    fontSize: "0.9375rem"
+    fontSize: "0.875rem"
     fontWeight: "400"
-    lineHeight: "1.55"
-    letterSpacing: "0"
+    lineHeight: "1.5"
+    letterSpacing: "-0.005em"
   heading:
     fontFamily: "{font.sans}"
     fontSize: "1.25rem"
     fontWeight: "600"
-    lineHeight: "1.3"
-    letterSpacing: "-0.01em"
+    lineHeight: "1.25"
+    letterSpacing: "-0.02em"
   caption:
     fontFamily: "{font.sans}"
-    fontSize: "0.8125rem"
+    fontSize: "0.75rem"
     fontWeight: "500"
     lineHeight: "1.4"
     letterSpacing: "0"
   mono-id:
     fontFamily: "{font.mono}"
-    fontSize: "0.92em"
+    fontSize: "0.8125rem"
     fontWeight: "500"
     lineHeight: "1.4"
     letterSpacing: "0"
   code:
     fontFamily: "{font.mono}"
-    fontSize: "0.875rem"
+    fontSize: "0.8125rem"
     fontWeight: "400"
     lineHeight: "1.5"
     letterSpacing: "0"
@@ -97,26 +100,24 @@ elevation:
     boxShadow: "none"
   raised:
     dark: "none"
-    light: "0 1px 2px rgba(11, 13, 16, 0.06), 0 1px 1px rgba(11, 13, 16, 0.04)"
+    light: "0 1px 2px rgba(11, 12, 14, 0.06), 0 1px 1px rgba(11, 12, 14, 0.04)"
   floating:
-    dark: "0 4px 12px rgba(0, 0, 0, 0.4)"
-    light: "0 4px 12px rgba(11, 13, 16, 0.1), 0 2px 4px rgba(11, 13, 16, 0.06)"
+    dark: "0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px {colors.border}"
+    light: "0 8px 24px rgba(11, 12, 14, 0.12), 0 2px 6px rgba(11, 12, 14, 0.06)"
 
 components:
   Button:
     typography: "{typography.body}"
     rounded: "{rounded.md}"
-    padding: "{spacing.sm} {spacing.lg}"
+    padding: "{spacing.xs} {spacing.md}"
     variants:
       primary:
-        backgroundColor: "{colors.accent}"
+        backgroundColor: "{colors.fg}"
         textColor: "{colors.bg}"
         hover:
-          backgroundColor: "{colors.accent}"
-          opacity: "0.92"
+          opacity: "0.9"
         active:
-          backgroundColor: "{colors.accent}"
-          opacity: "0.84"
+          opacity: "0.82"
         disabled:
           backgroundColor: "{colors.muted}"
           textColor: "{colors.bg}"
@@ -126,7 +127,8 @@ components:
         textColor: "{colors.fg}"
         border: "1px solid {colors.border}"
         hover:
-          borderColor: "{colors.accent}"
+          borderColor: "{colors.border-strong}"
+          backgroundColor: "{colors.bg}"
         active:
           backgroundColor: "{colors.bg}"
         disabled:
@@ -137,39 +139,40 @@ components:
         textColor: "{colors.muted}"
         hover:
           textColor: "{colors.fg}"
+          backgroundColor: "{colors.bg-elev}"
         active:
-          textColor: "{colors.accent}"
+          textColor: "{colors.fg}"
   Input:
     typography: "{typography.body}"
     rounded: "{rounded.md}"
-    padding: "{spacing.sm} {spacing.md}"
+    padding: "{spacing.xs} {spacing.md}"
     backgroundColor: "{colors.bg-elev}"
     textColor: "{colors.fg}"
     border: "1px solid {colors.border}"
     placeholderColor: "{colors.muted}"
     focus:
-      borderColor: "{colors.accent}"
-      boxShadow: "0 0 0 2px {colors.focus-ring}33"
+      borderColor: "{colors.border-strong}"
+      boxShadow: "0 0 0 3px {colors.focus-ring}26"
     disabled:
       textColor: "{colors.muted}"
       opacity: "0.6"
   Select:
     typography: "{typography.body}"
     rounded: "{rounded.md}"
-    padding: "{spacing.sm} {spacing.md}"
+    padding: "{spacing.xs} {spacing.md}"
     backgroundColor: "{colors.bg-elev}"
     textColor: "{colors.fg}"
     border: "1px solid {colors.border}"
     focus:
-      borderColor: "{colors.accent}"
-      boxShadow: "0 0 0 2px {colors.focus-ring}33"
+      borderColor: "{colors.border-strong}"
+      boxShadow: "0 0 0 3px {colors.focus-ring}26"
   Card:
     backgroundColor: "{colors.bg-elev}"
     textColor: "{colors.fg}"
     border: "1px solid {colors.border}"
     rounded: "{rounded.md}"
-    padding: "{spacing.lg}"
-    elevation: "{elevation.raised}"
+    padding: "{spacing.md}"
+    elevation: "{elevation.none}"
   NavLink:
     typography: "{typography.body}"
     rounded: "{rounded.md}"
@@ -178,31 +181,39 @@ components:
     textColor: "{colors.muted}"
     hover:
       textColor: "{colors.fg}"
+      backgroundColor: "{colors.bg-elev}"
     active:
       backgroundColor: "{colors.bg-elev}"
-      textColor: "{colors.accent}"
+      textColor: "{colors.fg}"
+  IdentifierChip:
+    typography: "{typography.mono-id}"
+    rounded: "{rounded.sm}"
+    padding: "1px {spacing.sm}"
+    backgroundColor: "{colors.bg-elev}"
+    textColor: "{colors.accent}"
+    border: "1px solid {colors.border}"
   ToolCallChip:
     typography: "{typography.mono-id}"
     rounded: "{rounded.sm}"
-    padding: "{spacing.xs} {spacing.sm}"
+    padding: "1px {spacing.sm}"
     backgroundColor: "{colors.bg-elev}"
     textColor: "{colors.accent}"
     border: "1px solid {colors.border}"
   ApprovalBanner:
     typography: "{typography.body}"
     rounded: "{rounded.md}"
-    padding: "{spacing.lg}"
+    padding: "{spacing.md}"
     backgroundColor: "{colors.bg-elev}"
     textColor: "{colors.fg}"
     variants:
       advisory:
-        borderLeft: "4px solid {colors.muted}"
+        borderLeft: "3px solid {colors.muted}"
       validating:
-        borderLeft: "4px solid {colors.accent}"
+        borderLeft: "3px solid {colors.accent}"
       blocking:
-        borderLeft: "4px solid {colors.warning}"
+        borderLeft: "3px solid {colors.warning}"
       escalating:
-        borderLeft: "4px solid {colors.danger}"
+        borderLeft: "3px solid {colors.danger}"
 ---
 
 # Aegis-Node Community UI — Design System
@@ -250,59 +261,80 @@ step — see the *Don'ts*.
 
 ## Colors
 
-Six core role colours plus three semantic colours, each defined in both
-themes:
+Seven core role colours plus three semantic colours, each defined in both
+themes. The dark-mode palette is positioned on Radix `slateDark` steps so
+every interactive state (hover, active, focus, border, solid) comes from
+the same hue family — no opacity hacks, no ad-hoc tints.
 
 - **`bg` / `bg-elev`** — page background and one level of elevated surface
-  (cards, the nav bar's active pill, raised approval banners). The dark theme
-  uses pure value differential between the two; the light theme adds a subtle
-  shadow on `bg-elev` via the `elevation.raised` token so the boundary stays
-  readable on white.
-- **`fg`** — primary text colour. Aimed at WCAG AA against `bg` in both
-  themes; sub-issue #165 audits the result.
-- **`muted`** — secondary text and inactive navigation. The light-mode value
-  is intentionally darker than the dark-mode value so contrast against `bg`
-  stays balanced — dark text on white needs more weight than light text on
-  near-black.
-- **`border`** — `1px` rule used on inputs, selects, cards, and the top nav.
-  Low contrast on purpose; the UI uses surface differential, not lines, as
-  the primary structural signal.
+  (cards, the nav bar's active pill, raised approval banners). The dark
+  theme uses pure value differential between the two; the light theme adds
+  a subtle shadow on `bg-elev` via the `elevation.raised` token so the
+  boundary stays readable on white. Dark `bg` is `#0b0c0e` — cooler than
+  pure black, biased very slightly toward Radix slate1.
+- **`fg`** — primary text colour. Dark-mode is Radix `slate12`
+  (`#edeef0`) — ~16:1 contrast on `bg` (AAA).
+- **`muted`** — secondary text and inactive navigation. Dark-mode is Radix
+  `slate10`-ish (`#9aa0a8`) — ~7:1 contrast on `bg` (AA normal, AAA large).
+  The light-mode value is intentionally darker than the dark-mode value so
+  contrast against `bg` stays balanced — dark text on white needs more
+  weight than light text on near-black.
+- **`border`** — `1px` rule used on inputs, selects, cards, and the top
+  nav. Dark-mode is Radix `slate4` (`#272a2d`). Low contrast on purpose;
+  the UI uses surface differential and 1px hairlines, not blurred shadows,
+  as the structural signal.
+- **`border-strong`** — used for focused-input borders and `Button.secondary`
+  on hover. Dark-mode is Radix `slate6` (`#363a3f`). One step up from
+  `border` so focus reads as a clear state change without a high-chroma
+  accent ring at rest.
 - **`accent`** — identifier colour. Used for workload IDs, OCI digests,
-  manifest hashes, the shield logo, active nav, primary button background,
-  approval-banner *validating* border. Dark-mode is a bright sky blue
-  (`#7cc4ff`); light-mode steps down to a darker blue (`#1e6fb8`) that keeps
-  AA contrast on white. **Identifier coverage is the most important property
-  of this token** — see the *Do's*.
-- **`success` / `warning` / `danger`** — semantic colours for approval state,
-  quota warnings, and policy-block events. **Never the only signal** — they
-  must pair with an icon or text label (see the *Don'ts*). The light-mode
-  values step down to the `-700` band of each hue family so they remain AA
-  against white text on a coloured chip; the dark-mode values are the
-  Tailwind `-400` band tuned for legibility against `bg-elev`.
+  manifest hashes, the shield logo, focus rings, links, approval-banner
+  *validating* border. Dark-mode is `#7dd3fc` (Tailwind sky-300); light-mode
+  steps down to a darker blue (`#1e6fb8`) that keeps AA contrast on white.
+  **Identifier coverage is the most important property of this token** —
+  see the *Do's*. Accent is **not** the default button-primary fill; per
+  the modern dev-tool pattern (Linear, Vercel Geist), primary actions are
+  inverted neutrals (`fg` on `bg`), and accent is reserved for inline
+  identifier emphasis + focus state.
+- **`success` / `warning` / `danger`** — semantic colours for approval
+  state, quota warnings, and policy-block events. **Never the only
+  signal** — they must pair with an icon or text label (see the *Don'ts*).
+  The light-mode values step down to the `-700` band of each hue family so
+  they remain AA against white text on a coloured chip; the dark-mode
+  values are the Tailwind `-400` band tuned for legibility against
+  `bg-elev`.
 - **`focus-ring`** — `accent`, surfaced as a separate token so the
   WCAG-audit pass can override it without affecting visual identity.
 
 ## Typography
 
-Five named scales: `body`, `heading`, `caption`, `mono-id`, `code`. Two font
-stacks, defined under `font.*` and referenced symbolically. The Community UI
-ships **without webfont downloads** — both stacks resolve to system fonts
-exclusively so the localhost surface has no third-party network dependency
-at runtime (consistent with ADR-031's loopback-only stance and
-ADR-008's network-deny-by-default).
+Five named scales: `body`, `heading`, `caption`, `mono-id`, `code`. Two
+font stacks, defined under `font.*` and referenced symbolically. The
+Community UI ships **without webfont downloads** — both stacks resolve to
+system fonts exclusively so the localhost surface has no third-party
+network dependency at runtime (consistent with ADR-031's loopback-only
+stance and ADR-008's network-deny-by-default).
 
-- **`body`** — the default. 0.9375rem (15px) / 1.55 line-height — matches
-  the existing UI's body settings so the regenerated CSS produces the same
-  visible output.
-- **`heading`** — page titles and section headings. Sans, semibold, slight
-  negative letter-spacing for tightness at large sizes.
+Tightness over bigness is the rule. System sans serifs (SF Pro Display on
+macOS, Segoe UI Variable on Windows 11, Cantarell on GNOME) render heavier
+than Inter/Geist at the same weight, so we cap body weight at 400 and
+headings at 600, and apply small negative letter-spacing to mimic the
+optical correction that webfonts apply at small sizes.
+
+- **`body`** — the default. 0.875rem (14px) / 1.5 line-height / -0.005em
+  letter-spacing. Tighter than the v0 placeholder (which was 15px/1.55/0);
+  matches Linear/Geist chrome density.
+- **`heading`** — page titles and section headings. Sans, semibold,
+  -0.02em letter-spacing. Tight at large sizes — heading text should read
+  as "compact precision," not "marketing hero."
 - **`caption`** — small auxiliary text in chips and metadata strips. Sans,
-  medium weight, smaller than body. **Never used for primary content.**
-- **`mono-id`** — *the* identifier scale. Monospace, medium weight, sized
-  relative to surrounding text (`0.92em`) so it sits naturally inside body
-  copy. Used wherever the *Do's* call for identifier rendering.
-- **`code`** — code blocks. Monospace, normal weight, absolute size so it
-  doesn't shrink inside captions or chips.
+  medium weight, 0.75rem (12px). **Never used for primary content.**
+- **`mono-id`** — *the* identifier scale. Monospace, medium weight,
+  0.8125rem (13px) — slightly smaller than body, so identifiers sit
+  tightly inside `<IdentifierChip>`s without inflating their height. Used
+  wherever the *Do's* call for identifier rendering.
+- **`code`** — code blocks. Monospace, normal weight, 0.8125rem to pair
+  with `mono-id`.
 
 ## Layout
 
@@ -320,19 +352,30 @@ token-shaped, and is the domain of individual surface layouts.
 
 ## Elevation & Depth
 
-Two ramps: `raised` (cards, the active nav pill) and `floating` (popovers,
-dropdowns, the model-picker overlay). Each token is mode-aware:
+The design system is **flat by default**. Vercel Geist's pattern — replace
+soft drop-shadows with 1px hairline borders at the `border` colour —
+applies everywhere except true floating surfaces (popovers, dropdowns,
+the future approval modal).
 
-- **Dark mode**: elevation is encoded as a *surface differential*
-  (`bg-elev` vs `bg`); shadows are intentionally minimal because they read
-  poorly on near-black backgrounds.
-- **Light mode**: elevation uses subtle black-tinted shadows because the
-  surface differential alone (`#ffffff` vs `#f5f6f8`) is too low-contrast
-  on most monitors.
+Two ramps: `raised` (cards, the active nav pill, message bubbles, banners)
+and `floating` (Radix `<DialogContent>`, `<TooltipContent>`,
+`<SelectContent>`).
 
-This split is one place where the design system genuinely behaves differently
-across modes; component definitions should reference `elevation.raised` and
-let the generator pick the right shadow per mode.
+- **Dark mode `raised`**: `boxShadow: "none"`. Elevation is encoded as a
+  *surface differential* (`bg-elev` vs `bg`) plus the 1px `border` ring.
+  Soft shadows read poorly on near-black backgrounds and undermine the
+  precise, identifier-dense aesthetic.
+- **Light mode `raised`**: subtle black-tinted shadow because the surface
+  differential alone (`#ffffff` vs `#f5f6f8`) is too low-contrast on most
+  monitors.
+- **`floating` (both modes)**: a heavier shadow because tooltips and
+  dropdowns must detach visually from the chrome they're anchored to.
+  Dark mode pairs the shadow with a 1px `border` ring so the surface
+  remains readable on near-black backgrounds.
+
+Component definitions should reference `elevation.*` and let the generator
+pick the right value per mode. Never hand-author `box-shadow` in component
+files.
 
 ## Shapes
 
@@ -351,21 +394,22 @@ not "rounded SaaS dashboard."
 
 ## Components
 
-Seven primitive components defined in the front matter. Each maps to one of
-the existing or planned UI surfaces:
+Eight primitive components defined in the front matter. Each maps to one
+of the existing or planned UI surfaces:
 
 | Component | Used in | Notes |
 |---|---|---|
-| **`Button`** | Manifest Builder, chat send, model-library actions | Three variants: `primary` (accent fill), `secondary` (bordered), `ghost` (text-only). Disabled state collapses to muted at 50% opacity. |
-| **`Input`** | Chat composer, Manifest Builder forms, model OCI ref entry | Always bordered. Focus state adds a `2px` translucent ring in `accent`. |
+| **`Button`** | Manifest Builder, chat send, model-library actions | Three variants: `primary` (inverted-neutral: `fg`-on-`bg`), `secondary` (bordered, surface), `ghost` (text-only with surface-fill on hover). Per the Linear/Geist pattern, primary buttons are *not* accent-filled — accent is reserved for identifier emphasis, focus rings, and links. |
+| **`Input`** | Chat composer, Manifest Builder forms, model OCI ref entry | Always bordered. Focus state pulls border up to `border-strong` and adds a 3px translucent ring in `accent` — chroma is in the ring, not the border, so the input doesn't fight the surrounding chrome at rest. |
 | **`Select`** | Backend picker, manifest tier selection, model dropdown | Same skin as `Input`; the chevron icon is `muted`, flipping to `fg` on hover. |
-| **`Card`** | Home tiles, manifest preview, model library entries | `bg-elev` surface + 1px border + `lg` padding. Picks up the `raised` elevation token. |
-| **`NavLink`** | Top nav (`ui/src/components/TopNav.tsx`) | Three states: default (`muted`), hover (`fg`), active (`bg-elev` + `accent`). |
-| **`ToolCallChip`** | Chat thread tool-call inline cards (per sub-phase 1d.2c) | Monospace identifier styling — tool names render in `accent`, args in `fg`. The chip is itself an identifier. |
-| **`ApprovalBanner`** | F3 approval cards in chat (per ADR-029) | Four tier variants — `advisory`, `validating`, `blocking`, `escalating` — differing **only** in left-border colour. The tier label is also rendered in text inside the banner, never as colour alone. |
+| **`Card`** | Home tiles, manifest preview, model library entries | `bg-elev` surface + 1px `border` + `md` padding (0.75rem). **No box-shadow.** The 1px border is the elevation signal in dark mode. |
+| **`NavLink`** | Top nav (`ui/src/components/TopNav.tsx`) | Three states: default (`muted`), hover (`fg` + `bg-elev`), active (`bg-elev` + `fg`). Active state no longer uses `accent` for text — frees the accent treatment for genuine identifiers. |
+| **`IdentifierChip`** | Workload IDs, OCI digests, manifest hashes, SPIFFE URIs, F9 ledger entry IDs | Monospace, accent text, `bg-elev` fill, 1px `border`, 4px radius, 1px-by-`sm` padding. Sits inline in body copy. Pairs with `<Tooltip>` to recover bytes when the chip is truncated. |
+| **`ToolCallChip`** | Chat thread tool-call inline cards (per sub-phase 1d.2c) | Same visual treatment as `IdentifierChip` — a tool name *is* an identifier. The two components share token values; keeping them as separate entries documents intent. |
+| **`ApprovalBanner`** | F3 approval cards in chat (per ADR-029) | Four tier variants — `advisory`, `validating`, `blocking`, `escalating` — differing **only** in left-border colour (3px). The tier label is also rendered in text inside the banner, never as colour alone. |
 
-Variants under each component define hover, active, disabled, focus states.
-The component spec is theme-agnostic — token references like
+Variants under each component define hover, active, disabled, focus
+states. The component spec is theme-agnostic — token references like
 `{colors.accent}` resolve per mode at CSS generation.
 
 ## Do's and Don'ts

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { IdentifierChip } from "@/components/ui/identifier-chip";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -289,14 +290,13 @@ export function Chat() {
 
   return (
     <>
-      <header className="mb-6 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <MessageSquare className="h-7 w-7 text-accent" aria-hidden="true" />
+      <header className="mb-5 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <MessageSquare className="h-5 w-5 text-accent" aria-hidden="true" />
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Chat</h1>
-            <p className="text-sm text-muted">
-              Inline tool-call cards render gate decisions per ADR-031 ·
-              verifiable-badge wiring lands in 1d.2c.2
+            <h1 className="text-lg font-semibold tracking-tight">Chat</h1>
+            <p className="text-xs text-muted">
+              Inline tool-call cards render gate decisions per ADR-031
             </p>
           </div>
         </div>
@@ -307,10 +307,10 @@ export function Chat() {
       </header>
 
       <Card>
-        <CardContent className="flex h-[560px] flex-col gap-4 p-0">
+        <CardContent className="flex h-[560px] flex-col gap-3 p-0">
           <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto px-6 pt-5 pb-2"
+            className="flex-1 overflow-y-auto px-5 pt-4 pb-2"
           >
             <div className="flex flex-col gap-4">
               {messages.map((m) =>
@@ -323,7 +323,7 @@ export function Chat() {
             </div>
           </div>
 
-          <div className="border-t border-[var(--color-border)] px-6 py-4">
+          <div className="border-t border-[var(--color-border)] px-5 py-3">
             <div className="flex items-end gap-2">
               <Textarea
                 value={input}
@@ -335,13 +335,13 @@ export function Chat() {
                     : "connecting…"
                 }
                 disabled={conn.kind !== "open"}
-                rows={2}
-                className="min-h-[44px] flex-1 bg-[var(--color-bg)]"
+                rows={1}
+                className="min-h-[36px] flex-1 bg-[var(--color-bg)] py-2"
               />
               <Button
                 type="button"
-                variant="secondary"
-                size="lg"
+                variant="default"
+                size="md"
                 onClick={handleSend}
                 disabled={!canSend}
                 aria-label="Send"
@@ -360,42 +360,47 @@ export function Chat() {
 function MessageBubble({ message }: { message: TextMessage }) {
   if (message.role === "system") {
     return (
-      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-xs text-muted">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs text-muted">
         {message.text}
       </div>
     );
   }
   const isUser = message.role === "user";
   return (
-    <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elev)]">
+    <div className={cn("flex gap-2.5", isUser ? "flex-row-reverse" : "flex-row")}>
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elev)]">
         {isUser ? (
-          <User className="h-4 w-4 text-muted" aria-hidden="true" />
+          <User className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
         ) : (
-          <Bot className="h-4 w-4 text-accent" aria-hidden="true" />
+          <Bot className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
         )}
       </div>
-      <div className="flex max-w-[80%] flex-col gap-1">
+      <div className="flex max-w-[80%] flex-col gap-1.5">
         <div
           className={cn(
-            "whitespace-pre-wrap rounded-md px-3 py-2 text-sm",
+            "whitespace-pre-wrap rounded-md px-3 py-2 text-sm leading-relaxed",
             isUser
               ? "bg-[var(--color-bg-elev)] text-[var(--color-fg)]"
-              : "bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-fg)]",
+              : "border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-fg)]",
           )}
         >
           {message.text}
           {message.pending && (
-            <span className="ml-1 inline-block h-3 w-3 animate-pulse rounded-full bg-accent align-middle" />
+            <span className="ml-1 inline-block h-2 w-2 animate-pulse rounded-full bg-accent align-middle" />
           )}
         </div>
         {message.verifiableAnchor && (
           <span
-            className="inline-flex cursor-help items-center gap-1 self-start rounded bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300"
+            className={cn(
+              "inline-flex cursor-help items-center gap-1.5 self-start text-[11px] text-muted",
+            )}
             title={`F9 reasoning-step uuid: ${message.verifiableAnchor} — click-through to /replay/<anchor> lands when the ADR-010 viewer wires up`}
           >
-            <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-            verifiable · {message.verifiableAnchor.slice(0, 8)}…
+            <ShieldCheck className="h-3 w-3 text-success" aria-hidden="true" />
+            <span>verifiable</span>
+            <IdentifierChip className="text-[11px]">
+              {message.verifiableAnchor.slice(0, 8)}
+            </IdentifierChip>
           </span>
         )}
       </div>
@@ -408,32 +413,27 @@ const TOOL_STATUS_META: Record<
   {
     label: string;
     color: string;
-    bg: string;
     Icon: typeof CircleAlert;
   }
 > = {
   success: {
     label: "success",
-    color: "text-emerald-300",
-    bg: "bg-emerald-950/40",
+    color: "text-success",
     Icon: ShieldCheck,
   },
   denied: {
     label: "denied",
-    color: "text-red-400",
-    bg: "bg-red-950/40",
+    color: "text-danger",
     Icon: ShieldOff,
   },
   requires_approval: {
     label: "approval required",
-    color: "text-amber-300",
-    bg: "bg-amber-950/40",
+    color: "text-warning",
     Icon: Lock,
   },
   unroutable: {
     label: "unroutable",
-    color: "text-sky-300",
-    bg: "bg-sky-950/40",
+    color: "text-muted",
     Icon: HelpCircle,
   },
 };
@@ -467,9 +467,9 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
   }, [call.value]);
 
   return (
-    <div className="flex gap-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elev)]">
-        <Hammer className="h-4 w-4 text-accent" aria-hidden="true" />
+    <div className="flex gap-2.5">
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elev)]">
+        <Hammer className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
       </div>
       <div className="flex max-w-[80%] flex-1 flex-col rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
         <Button
@@ -479,7 +479,7 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
           className="h-auto justify-between gap-3 rounded-none px-3 py-2 text-left text-sm font-normal text-[var(--color-fg)] hover:text-[var(--color-fg)]"
           aria-expanded={expanded}
         >
-          <div className="flex items-center gap-2 truncate">
+          <div className="flex min-w-0 items-center gap-2">
             {expanded ? (
               <ChevronDown
                 className="h-3.5 w-3.5 shrink-0 text-muted"
@@ -491,13 +491,12 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
                 aria-hidden="true"
               />
             )}
-            <span className="font-mono text-xs text-accent">{call.name}</span>
+            <IdentifierChip>{call.name}</IdentifierChip>
           </div>
           {meta ? (
             <span
               className={cn(
-                "inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px]",
-                meta.bg,
+                "inline-flex shrink-0 items-center gap-1 text-[11px] font-medium",
                 meta.color,
               )}
             >
@@ -507,8 +506,8 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
               {meta.label}
             </span>
           ) : (
-            <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] text-muted">
-              <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-accent" />
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted">
+              <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
               dispatching…
             </span>
           )}
@@ -553,7 +552,7 @@ function ToolCallCard({ call }: { call: ToolCallMessage }) {
 function ConnectionPill({ state }: { state: ConnState }) {
   if (state.kind === "connecting") {
     return (
-      <span className="inline-flex items-center gap-1 font-mono text-xs text-muted">
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted">
         <ArrowDown className="h-3.5 w-3.5 animate-pulse" aria-hidden="true" />
         connecting…
       </span>
@@ -562,7 +561,7 @@ function ConnectionPill({ state }: { state: ConnState }) {
   if (state.kind === "open") {
     return (
       <span
-        className="inline-flex items-center gap-1 rounded bg-emerald-950/40 px-2 py-0.5 font-mono text-xs text-emerald-300"
+        className="inline-flex items-center gap-1.5 text-xs text-success"
         title={`session ${state.sessionId}`}
       >
         <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
@@ -572,7 +571,7 @@ function ConnectionPill({ state }: { state: ConnState }) {
   }
   if (state.kind === "closed") {
     return (
-      <span className="inline-flex items-center gap-1 font-mono text-xs text-amber-300">
+      <span className="inline-flex items-center gap-1.5 text-xs text-warning">
         <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
         closed{state.reason ? ` · ${state.reason}` : ""}
       </span>
@@ -580,7 +579,7 @@ function ConnectionPill({ state }: { state: ConnState }) {
   }
   return (
     <span
-      className="inline-flex items-center gap-1 font-mono text-xs text-red-400"
+      className="inline-flex items-center gap-1.5 text-xs text-danger"
       title={state.message}
     >
       <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />

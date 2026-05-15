@@ -22,9 +22,9 @@ export const Textarea = React.forwardRef<
       "bg-[var(--color-bg-elev)] px-3 py-2 text-sm text-[var(--color-fg)]",
       "placeholder:text-muted",
       "resize-none transition-colors",
-      "focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30",
+      "focus:border-[var(--color-border-strong)] focus:outline-none focus:ring-3 focus:ring-[color:var(--color-focus-ring)]/25",
       "disabled:cursor-not-allowed disabled:opacity-60",
-      "aria-invalid:border-[var(--color-danger)] aria-invalid:focus:ring-[var(--color-danger)]/30",
+      "aria-invalid:border-[var(--color-danger)] aria-invalid:focus:ring-[var(--color-danger)]/25",
       className,
     )}
     {...props}
