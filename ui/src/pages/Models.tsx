@@ -76,7 +76,7 @@ export function Models() {
       )}
 
       {error && (
-        <p className="font-mono text-sm text-red-400">
+        <p className="font-mono text-sm text-danger">
           error: {error instanceof Error ? error.message : String(error)}
         </p>
       )}
@@ -181,7 +181,7 @@ function CosignBadge({ cosign }: { cosign: ModelCosign }) {
       : `verified · key ${cosign.key_path ?? "*"}`;
   return (
     <span
-      className="inline-flex items-center gap-1 rounded bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300"
+      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-elev)] px-1.5 py-0.5 font-mono text-[10px] text-success"
       title={tooltip}
     >
       <ShieldCheck className="h-3 w-3" aria-hidden="true" />
@@ -194,7 +194,7 @@ function CosignDetails({ cosign }: { cosign: ModelCosign }) {
   if (cosign.mode === "key") {
     return (
       <span>
-        <span className="text-emerald-300">✓ keyed</span> ·{" "}
+        <span className="text-success">✓ keyed</span> ·{" "}
         <span className="text-muted">key:</span>{" "}
         {cosign.key_path ?? "(unknown)"}
       </span>
@@ -202,7 +202,7 @@ function CosignDetails({ cosign }: { cosign: ModelCosign }) {
   }
   return (
     <span>
-      <span className="text-emerald-300">✓ keyless</span>
+      <span className="text-success">✓ keyless</span>
       {cosign.keyless_identity_pattern && (
         <>
           {" "}

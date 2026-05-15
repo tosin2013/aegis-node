@@ -1,11 +1,11 @@
 @import "tailwindcss";
 
 /* GENERATED FROM docs/DESIGN.md by ui/scripts/render-tokens.mjs.
- * Do not hand-edit this @theme block — run `pnpm design:tokens` after
- * updating the spec. Light-theme variant lands in issue #165;
- * component-level tokens land in #164. */
+ * Do not hand-edit anything above the sentinel comment — run
+ * `pnpm design:tokens` after updating the spec. Both themes
+ * (dark + light) emit from a single source. */
 @theme {
-  /* Colors — dark mode. Light mode lands in #165. */
+  /* Colors — dark mode (default). Light overrides emit below. */
   --color-bg: #0b0c0e;
   --color-bg-elev: #15171a;
   --color-fg: #edeef0;
@@ -22,8 +22,7 @@
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
 
-  /* Typography (font-size only at this stage; richer typography
-   * is per-component and lands with primitives in #164). */
+  /* Typography (font-size only; richer typography lives in component primitives). */
   --text-body: 0.875rem;
   --text-heading: 1.25rem;
   --text-caption: 0.75rem;
@@ -45,11 +44,61 @@
   --spacing-2xl: 2rem;
 }
 
-/* DESIGN.md tokens above — hand-written CSS below. */
-
+/* Default color-scheme for native form controls / scrollbars. */
 :root {
   color-scheme: dark;
 }
+
+/* Light mode — applies when the OS prefers light. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --color-bg: #ffffff;
+    --color-bg-elev: #f5f6f8;
+    --color-fg: #0b0c0e;
+    --color-muted: #5b6573;
+    --color-border: #d8dde5;
+    --color-border-strong: #c0c6d0;
+    --color-accent: #1e6fb8;
+    --color-success: #15803d;
+    --color-warning: #a16207;
+    --color-danger: #b91c1c;
+    --color-focus-ring: #1e6fb8;
+  }
+}
+
+/* Manual overrides set by the toggle in TopNav. Wins over the media query. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0b0c0e;
+  --color-bg-elev: #15171a;
+  --color-fg: #edeef0;
+  --color-muted: #9aa0a8;
+  --color-border: #272a2d;
+  --color-border-strong: #363a3f;
+  --color-accent: #7dd3fc;
+  --color-success: #4ade80;
+  --color-warning: #facc15;
+  --color-danger: #f87171;
+  --color-focus-ring: #7dd3fc;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #ffffff;
+  --color-bg-elev: #f5f6f8;
+  --color-fg: #0b0c0e;
+  --color-muted: #5b6573;
+  --color-border: #d8dde5;
+  --color-border-strong: #c0c6d0;
+  --color-accent: #1e6fb8;
+  --color-success: #15803d;
+  --color-warning: #a16207;
+  --color-danger: #b91c1c;
+  --color-focus-ring: #1e6fb8;
+}
+
+/* DESIGN.md tokens above — hand-written CSS below. */
 
 html,
 body,

@@ -4,10 +4,13 @@ import {
   FileCode,
   Home as HomeIcon,
   MessageSquare,
+  Moon,
   ShieldCheck,
+  Sun,
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/lib/theme";
 
 interface NavItem {
   to: string;
@@ -25,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
 export function TopNav() {
   const router = useRouterState();
   const currentPath = router.location.pathname;
+  const { effective, cycle } = useTheme();
 
   return (
     <nav className="border-b border-[var(--color-border)] bg-[var(--color-bg)]">
@@ -36,34 +40,58 @@ export function TopNav() {
           <ShieldCheck className="h-4 w-4 text-accent" aria-hidden="true" />
           <span>Aegis-Node</span>
         </Link>
-        <ul className="flex items-center gap-0.5">
-          {NAV_ITEMS.map((item) => {
-            const active =
-              item.to === "/"
-                ? currentPath === "/"
-                : currentPath.startsWith(item.to);
-            return (
-              <li key={item.to}>
-                <Link
-                  to={item.to}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors",
-                    active
-                      ? "bg-[var(--color-bg-elev)] text-[var(--color-fg)]"
-                      : "text-muted hover:bg-[var(--color-bg-elev)] hover:text-[var(--color-fg)]",
-                  )}
-                  aria-current={active ? "page" : undefined}
-                >
-                  <item.icon
-                    className="h-3.5 w-3.5"
-                    aria-hidden="true"
-                  />
-                  <span>{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="flex items-center gap-1">
+          <ul className="flex items-center gap-0.5">
+            {NAV_ITEMS.map((item) => {
+              const active =
+                item.to === "/"
+                  ? currentPath === "/"
+                  : currentPath.startsWith(item.to);
+              return (
+                <li key={item.to}>
+                  <Link
+                    to={item.to}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors",
+                      active
+                        ? "bg-[var(--color-bg-elev)] text-[var(--color-fg)]"
+                        : "text-muted hover:bg-[var(--color-bg-elev)] hover:text-[var(--color-fg)]",
+                    )}
+                    aria-current={active ? "page" : undefined}
+                  >
+                    <item.icon
+                      className="h-3.5 w-3.5"
+                      aria-hidden="true"
+                    />
+                    <span>{item.label}</span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          <button
+            type="button"
+            onClick={cycle}
+            className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-[var(--color-bg-elev)] hover:text-[var(--color-fg)] focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-[color:var(--color-focus-ring)]/25"
+            aria-label={
+              effective === "dark"
+                ? "Switch to light theme"
+                : "Switch to dark theme"
+            }
+            aria-pressed={effective === "light"}
+            title={
+              effective === "dark"
+                ? "Switch to light theme"
+                : "Switch to dark theme"
+            }
+          >
+            {effective === "dark" ? (
+              <Moon className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Sun className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </div>
     </nav>
   );

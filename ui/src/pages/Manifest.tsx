@@ -297,7 +297,7 @@ function ValidateStatus({ state }: { state: ValidateState }) {
   if (state.kind === "error") {
     return (
       <span
-        className="inline-flex items-center gap-1 font-mono text-xs text-red-400"
+        className="inline-flex items-center gap-1 font-mono text-xs text-danger"
         title={state.message}
       >
         <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
@@ -308,7 +308,7 @@ function ValidateStatus({ state }: { state: ValidateState }) {
   const { errors, warnings, infos } = state.summary;
   if (errors === 0 && warnings === 0 && infos === 0) {
     return (
-      <span className="inline-flex items-center font-mono text-xs text-emerald-400">
+      <span className="inline-flex items-center font-mono text-xs text-success">
         ✓ clean
       </span>
     );
@@ -316,19 +316,19 @@ function ValidateStatus({ state }: { state: ValidateState }) {
   return (
     <span className="inline-flex items-center gap-2 font-mono text-xs">
       {errors > 0 && (
-        <span className="inline-flex items-center gap-1 text-red-400">
+        <span className="inline-flex items-center gap-1 text-danger">
           <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
           {errors} error{errors === 1 ? "" : "s"}
         </span>
       )}
       {warnings > 0 && (
-        <span className="inline-flex items-center gap-1 text-amber-300">
+        <span className="inline-flex items-center gap-1 text-warning">
           <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
           {warnings} warn{warnings === 1 ? "" : "s"}
         </span>
       )}
       {infos > 0 && (
-        <span className="inline-flex items-center gap-1 text-sky-300">
+        <span className="inline-flex items-center gap-1 text-accent">
           <Info className="h-3.5 w-3.5" aria-hidden="true" />
           {infos} info
         </span>
@@ -340,12 +340,12 @@ function ValidateStatus({ state }: { state: ValidateState }) {
 function ValidateFindings({ state }: { state: ValidateState }) {
   if (state.kind === "error") {
     return (
-      <div className="mt-4 rounded-md border border-amber-700 bg-amber-950/40 p-3 text-xs">
-        <p className="mb-1 font-semibold text-amber-200">
+      <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elev)] p-3 text-xs">
+        <p className="mb-1 font-semibold text-warning">
           Live validate unavailable
         </p>
-        <p className="font-mono text-amber-200/70">{state.message}</p>
-        <p className="mt-2 text-amber-200/70">
+        <p className="font-mono text-[var(--color-fg)]">{state.message}</p>
+        <p className="mt-2 text-muted">
           Install via{" "}
           <code className="font-mono">make build-go-validate</code>, put{" "}
           <code className="font-mono">aegis-validate</code> on PATH, or set the{" "}
@@ -368,10 +368,10 @@ function ValidateFindings({ state }: { state: ValidateState }) {
             <span
               className={
                 f.severity === "error"
-                  ? "font-mono text-red-400"
+                  ? "font-mono text-danger"
                   : f.severity === "warn"
-                    ? "font-mono text-amber-300"
-                    : "font-mono text-sky-300"
+                    ? "font-mono text-warning"
+                    : "font-mono text-accent"
               }
             >
               {f.severity}
