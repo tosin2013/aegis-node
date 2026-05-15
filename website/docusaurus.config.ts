@@ -22,7 +22,6 @@ const config: Config = {
   // Existing markdown is GitHub-relative. Warn instead of throw so the
   // initial deploy succeeds; broken-link cleanup is a follow-up task.
   onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
   onBrokenAnchors: 'warn',
 
   i18n: {
@@ -36,6 +35,9 @@ const config: Config = {
     // tokens (e.g. generic types in code spans) would break them.
     format: 'md',
     mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+    },
   },
 
   themes: ['@docusaurus/theme-mermaid'],
@@ -49,6 +51,10 @@ const config: Config = {
           path: '../docs',
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
+          // Keep ADR filename prefixes in URLs (e.g. /docs/adrs/004-...).
+          // The project refers to ADRs by number everywhere; stripping the
+          // prefix would break that convention and external references.
+          numberPrefixParser: false,
           editUrl:
             'https://github.com/tosin2013/aegis-node/tree/main/docs/',
           showLastUpdateAuthor: false,
