@@ -44,6 +44,9 @@ fn args_for(
         script: Some(script),
         prompt: None,
         backend: aegis_cli::run::BackendKind::Llama,
+        max_turns: 10,
+        max_tokens: u64::MAX,
+        max_seconds: 300,
     }
 }
 
@@ -292,6 +295,9 @@ tools: {}
         script: Some(work.path().join("does-not-exist.json")),
         prompt: None,
         backend: aegis_cli::run::BackendKind::Llama,
+        max_turns: 10,
+        max_tokens: u64::MAX,
+        max_seconds: 300,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err}");
@@ -333,6 +339,9 @@ tools: {}
         script: None,
         prompt: None,
         backend: aegis_cli::run::BackendKind::Llama,
+        max_turns: 10,
+        max_tokens: u64::MAX,
+        max_seconds: 300,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err}");
@@ -377,6 +386,9 @@ tools: {}
         script: None,
         prompt: Some("hello".to_string()),
         backend: aegis_cli::run::BackendKind::Llama,
+        max_turns: 10,
+        max_tokens: u64::MAX,
+        max_seconds: 300,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err:#}");
@@ -419,6 +431,9 @@ tools: {}
         script: None,
         prompt: Some("hello".to_string()),
         backend: aegis_cli::run::BackendKind::Litertlm,
+        max_turns: 10,
+        max_tokens: u64::MAX,
+        max_seconds: 300,
     };
     let err = execute(args).unwrap_err();
     let msg = format!("{err:#}");

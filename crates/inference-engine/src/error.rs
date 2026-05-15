@@ -86,4 +86,31 @@ pub enum Error {
 
     #[error("requires approval: {reason}")]
     RequireApproval { reason: String },
+
+    /// The multi-turn driver hit one of its three bounds: turn count,
+    /// cumulative token budget, or wallclock. Per ADR-025 §"Triple-Bound
+    /// Circuit Breaker". Capped termination is *not* an exception in the
+    /// runtime's value system — it's a structured halt with a partial
+    /// F9 ledger left on disk for forensics. The CLI maps this to a
+    /// non-zero exit with a parseable stderr block (per ADR-025 §3).
+    #[error(
+        "turn cap exceeded ({bound:?}): turn {at_turn} of max {max_turns}, \
+         tokens {tokens_consumed}/{max_tokens}, wallclock {wallclock_seconds:.1}s/{max_seconds}s"
+    )]
+    TurnCapExceeded {
+        /// Which of the three bounds tripped.
+        bound: crate::turn::TurnCapKind,
+        /// 1-based turn index at which the cap tripped.
+        at_turn: u32,
+        /// Configured `max_turns` for this session.
+        max_turns: u32,
+        /// Cumulative tokens consumed across completed turns.
+        tokens_consumed: u64,
+        /// Configured `max_tokens` for this session.
+        max_tokens: u64,
+        /// Wallclock elapsed from the start of the run.
+        wallclock_seconds: f64,
+        /// Configured `max_seconds` for this session.
+        max_seconds: u64,
+    },
 }

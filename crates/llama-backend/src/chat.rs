@@ -252,6 +252,11 @@ pub(crate) fn parse_response(raw: &str) -> InferResponse {
         reasoning: reasoning_trimmed,
         tool_calls,
         assistant_text,
+        // llama.cpp's logits-based usage reporting isn't wired here yet;
+        // the multi-turn driver's token bound treats None as "no
+        // contribution" so this won't trip the cap. Follow-up tracked
+        // under #181's open questions section.
+        tokens_used: None,
     }
 }
 

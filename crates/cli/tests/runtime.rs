@@ -116,6 +116,9 @@ fn runtime_conformance_golden() {
         script: Some(script_path),
         prompt: None,
         backend: aegis_cli::run::BackendKind::Llama,
+        max_turns: 10,
+        max_tokens: u64::MAX,
+        max_seconds: 300,
     };
 
     let outcome = execute(args).expect("aegis run");

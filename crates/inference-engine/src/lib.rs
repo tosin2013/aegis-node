@@ -23,4 +23,7 @@ pub use backend::{
 };
 pub use error::{Error, Result};
 pub use session::{BootConfig, NetworkConnectionDecision, NetworkConnectionMeta, Session};
-pub use turn::{ToolCallOutcome, ToolCallResult, TurnOutcome};
+pub use turn::{
+    SessionRunResult, SessionTermination, ToolCallOutcome, ToolCallResult, TurnCapKind, TurnLimits,
+    TurnOutcome,
+};

@@ -119,7 +119,7 @@ pub struct InferRequest {
 }
 
 /// Outputs of one inference turn.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InferResponse {
     /// The model's free-text reasoning (everything outside any
     /// `<tool_call>` blocks, with leading/trailing whitespace
@@ -132,6 +132,15 @@ pub struct InferResponse {
     /// Optional terminal assistant message — set when the model
     /// produced text intended for the user (vs. only tool calls).
     pub assistant_text: Option<String>,
+    /// Tokens consumed by this single inference call (prompt + output).
+    /// Used by the multi-turn driver's Triple-Bound Circuit Breaker
+    /// (per ADR-025) to accumulate against `TurnLimits::max_tokens`.
+    /// `None` means "backend didn't report usage" — the driver treats
+    /// this as zero for accumulation, which means the token bound
+    /// won't trip on backends that don't yet wire up usage reporting.
+    /// New backends should populate this; existing backends keep
+    /// working unchanged.
+    pub tokens_used: Option<u64>,
 }
 
 /// Trait for anything that can load a model from disk and return a
