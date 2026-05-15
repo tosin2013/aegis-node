@@ -4,8 +4,32 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <title>Aegis-Node — Community UI</title>
+    <!--
+      Pre-mount theme bootstrap. Reads the localStorage choice and sets
+      <html data-theme> *before* React renders, so the first paint
+      doesn't flash the wrong theme.
+
+      The body of this script must stay in sync with the contract in
+      `ui/src/lib/theme.ts` (storage key + accepted values). Kept
+      inline + minimal on purpose — no module import, no chance of a
+      blocking network fetch on first paint.
+    -->
+    <script>
+      (function () {
+        try {
+          var t = window.localStorage.getItem("aegis-theme");
+          if (t === "dark" || t === "light") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (_e) {
+          // localStorage may throw under privacy modes; safe to ignore —
+          // CSS @media (prefers-color-scheme) is the fallback.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

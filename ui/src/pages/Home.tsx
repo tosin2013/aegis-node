@@ -66,7 +66,7 @@ export function Home() {
           )}
 
           {state.kind === "error" && (
-            <p className="font-mono text-sm text-red-400">
+            <p className="font-mono text-sm text-danger">
               error: {state.message}
             </p>
           )}

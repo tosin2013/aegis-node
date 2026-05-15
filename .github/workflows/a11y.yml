@@ -1,0 +1,68 @@
+name: A11y
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ui/**'
+      - 'docs/DESIGN.md'
+      - '.github/workflows/a11y.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ui/**'
+      - 'docs/DESIGN.md'
+      - '.github/workflows/a11y.yml'
+
+# WCAG AA contrast + serious/critical axe-core findings on the four
+# Community UI surfaces (Home, Chat, Manifest Builder, Model Library)
+# in both dark and light themes. Per issue #165 (parent #161). The
+# audit is a hard gate — a PR that introduces a serious or critical
+# axe violation cannot merge without an explicit waiver in the PR
+# description.
+jobs:
+  a11y:
+    name: axe-core (dark + light) × (home / chat / manifest / models)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `playwright install` downloads chromium (~150MB) into a
+      # well-known cache directory. We avoid `--with-deps` because the
+      # ubuntu-24.04 runner already has the X11/glibc dependencies
+      # chromium needs; using `--with-deps` adds ~30s of apt-get for
+      # libraries already present.
+      - name: Install Playwright browser
+        run: pnpm exec playwright install chromium
+
+      - name: Build UI
+        run: pnpm build
+
+      - name: Run axe-core audit
+        run: pnpm test:a11y
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: ui/playwright-report/
+          retention-days: 14

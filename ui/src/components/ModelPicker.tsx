@@ -205,7 +205,7 @@ export function ModelPicker({ onForkComplete, disabled }: ModelPickerProps) {
             </div>
           )}
           {error && (
-            <div className="px-3 py-2 font-mono text-xs text-red-400">
+            <div className="px-3 py-2 font-mono text-xs text-danger">
               {error instanceof Error ? error.message : String(error)}
             </div>
           )}
@@ -240,7 +240,7 @@ export function ModelPicker({ onForkComplete, disabled }: ModelPickerProps) {
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] text-muted">
                           {m.cosign?.verified && (
-                            <span className="inline-flex items-center gap-0.5 text-emerald-300">
+                            <span className="inline-flex items-center gap-0.5 text-success">
                               <ShieldCheck
                                 className="h-3 w-3"
                                 aria-hidden="true"
@@ -264,7 +264,7 @@ export function ModelPicker({ onForkComplete, disabled }: ModelPickerProps) {
             </ul>
           )}
           {forkState.kind === "error" && (
-            <div className="border-t border-[var(--color-border)] bg-red-950/40 px-3 py-2 font-mono text-[11px] text-red-300">
+            <div className="border-t border-[var(--color-border)] bg-[var(--color-bg-elev)] px-3 py-2 font-mono text-[11px] text-danger">
               fork failed: {forkState.message}
             </div>
           )}
