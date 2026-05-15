@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "design:tokens": "node ../scripts/design/render-tokens.mjs",
+    "design:tokens": "node scripts/render-tokens.mjs",
     "predev": "pnpm design:tokens",
     "dev": "vite",
     "prebuild": "pnpm design:tokens",

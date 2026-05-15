@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* GENERATED FROM docs/DESIGN.md by scripts/design/render-tokens.mjs.
+/* GENERATED FROM docs/DESIGN.md by ui/scripts/render-tokens.mjs.
  * Do not hand-edit this @theme block — run `pnpm design:tokens` after
  * updating the spec. Light-theme variant lands in issue #165;
  * component-level tokens land in #164. */

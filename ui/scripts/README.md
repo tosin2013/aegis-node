@@ -1,6 +1,21 @@
-# scripts/design/
+# ui/scripts/
 
-Tooling that derives downstream artefacts from [`docs/DESIGN.md`](../../docs/DESIGN.md).
+Build-time tooling for the Community WebUI. Derives downstream artefacts from
+[`docs/DESIGN.md`](../../docs/DESIGN.md).
+
+## Why it lives under `ui/` and not at the repo root
+
+The generator imports `js-yaml`, which is a UI-tree dev dependency
+(`ui/node_modules/`). Node's module resolver walks up from the importing
+file looking for `node_modules` directories — keeping the script under
+`ui/scripts/` puts `ui/node_modules/` on that walk path. A previous version
+of this script lived at `scripts/design/` (repo root) and broke in CI because
+no `node_modules` exists on the walk path from there.
+
+If a future consumer needs the script outside the UI build pipeline, move it
+back to repo root and bring its dependencies with it — either by adding a
+`scripts/design/package.json`, or by switching to `createRequire` rooted at
+`ui/package.json`.
 
 ## `render-tokens.mjs`
 

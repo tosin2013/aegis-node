@@ -21,6 +21,11 @@
 // and then `git diff --exit-code ui/src/index.css` to catch drift.
 //
 // Run from any CWD; paths resolve relative to the script's location.
+//
+// Lives under `ui/scripts/` (not the repo-root `scripts/`) so Node's
+// module resolver walks into `ui/node_modules/` for `js-yaml`. A previous
+// version at `scripts/design/` broke in CI because no `node_modules`
+// exists on the walk path from there.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -35,7 +40,7 @@ const INDEX_CSS = resolve(REPO_ROOT, "ui", "src", "index.css");
 const HAND_WRITTEN_SENTINEL =
   "/* DESIGN.md tokens above — hand-written CSS below. */";
 
-const GENERATED_HEADER = `/* GENERATED FROM docs/DESIGN.md by scripts/design/render-tokens.mjs.
+const GENERATED_HEADER = `/* GENERATED FROM docs/DESIGN.md by ui/scripts/render-tokens.mjs.
  * Do not hand-edit this @theme block — run \`pnpm design:tokens\` after
  * updating the spec. Light-theme variant lands in issue #165;
  * component-level tokens land in #164. */`;
