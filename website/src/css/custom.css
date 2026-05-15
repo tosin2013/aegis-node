@@ -1,0 +1,82 @@
+/**
+ * Aegis-Node theme variables.
+ * Dark-mode primary; light mode tracks the same hues at lighter values.
+ * Keep this file lean — page-specific styles belong next to their pages.
+ */
+
+:root {
+  --ifm-color-primary: #2b6cb0;
+  --ifm-color-primary-dark: #265f9e;
+  --ifm-color-primary-darker: #245a95;
+  --ifm-color-primary-darkest: #1d4a7b;
+  --ifm-color-primary-light: #3079c2;
+  --ifm-color-primary-lighter: #387eca;
+  --ifm-color-primary-lightest: #5694d3;
+  --ifm-code-font-size: 92%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+  --ifm-font-family-monospace: ui-monospace, SFMono-Regular, "SF Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #6aa6e0;
+  --ifm-color-primary-dark: #4f96da;
+  --ifm-color-primary-darker: #418ed7;
+  --ifm-color-primary-darkest: #2675c5;
+  --ifm-color-primary-light: #85b6e6;
+  --ifm-color-primary-lighter: #93bee9;
+  --ifm-color-primary-lightest: #bcd5f1;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --ifm-background-color: #0e1116;
+  --ifm-background-surface-color: #151a21;
+}
+
+.hero {
+  padding: 4rem 0;
+}
+
+.hero__title {
+  font-size: 3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.hero__subtitle {
+  font-size: 1.25rem;
+  max-width: 48rem;
+  margin: 0 auto;
+  opacity: 0.92;
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin: 2.5rem 0;
+}
+
+.feature-card {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  padding: 1.5rem;
+  background: var(--ifm-background-surface-color);
+}
+
+.feature-card h3 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+.feature-card p {
+  margin-bottom: 0;
+  font-size: 0.95rem;
+  opacity: 0.85;
+}
+
+.code-block-callout {
+  border-left: 4px solid var(--ifm-color-primary);
+  padding: 0.75rem 1rem;
+  background: var(--ifm-color-emphasis-100);
+  margin: 1.5rem 0;
+  font-size: 0.9rem;
+}

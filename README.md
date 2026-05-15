@@ -69,6 +69,8 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 
 ## Documentation
 
+The same content also publishes as a Docusaurus site (deployed to Vercel) — see [`website/`](website/) for the site source and deployment instructions.
+
 - **[Architectural Decision Records](docs/adrs/)** — 24 ADRs covering the security primitives, runtime architecture, supply chain, dev environment, agent ↔ tool protocol (MCP) plus the second-layer MCP arg pre-validation, write-grant precedence, the recorded demo program, HuggingFace-as-upstream model distribution, trust-boundary format agnosticism, and LiteRT-LM as a second inference backend.
 - **[Compatibility Charter](docs/COMPATIBILITY_CHARTER.md)** — what the project promises not to break across versions (manifest, ledger, IPC).
 - **[Supply Chain Verification](docs/SUPPLY_CHAIN.md)** — `cosign verify` / `oras pull` flow for the signed devbox image and model artifacts.
@@ -107,6 +109,7 @@ Every tool call routes through: **identity rebind → policy decision → gate d
 ├── .devcontainer/          # Canonical dev environment (per ADR-017)
 ├── .github/workflows/      # CI: rust, go, schemas, conformance, devbox
 ├── docs/adrs/              # 21 Architectural Decision Records
+├── website/                # Docusaurus 3 site source (deploys to Vercel)
 ├── Cargo.toml              # Rust workspace
 ├── go.mod                  # Go module
 ├── mise.toml               # Native-install tool versions (devcontainer fallback)
