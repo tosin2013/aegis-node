@@ -125,6 +125,27 @@ pub struct RunArgs {
     /// be `0.0` (`omitted` is also fine — defaults to `0.0`).
     #[arg(long, value_enum, default_value_t = BackendKind::default())]
     pub backend: BackendKind,
+
+    /// Triple-Bound Circuit Breaker (ADR-025) — hard cap on the
+    /// number of model invocations in `--prompt` mode. Whichever of
+    /// `--max-turns`, `--max-tokens`, `--max-seconds` trips first
+    /// halts the loop with a structured `TurnCapExceeded` error.
+    #[arg(long, default_value_t = 10)]
+    pub max_turns: u32,
+
+    /// Cumulative token budget across all turns. Backends that don't
+    /// yet report usage (today: llama + litertlm both) contribute
+    /// zero to this counter, so the cap won't trip on them; a follow-
+    /// up wires per-backend usage reporting. ADR-025 default is
+    /// per-backend; the CLI default `u64::MAX` defers to that path.
+    #[arg(long, default_value_t = u64::MAX)]
+    pub max_tokens: u64,
+
+    /// Wallclock budget in seconds, from the moment the loop starts.
+    /// Five minutes covers tool-heavy turns on commodity CPU
+    /// (per ADR-025 §"Defaults rationale").
+    #[arg(long, default_value_t = 300)]
+    pub max_seconds: u64,
 }
 
 /// Result of an `aegis run` invocation. Used by tests to assert
@@ -292,7 +313,7 @@ fn run_prompt(
     args: &RunArgs,
     prompt: &str,
 ) -> Result<(bool, Option<String>)> {
-    use aegis_inference_engine::ToolCallResult;
+    use aegis_inference_engine::{ToolCallResult, TurnLimits};
 
     let loaded = match args.backend {
         BackendKind::Llama => load_llama_backend(session, &args.model)?,
@@ -304,30 +325,70 @@ fn run_prompt(
     // `Session::with_loaded_model`.
     session.set_loaded_model(loaded);
 
-    let outcome = session.run_turn(prompt).context("run_turn")?;
+    let limits = TurnLimits {
+        max_turns: args.max_turns,
+        max_tokens: args.max_tokens,
+        max_seconds: args.max_seconds,
+    };
 
-    // Print the outcome for the user (and for the demo .tape recorder
-    // — these lines are what the GIF shows).
-    if let Some(text) = &outcome.assistant_text {
-        println!("# assistant");
-        println!("{text}");
-    }
-    for (i, call) in outcome.tool_calls.iter().enumerate() {
-        match &call.result {
-            ToolCallResult::Success(value) => {
-                println!("# tool[{i}] {} → success", call.name);
-                let pretty =
-                    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
-                println!("{pretty}");
-            }
-            ToolCallResult::Denied(reason) => {
-                println!("# tool[{i}] {} → DENIED: {reason}", call.name);
-            }
-            ToolCallResult::RequiresApproval(reason) => {
-                println!("# tool[{i}] {} → REQUIRES_APPROVAL: {reason}", call.name);
-            }
-            ToolCallResult::Unroutable(reason) => {
-                println!("# tool[{i}] {} → UNROUTABLE: {reason}", call.name);
+    // Drive the multi-turn loop (ADR-025). Cap-trips surface as a
+    // typed `TurnCapExceeded` error which we catch here and translate
+    // into the structured stderr block ADR-025 §3 specifies, then
+    // signal the outer caller via `halted=true` so the exit code is
+    // non-zero. The partial F9 ledger is already on disk — the
+    // `write_turn_cap_violation` hook fired before this point.
+    let result = match session.run(prompt, limits) {
+        Ok(r) => r,
+        Err(aegis_inference_engine::Error::TurnCapExceeded {
+            bound,
+            at_turn,
+            max_turns,
+            tokens_consumed,
+            max_tokens,
+            wallclock_seconds,
+            max_seconds,
+        }) => {
+            eprintln!("Error: TurnCapExceeded");
+            eprintln!("- bound: {bound} ({at_turn}/{max_turns})");
+            eprintln!("- turns_executed: {at_turn}");
+            eprintln!("- tokens_consumed: {tokens_consumed}/{max_tokens}");
+            eprintln!("- wallclock_seconds: {wallclock_seconds:.1}/{max_seconds}");
+            return Ok((true, Some(format!("turn cap exceeded ({bound})"))));
+        }
+        Err(other) => {
+            return Err(anyhow::Error::from(other)).context("session.run");
+        }
+    };
+
+    // Print every turn's outcome for the user (and for the demo .tape
+    // recorder — these lines are what the GIF shows). Per-turn headers
+    // make it legible when the loop went more than once.
+    let multi = result.turns.len() > 1;
+    for (turn_idx, outcome) in result.turns.iter().enumerate() {
+        if multi {
+            println!("# turn {}", turn_idx + 1);
+        }
+        if let Some(text) = &outcome.assistant_text {
+            println!("# assistant");
+            println!("{text}");
+        }
+        for (i, call) in outcome.tool_calls.iter().enumerate() {
+            match &call.result {
+                ToolCallResult::Success(value) => {
+                    println!("# tool[{i}] {} → success", call.name);
+                    let pretty =
+                        serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+                    println!("{pretty}");
+                }
+                ToolCallResult::Denied(reason) => {
+                    println!("# tool[{i}] {} → DENIED: {reason}", call.name);
+                }
+                ToolCallResult::RequiresApproval(reason) => {
+                    println!("# tool[{i}] {} → REQUIRES_APPROVAL: {reason}", call.name);
+                }
+                ToolCallResult::Unroutable(reason) => {
+                    println!("# tool[{i}] {} → UNROUTABLE: {reason}", call.name);
+                }
             }
         }
     }

@@ -356,6 +356,11 @@ pub(crate) fn parse_conversation_response(raw_json: &str) -> Result<InferRespons
         reasoning: content,
         tool_calls,
         assistant_text,
+        // LiteRT-LM's runtime doesn't surface usage stats yet; the
+        // multi-turn driver's token bound treats None as "no
+        // contribution" so this won't trip the cap. Follow-up under
+        // #181's open questions section.
+        tokens_used: None,
     })
 }
 

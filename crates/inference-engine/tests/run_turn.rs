@@ -144,6 +144,7 @@ fn run_turn_emits_reasoning_then_dispatches_one_mcp_tool_call() {
             arguments: serde_json::json!({"city": "Paris"}),
         }],
         assistant_text: Some("Looking up the weather.".to_string()),
+        tokens_used: None,
     };
     let (mock, mock_handle) = MockLoadedModel::new(vec![Ok(response)]);
 
@@ -243,6 +244,7 @@ fn run_turn_marks_unroutable_tool_call_without_propagating_error() {
             arguments: serde_json::Value::Null,
         }],
         assistant_text: None,
+        tokens_used: None,
     };
     let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
     let mut session = session.with_loaded_model(Box::new(mock));
@@ -273,6 +275,7 @@ fn run_turn_records_denied_tool_call_without_short_circuiting() {
             arguments: serde_json::Value::Null,
         }],
         assistant_text: None,
+        tokens_used: None,
     };
     let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
     let mut session = session.with_loaded_model(Box::new(mock));
@@ -368,6 +371,7 @@ fn run_turn_dispatches_filesystem_read_natively_and_returns_contents() {
             arguments: serde_json::json!({"path": target.to_str().unwrap()}),
         }],
         assistant_text: Some("Reading.".to_string()),
+        tokens_used: None,
     };
     let (mock, mock_handle) = MockLoadedModel::new(vec![Ok(response)]);
     let mut session = session.with_loaded_model(Box::new(mock));
@@ -423,6 +427,7 @@ fn run_turn_records_denied_filesystem_read_outside_allowed_paths() {
             arguments: serde_json::json!({"path": "/etc/passwd"}),
         }],
         assistant_text: None,
+        tokens_used: None,
     };
     let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
     let mut session = session.with_loaded_model(Box::new(mock));
@@ -463,6 +468,7 @@ fn run_turn_dispatches_filesystem_write_natively_against_a_write_grant() {
             }),
         }],
         assistant_text: None,
+        tokens_used: None,
     };
     let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
     let mut session = session.with_loaded_model(Box::new(mock));
@@ -501,6 +507,7 @@ fn run_turn_marks_native_tool_with_missing_args_as_unroutable() {
             arguments: serde_json::json!({}),
         }],
         assistant_text: None,
+        tokens_used: None,
     };
     let (mock, _h) = MockLoadedModel::new(vec![Ok(response)]);
     let mut session = session.with_loaded_model(Box::new(mock));

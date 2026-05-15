@@ -314,6 +314,64 @@ impl Session {
         &self.policy
     }
 
+    /// Append a `TurnCapExceeded` Violation to the F9 ledger.
+    /// Called by the multi-turn driver ([`Self::run`]) when the
+    /// Triple-Bound Circuit Breaker trips (per ADR-025). The
+    /// payload shape is namespaced under
+    /// `violationKind: "TurnCapExceeded"` so existing v1 ledger
+    /// readers can ignore it while ADR-026's schema v2 work can
+    /// upgrade it to a first-class entry kind.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_turn_cap_violation(
+        &mut self,
+        bound: crate::turn::TurnCapKind,
+        at_turn: u32,
+        max_turns: u32,
+        tokens_consumed: u64,
+        max_tokens: u64,
+        wallclock_seconds: f64,
+        max_seconds: u64,
+    ) -> Result<()> {
+        let mut payload = Map::new();
+        payload.insert(
+            "violationKind".to_string(),
+            Value::String("TurnCapExceeded".to_string()),
+        );
+        payload.insert(
+            "violationReason".to_string(),
+            Value::String(format!(
+                "turn cap exceeded: bound={bound:?}, turn {at_turn}/{max_turns}, \
+                 tokens {tokens_consumed}/{max_tokens}, \
+                 wallclock {wallclock_seconds:.1}s/{max_seconds}s"
+            )),
+        );
+        payload.insert(
+            "capBound".to_string(),
+            Value::String(format!("{bound:?}").to_lowercase()),
+        );
+        payload.insert("atTurn".to_string(), Value::Number(at_turn.into()));
+        payload.insert("maxTurns".to_string(), Value::Number(max_turns.into()));
+        payload.insert(
+            "tokensConsumed".to_string(),
+            Value::Number(tokens_consumed.into()),
+        );
+        payload.insert("maxTokens".to_string(), Value::Number(max_tokens.into()));
+        // f64 — Number::from_f64 can fail on NaN/inf which we never produce.
+        if let Some(n) = serde_json::Number::from_f64(wallclock_seconds) {
+            payload.insert("wallclockSeconds".to_string(), Value::Number(n));
+        }
+        payload.insert("maxSeconds".to_string(), Value::Number(max_seconds.into()));
+
+        self.ledger.append(Entry {
+            session_id: self.session_id.clone(),
+            entry_type: EntryType::Violation,
+            agent_identity_hash: self.agent_identity_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
     pub fn spiffe_id(&self) -> &SpiffeId {
         &self.spiffe_id
     }

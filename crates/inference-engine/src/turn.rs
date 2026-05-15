@@ -33,9 +33,11 @@
 //! native namespaces is rejected at [`Session::boot`] with
 //! [`Error::ReservedMcpServerName`] — the conflict is loud, not silent.
 
+use std::fmt;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
-use crate::backend::{InferRequest, ToolCall, ToolDecl};
+use crate::backend::{ChatMessage, ChatRole, InferRequest, ToolCall, ToolDecl};
 use crate::error::{Error, Result};
 use crate::session::Session;
 
@@ -43,6 +45,89 @@ use crate::session::Session;
 /// `server_name` matches any of these collides with native dispatch
 /// and is refused at boot.
 pub const RESERVED_NATIVE_NAMESPACES: &[&str] = &["filesystem", "network", "exec"];
+
+/// Triple-Bound Circuit Breaker config for [`Session::run`] (ADR-025).
+///
+/// Each bound is independent — whichever trips first halts the loop
+/// and writes a `TurnCapExceeded` Violation to the F9 ledger before
+/// the driver returns [`Error::TurnCapExceeded`].
+#[derive(Debug, Clone, Copy)]
+pub struct TurnLimits {
+    /// Hard cap on model invocations per session. ADR-025 default: 10.
+    pub max_turns: u32,
+    /// Cumulative token budget across all turns. Backends that don't
+    /// report usage ([`crate::InferResponse::tokens_used`] == None)
+    /// contribute 0 to the accumulator, so this bound only trips on
+    /// backends with wired usage reporting. ADR-025 default: per-backend.
+    /// The library default of `u64::MAX` is "effectively unbounded" —
+    /// callers (the CLI) set it explicitly.
+    pub max_tokens: u64,
+    /// Wallclock budget from [`Session::run`] entry. ADR-025 default: 300s.
+    pub max_seconds: u64,
+}
+
+impl Default for TurnLimits {
+    fn default() -> Self {
+        Self {
+            max_turns: 10,
+            max_tokens: u64::MAX,
+            max_seconds: 300,
+        }
+    }
+}
+
+/// Which bound of the Triple-Bound Circuit Breaker tripped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnCapKind {
+    /// `max_turns` exceeded.
+    Turns,
+    /// `max_tokens` exceeded.
+    Tokens,
+    /// `max_seconds` (wallclock) exceeded.
+    Wallclock,
+}
+
+impl fmt::Display for TurnCapKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            TurnCapKind::Turns => "turns",
+            TurnCapKind::Tokens => "tokens",
+            TurnCapKind::Wallclock => "wallclock",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Why [`Session::run`] stopped. Capped termination surfaces as
+/// [`Error::TurnCapExceeded`] on the [`Result`]; [`Session::run`]
+/// only returns this variant on clean termination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionTermination {
+    /// The most recent turn emitted no tool calls. The assistant text
+    /// from that turn is the final response. ADR-025 §"Loop shape"
+    /// case "tool_call list is empty".
+    Done,
+}
+
+/// Aggregate outcome of [`Session::run`]: per-turn captures + the
+/// reason the loop halted + cumulative usage counters.
+#[derive(Debug, Clone)]
+pub struct SessionRunResult {
+    /// Per-turn outcomes in chronological order. Includes the
+    /// final turn (the one whose empty tool-call list triggered
+    /// the clean termination).
+    pub turns: Vec<TurnOutcome>,
+    /// Why the loop ended. On clean termination this is
+    /// [`SessionTermination::Done`]. Capped termination doesn't
+    /// reach this struct — see [`Error::TurnCapExceeded`].
+    pub termination: SessionTermination,
+    /// Sum of [`crate::InferResponse::tokens_used`] across all
+    /// completed turns (treating `None` as zero).
+    pub tokens_consumed: u64,
+    /// Wallclock from the start of [`Session::run`] to the
+    /// turn that produced the final assistant text.
+    pub wallclock: Duration,
+}
 
 /// Outcome of one [`Session::run_turn`] call. Captures every
 /// observable side-effect the caller might want to act on (logs,
@@ -120,11 +205,152 @@ impl Session {
     ///   short-circuiting the turn — the agent saw the refusal, the
     ///   ledger has the Violation, the next turn can adapt.
     pub fn run_turn(&mut self, user_message: &str) -> Result<TurnOutcome> {
-        let tools = self.tool_catalog();
-        let messages = vec![crate::backend::ChatMessage {
-            role: crate::backend::ChatRole::User,
+        let messages = vec![ChatMessage {
+            role: ChatRole::User,
             content: user_message.to_string(),
         }];
+        let (outcome, _tokens) = self.run_one_turn(&messages, user_message)?;
+        Ok(outcome)
+    }
+
+    /// Drive a session through up to `limits.max_turns` LLM-B
+    /// invocations, accumulating tool results into the context window
+    /// for the next turn, until the model emits a turn with no tool
+    /// calls (clean termination) or one of the Triple-Bound Circuit
+    /// Breaker bounds trips (capped termination).
+    ///
+    /// Implements [ADR-025](../../docs/adrs/025-multi-turn-agent-loop-with-triple-bound-circuit-breaker.md).
+    ///
+    /// **Clean termination** returns `Ok(SessionRunResult)` with every
+    /// turn's outcome in order.
+    ///
+    /// **Capped termination** writes a `TurnCapExceeded` Violation entry
+    /// to the F9 ledger and returns [`Error::TurnCapExceeded`]. The
+    /// ledger left on disk contains every fully-completed turn before
+    /// the cap fired — the "partial F9 ledger" promise from ADR-025 §3.
+    /// Callers parse the ledger (via `aegis verify` or directly) to
+    /// reconstruct what happened before the halt.
+    ///
+    /// ## Message-history caveat
+    ///
+    /// Between turns the driver accumulates:
+    /// - the original user message,
+    /// - one [`ChatRole::Assistant`] message per turn carrying the
+    ///   model's reasoning + assistant text,
+    /// - one [`ChatRole::Tool`] message per dispatched call carrying a
+    ///   JSON-shaped `{"tool": name, "args": ..., "result": ...}` body.
+    ///
+    /// The exact serialization is chat-template-dependent — Gemma 4 and
+    /// other production backends benefit from richer tool-call /
+    /// tool-result markers than `ChatMessage` exposes today. Lifting
+    /// the message shape (per-message `tool_call_id`, `tool_name`) is
+    /// tracked under ADR-026 + #182.
+    pub fn run(&mut self, prompt: &str, limits: TurnLimits) -> Result<SessionRunResult> {
+        let started = Instant::now();
+        let mut messages = vec![ChatMessage {
+            role: ChatRole::User,
+            content: prompt.to_string(),
+        }];
+        let mut turns: Vec<TurnOutcome> = Vec::with_capacity(limits.max_turns as usize);
+        let mut tokens_consumed: u64 = 0;
+
+        // The driver runs as a for-loop with explicit cap checks at
+        // the top so the bounds are visible without grep'ing for
+        // mid-loop branches. ADR-025 §"Loop shape" is the spec.
+        for turn_index in 1..=limits.max_turns {
+            // Wallclock cap is checked before invoking the backend so
+            // a hung tool from the previous turn can't push the model
+            // over the bound; ditto a slow backend prompt-eval.
+            let elapsed = started.elapsed();
+            if elapsed.as_secs() >= limits.max_seconds {
+                return Err(self.emit_cap_and_build_err(
+                    TurnCapKind::Wallclock,
+                    turn_index,
+                    &limits,
+                    tokens_consumed,
+                    elapsed.as_secs_f64(),
+                )?);
+            }
+            // Token cap on cumulative — `tokens_used` per turn is
+            // optional ([`InferResponse::tokens_used`]). Backends that
+            // don't report contribute 0; bound never trips on them.
+            if tokens_consumed >= limits.max_tokens {
+                return Err(self.emit_cap_and_build_err(
+                    TurnCapKind::Tokens,
+                    turn_index,
+                    &limits,
+                    tokens_consumed,
+                    elapsed.as_secs_f64(),
+                )?);
+            }
+
+            let (outcome, used) = self.run_one_turn(&messages, prompt)?;
+            tokens_consumed = tokens_consumed.saturating_add(used.unwrap_or(0));
+            let no_tool_calls = outcome.tool_calls.is_empty();
+
+            // Accumulate assistant + tool messages for the next turn.
+            // The Assistant message carries the model's reasoning AND
+            // the final assistant text (when present); we deliberately
+            // omit a separate per-turn tool-call structured block — the
+            // backend already parsed `tool_calls` and the tool-result
+            // messages below carry the names back.
+            let assistant_content = match &outcome.assistant_text {
+                Some(text) => text.clone(),
+                None => String::new(),
+            };
+            if !assistant_content.is_empty() {
+                messages.push(ChatMessage {
+                    role: ChatRole::Assistant,
+                    content: assistant_content,
+                });
+            }
+            for tc in &outcome.tool_calls {
+                let body = serde_json::json!({
+                    "tool": tc.name,
+                    "args": tc.arguments,
+                    "result": tool_call_result_to_value(&tc.result),
+                });
+                messages.push(ChatMessage {
+                    role: ChatRole::Tool,
+                    content: body.to_string(),
+                });
+            }
+            turns.push(outcome);
+
+            if no_tool_calls {
+                // Clean termination: the model produced text and no
+                // tool calls — the task is its own answer.
+                return Ok(SessionRunResult {
+                    turns,
+                    termination: SessionTermination::Done,
+                    tokens_consumed,
+                    wallclock: started.elapsed(),
+                });
+            }
+        }
+
+        // Fell out of the loop without returning — `max_turns` exhausted.
+        let elapsed = started.elapsed();
+        Err(self.emit_cap_and_build_err(
+            TurnCapKind::Turns,
+            limits.max_turns,
+            &limits,
+            tokens_consumed,
+            elapsed.as_secs_f64(),
+        )?)
+    }
+
+    /// Shared per-turn dispatch used by both [`Self::run_turn`] (legacy
+    /// single-turn) and [`Self::run`] (multi-turn). Takes the full
+    /// `messages` history so the multi-turn driver can accumulate
+    /// across turns. Returns the outcome plus the backend-reported
+    /// `tokens_used` (when available).
+    fn run_one_turn(
+        &mut self,
+        messages: &[ChatMessage],
+        original_prompt: &str,
+    ) -> Result<(TurnOutcome, Option<u64>)> {
+        let tools = self.tool_catalog();
 
         let response = {
             let model = self
@@ -132,36 +358,69 @@ impl Session {
                 .as_mut()
                 .ok_or(Error::NoBackendConfigured)?;
             model.infer(InferRequest {
-                messages,
+                messages: messages.to_vec(),
                 tools: tools.clone(),
             })?
         };
 
-        // Emit one F5 reasoning step capturing the model's stated
-        // chain — input + reasoning + tools considered + selected.
         let tools_considered: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
         let tool_selected = response.tool_calls.first().map(|c| c.name.clone());
         let step_uuid = self.record_reasoning_step(
-            user_message,
+            original_prompt,
             &response.reasoning,
             tools_considered,
             tool_selected,
         )?;
         let step_id = step_uuid.to_string();
 
-        // Dispatch each tool call. We capture per-call outcomes rather
-        // than short-circuit the loop on Denied/RequireApproval —
-        // those are normal runtime conditions, not turn-fatal errors.
         let mut outcomes = Vec::with_capacity(response.tool_calls.len());
         for call in response.tool_calls {
             let outcome = self.dispatch_tool_call(call, Some(&step_id))?;
             outcomes.push(outcome);
         }
 
-        Ok(TurnOutcome {
-            assistant_text: response.assistant_text,
-            tool_calls: outcomes,
-            reasoning_step_id: step_id,
+        let assistant_text = response.assistant_text;
+        let tokens_used = response.tokens_used;
+        Ok((
+            TurnOutcome {
+                assistant_text,
+                tool_calls: outcomes,
+                reasoning_step_id: step_id,
+            },
+            tokens_used,
+        ))
+    }
+
+    /// Write the `TurnCapExceeded` Violation entry to the ledger and
+    /// build the structured [`Error::TurnCapExceeded`] the driver
+    /// returns. Either the entry-write or the error build can fail —
+    /// both surface to the caller, which is correct: a failed ledger
+    /// write is itself a load-bearing failure on the security-review path.
+    fn emit_cap_and_build_err(
+        &mut self,
+        bound: TurnCapKind,
+        at_turn: u32,
+        limits: &TurnLimits,
+        tokens_consumed: u64,
+        wallclock_seconds: f64,
+    ) -> Result<Error> {
+        self.write_turn_cap_violation(
+            bound,
+            at_turn,
+            limits.max_turns,
+            tokens_consumed,
+            limits.max_tokens,
+            wallclock_seconds,
+            limits.max_seconds,
+        )?;
+        Ok(Error::TurnCapExceeded {
+            bound,
+            at_turn,
+            max_turns: limits.max_turns,
+            tokens_consumed,
+            max_tokens: limits.max_tokens,
+            wallclock_seconds,
+            max_seconds: limits.max_seconds,
         })
     }
 
@@ -432,6 +691,23 @@ impl Session {
             other => Err(Error::UnroutableToolCall {
                 name: format!("exec__{other}"),
             }),
+        }
+    }
+}
+
+/// Serialise a [`ToolCallResult`] into JSON suitable for inclusion in
+/// a [`ChatRole::Tool`] history message. Each variant becomes a
+/// discriminated object — the model sees the structure and the verdict
+/// without needing to parse free text.
+fn tool_call_result_to_value(result: &ToolCallResult) -> serde_json::Value {
+    match result {
+        ToolCallResult::Success(v) => serde_json::json!({"status": "success", "value": v}),
+        ToolCallResult::Denied(r) => serde_json::json!({"status": "denied", "reason": r}),
+        ToolCallResult::RequiresApproval(r) => {
+            serde_json::json!({"status": "requires_approval", "reason": r})
+        }
+        ToolCallResult::Unroutable(r) => {
+            serde_json::json!({"status": "unroutable", "reason": r})
         }
     }
 }
