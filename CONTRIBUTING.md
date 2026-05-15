@@ -75,6 +75,10 @@ Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, etc.) — short subjec
 
 CI must be green. PRs that touch the policy enforcement path (Rust runtime, Go validator, ledger writer) get an extra security-conscious reviewer.
 
+## Cutting a release
+
+Maintainers: see [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for the tag-driven release flow, the hard contract with [`RELEASE_PLAN.md`](RELEASE_PLAN.md) milestone cards, the dry-run procedure, and common-failure recovery. Always-draft, manual-publish — pre-1.0 caution.
+
 ## Reporting security issues
 
 Do **not** open a public issue for security vulnerabilities. Email the maintainers privately (contact in the repo's GitHub `SECURITY.md` once it lands). Until then, use a GitHub private vulnerability report.

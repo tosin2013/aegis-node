@@ -12,7 +12,7 @@ name: Release
 # (v1.0.0-rc.1, v1.0.0-beta.2) is marked --prerelease. v1.0.0 and later
 # without a suffix are marked --latest.
 #
-# Policy decisions (see docs/RELEASE_PROCESS.md once written):
+# Policy decisions (see docs/RELEASE_PROCESS.md for the full contract):
 #   - Hard-require: matching milestone card in RELEASE_PLAN.md (else fail)
 #   - Report-only: GitHub milestone open-issue count (rendered, not blocking)
 #   - Always draft: never auto-publish (pre-1.0 caution; typo / scope safety)
