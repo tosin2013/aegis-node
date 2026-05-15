@@ -1,26 +1,50 @@
 @import "tailwindcss";
 
-/* Aegis-Node design tokens (matches the placeholder colour set, locked
- * by ADR-031's UI-stack note). Dark-first; light theme variant lands
- * in sub-phase 1d.1b alongside the WCAG audit. Identifier accents
- * (workload IDs, hashes, OCI digests) get the monospace + accent
- * colour treatment so the visual language matches the runtime's
- * zero-trust positioning rather than fighting it. */
+/* GENERATED FROM docs/DESIGN.md by ui/scripts/render-tokens.mjs.
+ * Do not hand-edit this @theme block — run `pnpm design:tokens` after
+ * updating the spec. Light-theme variant lands in issue #165;
+ * component-level tokens land in #164. */
 @theme {
+  /* Colors — dark mode. Light mode lands in #165. */
   --color-bg: #0b0d10;
   --color-bg-elev: #11151a;
   --color-fg: #e5e9ef;
   --color-muted: #8a93a3;
   --color-border: #1f2630;
   --color-accent: #7cc4ff;
+  --color-success: #4ade80;
+  --color-warning: #facc15;
+  --color-danger: #f87171;
+  --color-focus-ring: #7cc4ff;
 
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --font-mono:
-    ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas,
-    monospace;
+  /* Font stacks (system-only — no webfont downloads, per ADR-031). */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+
+  /* Typography (font-size only at this stage; richer typography
+   * is per-component and lands with primitives in #164). */
+  --text-body: 0.9375rem;
+  --text-heading: 1.25rem;
+  --text-caption: 0.8125rem;
+  --text-mono-id: 0.92em;
+  --text-code: 0.875rem;
+
+  /* Corner radii. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-full: 9999px;
+
+  /* Spacing scale. */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 0.75rem;
+  --spacing-lg: 1rem;
+  --spacing-xl: 1.5rem;
+  --spacing-2xl: 2rem;
 }
+
+/* DESIGN.md tokens above — hand-written CSS below. */
 
 :root {
   color-scheme: dark;

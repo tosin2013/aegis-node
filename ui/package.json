@@ -7,14 +7,19 @@
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.0.0",
   "scripts": {
+    "design:tokens": "node scripts/render-tokens.mjs",
+    "predev": "pnpm design:tokens",
     "dev": "vite",
+    "prebuild": "pnpm design:tokens",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-tooltip": "^1.1.0",
     "@tanstack/react-query": "^5.100.9",
     "@tanstack/react-router": "^1.169.2",
     "@types/js-yaml": "^4.0.9",
