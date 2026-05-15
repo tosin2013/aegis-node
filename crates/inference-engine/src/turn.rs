@@ -37,6 +37,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::adversarial::{ClassifierVerdict, ToolOrigin};
 use crate::backend::{ChatMessage, ChatRole, InferRequest, ToolCall, ToolDecl};
 use crate::error::{Error, Result};
 use crate::session::Session;
@@ -169,6 +170,15 @@ pub struct ToolCallOutcome {
     pub arguments: serde_json::Value,
     /// Result of the dispatch.
     pub result: ToolCallResult,
+    /// Adversarial pre-filter verdict (ADR-028). `Some(verdict)`
+    /// when this outcome was produced by the multi-turn driver
+    /// ([`Session::run`]) — the classifier is part of that path's
+    /// re-injection guard. `None` when produced by the single-turn
+    /// [`Session::run_turn`] path, which doesn't re-inject tool
+    /// results into a follow-up prompt and thus doesn't need the
+    /// gate. The WebUI uses this for the "suspected injection"
+    /// badge described in ADR-028 §"Ledger integration".
+    pub classifier_verdict: Option<crate::adversarial::ClassifierVerdict>,
 }
 
 /// Four terminal states for one tool call.
@@ -284,9 +294,42 @@ impl Session {
                 )?);
             }
 
-            let (outcome, used) = self.run_one_turn(&messages, prompt)?;
+            let (mut outcome, used) = self.run_one_turn(&messages, prompt)?;
             tokens_consumed = tokens_consumed.saturating_add(used.unwrap_or(0));
             let no_tool_calls = outcome.tool_calls.is_empty();
+
+            // ADR-028 adversarial pre-filter — classify every tool
+            // result *before* it can influence the next turn. Clean
+            // results pass through unchanged; flagged ones are
+            // wrapped in the `<aegis-system-warning>` block when we
+            // build the `Tool` history message below, and a
+            // `AdversarialContent` Violation is written to the F9
+            // ledger.
+            //
+            // Collected into a parallel Vec so we keep `outcome`
+            // immutable through the borrow-check dance with `self`.
+            let classifier = self.adversarial_classifier.clone();
+            let classifier_name = classifier.name();
+            let mut classified: Vec<(ClassifierVerdict, ToolOrigin)> =
+                Vec::with_capacity(outcome.tool_calls.len());
+            for tc in &outcome.tool_calls {
+                let origin = origin_of(&tc.name);
+                let body_bytes = tool_call_result_to_value(&tc.result).to_string();
+                let verdict = classifier.classify(body_bytes.as_bytes(), &origin);
+                classified.push((verdict, origin));
+            }
+            // Emit ledger entries for flagged results before touching
+            // the outcome (writes need `&mut self`).
+            for ((verdict, origin), _tc) in classified.iter().zip(outcome.tool_calls.iter()) {
+                if verdict.flagged() {
+                    self.write_adversarial_violation(verdict, classifier_name, origin)?;
+                }
+            }
+            // Now stamp each outcome with its verdict for downstream
+            // consumers (WebUI, evidence-pack generator).
+            for (tc, (verdict, _origin)) in outcome.tool_calls.iter_mut().zip(classified.iter()) {
+                tc.classifier_verdict = Some(verdict.clone());
+            }
 
             // Accumulate assistant + tool messages for the next turn.
             // The Assistant message carries the model's reasoning AND
@@ -304,15 +347,30 @@ impl Session {
                     content: assistant_content,
                 });
             }
-            for tc in &outcome.tool_calls {
-                let body = serde_json::json!({
+            for (tc, (verdict, origin)) in outcome.tool_calls.iter().zip(classified.iter()) {
+                let body_value = serde_json::json!({
                     "tool": tc.name,
                     "args": tc.arguments,
                     "result": tool_call_result_to_value(&tc.result),
                 });
+                let body_str = body_value.to_string();
+                let content = if verdict.flagged() {
+                    // ADR-028 §"Sanitize, don't drop" — wrap, never
+                    // strip. The wrapper escapes any inner
+                    // `<aegis-system-warning>` so a forged inner
+                    // wrapper can't fool the model.
+                    crate::adversarial::wrap_flagged(
+                        body_str.as_bytes(),
+                        verdict,
+                        origin,
+                        classifier_name,
+                    )
+                } else {
+                    body_str
+                };
                 messages.push(ChatMessage {
                     role: ChatRole::Tool,
-                    content: body.to_string(),
+                    content,
                 });
             }
             turns.push(outcome);
@@ -552,6 +610,7 @@ impl Session {
                     "tool name {:?} not in <namespace>__<tool> shape",
                     call.name
                 )),
+                classifier_verdict: None,
             });
         };
 
@@ -582,6 +641,7 @@ impl Session {
             name: call.name,
             arguments: call.arguments,
             result,
+            classifier_verdict: None,
         })
     }
 
@@ -691,6 +751,34 @@ impl Session {
             other => Err(Error::UnroutableToolCall {
                 name: format!("exec__{other}"),
             }),
+        }
+    }
+}
+
+/// Derive a [`ToolOrigin`] from the `<namespace>__<tool>` name the
+/// model emitted. Native namespaces map to their fixed origins; the
+/// rest are treated as MCP. Used by the multi-turn driver's
+/// adversarial pre-filter so the classifier and the ledger see the
+/// same provenance string.
+fn origin_of(tool_name: &str) -> ToolOrigin {
+    if let Some((ns, t)) = split_mcp_name(tool_name) {
+        match ns {
+            "filesystem" => ToolOrigin::Filesystem,
+            "network" => ToolOrigin::NetworkOutbound,
+            "exec" => ToolOrigin::Exec,
+            _ => ToolOrigin::McpServer {
+                server_name: ns.to_string(),
+                tool_name: t.to_string(),
+            },
+        }
+    } else {
+        // Unroutable tool names (no `__` separator) are dispatched
+        // as Unroutable outcomes; the classifier still runs on the
+        // synthesised JSON. Fall back to a McpServer label so the
+        // ledger entry carries something resolvable.
+        ToolOrigin::McpServer {
+            server_name: "unknown".to_string(),
+            tool_name: tool_name.to_string(),
         }
     }
 }

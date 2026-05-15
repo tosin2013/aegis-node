@@ -94,6 +94,12 @@ pub struct Session {
     /// (the legacy fixed-script `run` path keeps working). Set via
     /// [`Session::with_loaded_model`] after boot. Per ADR-014.
     pub(crate) loaded_model: Option<Box<dyn crate::backend::LoadedModel>>,
+    /// Adversarial pre-filter classifier (ADR-028). Always populated
+    /// after boot — defaults to [`crate::adversarial::default_classifier`]
+    /// (the always-on `RegexHeuristicClassifier`). Operators can swap
+    /// in a model-backed classifier via
+    /// [`Session::with_adversarial_classifier`].
+    pub(crate) adversarial_classifier: crate::adversarial::SharedClassifier,
 }
 
 /// One observed network-connection attempt + the gate's decision.
@@ -249,6 +255,7 @@ impl Session {
             network_log: Vec::new(),
             mcp_client: None,
             loaded_model: None,
+            adversarial_classifier: crate::adversarial::default_classifier(),
         })
     }
 
@@ -286,6 +293,20 @@ impl Session {
         self.loaded_model = Some(model);
     }
 
+    /// Swap the [`AdversarialClassifier`](crate::adversarial::AdversarialClassifier)
+    /// used by the multi-turn loop's pre-filter gate (ADR-028). The
+    /// default (set at boot) is the always-on
+    /// [`RegexHeuristicClassifier`](crate::adversarial::RegexHeuristicClassifier).
+    /// Operators wanting the model-backed `LiteRtLmGuardClassifier`
+    /// (opt-in per ADR-028 §"Classifier interface") swap it in here.
+    pub fn with_adversarial_classifier(
+        mut self,
+        classifier: crate::adversarial::SharedClassifier,
+    ) -> Self {
+        self.adversarial_classifier = classifier;
+        self
+    }
+
     /// Wall-clock anchor for time-bounded write_grants — set once at boot.
     pub fn session_start(&self) -> DateTime<Utc> {
         self.session_start
@@ -312,6 +333,62 @@ impl Session {
 
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Append an `AdversarialContent` Violation to the F9 ledger
+    /// (ADR-028). Called by the multi-turn driver when the
+    /// pre-filter gate flags a tool result. Like
+    /// `TurnCapExceeded`, this is namespaced under
+    /// `violationKind: "AdversarialContent"` for v1-schema
+    /// compatibility — ADR-026's schema v2 will move it into
+    /// `tool_result.adversarialClassifier`.
+    pub(crate) fn write_adversarial_violation(
+        &mut self,
+        verdict: &crate::adversarial::ClassifierVerdict,
+        classifier_name: &str,
+        origin: &crate::adversarial::ToolOrigin,
+    ) -> Result<()> {
+        use crate::adversarial::ClassifierVerdict as V;
+        let (reason, score) = match verdict {
+            V::Clean => return Ok(()), // shouldn't be called; defend in depth
+            V::Suspicious { reason, score } => (reason.clone(), *score),
+            V::Malicious { reason, score } => (reason.clone(), *score),
+        };
+
+        let mut payload = Map::new();
+        payload.insert(
+            "violationKind".to_string(),
+            Value::String("AdversarialContent".to_string()),
+        );
+        payload.insert(
+            "violationReason".to_string(),
+            Value::String(format!(
+                "adversarial pre-filter flagged tool result: {} (reason={reason}, score={score:.2})",
+                verdict.as_str()
+            )),
+        );
+        payload.insert(
+            "classifierVerdict".to_string(),
+            Value::String(verdict.as_str().to_string()),
+        );
+        payload.insert(
+            "classifierName".to_string(),
+            Value::String(classifier_name.to_string()),
+        );
+        if let Some(n) = serde_json::Number::from_f64(score.into()) {
+            payload.insert("classifierScore".to_string(), Value::Number(n));
+        }
+        payload.insert("classifierReason".to_string(), Value::String(reason));
+        payload.insert("toolOrigin".to_string(), Value::String(origin.to_string()));
+
+        self.ledger.append(Entry {
+            session_id: self.session_id.clone(),
+            entry_type: EntryType::Violation,
+            agent_identity_hash: self.agent_identity_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
     }
 
     /// Append a `TurnCapExceeded` Violation to the F9 ledger.
