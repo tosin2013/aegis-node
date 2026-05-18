@@ -20,11 +20,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod file;
+pub mod grants;
 pub mod mtls;
 pub mod tty;
 pub mod web;
 
 pub use file::FileApprovalChannel;
+pub use grants::{canonical_arg_hash, ApprovalGrant, GrantDecision, SessionGrantTable};
 pub use mtls::MtlsApprovalChannel;
 pub use tty::TtyApprovalChannel;
 pub use web::WebApprovalChannel;

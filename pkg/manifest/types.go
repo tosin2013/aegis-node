@@ -84,6 +84,10 @@ type Filesystem struct {
 	// dispatches (ADR-027). Parsed for Go-validator round-trip
 	// parity; enforcement lives in the Rust runtime today.
 	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
+	// Approval carries the per-tool-class approval policy (ADR-029).
+	// Parsed for Go-validator round-trip parity; tier behavior is a
+	// Rust-runtime concern (the Go side has no dispatcher).
+	Approval *ApprovalPolicy `yaml:"approval,omitempty" json:"approval,omitempty"`
 }
 
 type Network struct {
@@ -93,12 +97,16 @@ type Network struct {
 	// dispatches (ADR-027). Parsed for Go-validator round-trip
 	// parity; enforcement lives in the Rust runtime today.
 	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
+	// Approval carries the per-tool-class approval policy (ADR-029).
+	Approval *ApprovalPolicy `yaml:"approval,omitempty" json:"approval,omitempty"`
 }
 
-// Exec is the tools.exec sub-block (ADR-027). Currently carries the
-// aggregate quota only — per-grant exec rules stay in Manifest.ExecGrants.
+// Exec is the tools.exec sub-block (ADR-027 + ADR-029). Currently
+// carries the aggregate quota + approval policy — per-grant exec
+// rules stay in Manifest.ExecGrants.
 type Exec struct {
-	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
+	Quota    *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
+	Approval *ApprovalPolicy `yaml:"approval,omitempty" json:"approval,omitempty"`
 }
 
 // AggregateQuota is the per-session aggregate cap for a tool class
@@ -108,6 +116,16 @@ type Exec struct {
 // concern (the Go side has no dispatcher).
 type AggregateQuota struct {
 	MaxCallsPerSession *uint64 `yaml:"max_calls_per_session,omitempty" json:"max_calls_per_session,omitempty"`
+}
+
+// ApprovalPolicy is the per-tool-class approval policy (ADR-029).
+// Tier selects the F3 gate's behavior on Decision::RequireApproval;
+// GrantTTLSeconds controls how long an issued grant auto-consumes
+// identical retries. Parse-only on the Go side — behavior dispatch
+// lives in the Rust runtime.
+type ApprovalPolicy struct {
+	Tier             string `yaml:"tier,omitempty" json:"tier,omitempty"`
+	GrantTTLSeconds  uint64 `yaml:"grant_ttl_seconds,omitempty" json:"grant_ttl_seconds,omitempty"`
 }
 
 // NetworkMode captures the schema's `oneOf {string enum, allowlist object}`.
@@ -149,6 +167,8 @@ type MCPServerGrant struct {
 	// Quota is the per-server aggregate quota for MCP dispatches
 	// (ADR-027). Per-server, not global across all MCP servers.
 	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
+	// Approval is the per-server approval policy (ADR-029).
+	Approval *ApprovalPolicy `yaml:"approval,omitempty" json:"approval,omitempty"`
 }
 
 // AllowedTool is one entry in MCPServerGrant.AllowedTools (per ADR-024-A).

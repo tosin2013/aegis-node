@@ -26,7 +26,10 @@ x509-parser = "0.16"
 tiny_http = "0.12"
 rand = "0.8"
 hex = "0.4"
-uuid = { version = "1", features = ["v7"] }
+# ADR-029 task-scoped grant table — sha256(canonical args) is the
+# binding that lets identical retries auto-consume without re-prompting.
+sha2 = "0.10"
+uuid = { version = "1", features = ["v7", "serde"] }
 
 [dev-dependencies]
 tempfile = "3"

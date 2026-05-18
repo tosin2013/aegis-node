@@ -25,14 +25,18 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Command, Output};
 
+use std::time::{Duration, SystemTime};
+
 use aegis_access_log::{
     emit_access, emit_reasoning_step, AccessEvent, AccessType, ReasoningStepEvent,
 };
-use aegis_approval_gate::{ApprovalOutcome, ApprovalRequest, DEFAULT_TIMEOUT};
+use aegis_approval_gate::{
+    ApprovalGrant, ApprovalOutcome, ApprovalRequest, GrantDecision, DEFAULT_TIMEOUT,
+};
 use aegis_ledger_writer::{Entry, EntryType};
 use aegis_policy::{
     check_identity_binding,
-    manifest::{PreValidateClause, PreValidateKind},
+    manifest::{ApprovalPolicy, ApprovalTier, PreValidateClause, PreValidateKind},
     Decision, NetworkProto, ToolClass,
 };
 use chrono::Utc;
@@ -82,8 +86,16 @@ impl Session {
         self.rebind()?;
         let decision = self.policy().check_filesystem_read(path);
         let resource_uri = file_uri(path);
-        let decision =
-            self.route_through_approval(decision, &resource_uri, "read", reasoning_step_id)?;
+        let canonical_args = serde_json::json!({"path": path.display().to_string()});
+        let decision = self.route_through_approval(
+            decision,
+            &resource_uri,
+            "read",
+            reasoning_step_id,
+            ToolClass::Filesystem,
+            "filesystem__read",
+            &canonical_args,
+        )?;
         match decision {
             Decision::Allow => {
                 self.enforce_aggregate_quota(ToolClass::Filesystem, &resource_uri, "read")?;
@@ -118,8 +130,29 @@ impl Session {
             .policy()
             .check_filesystem_write(path, now, session_start);
         let resource_uri = file_uri(path);
-        let decision =
-            self.route_through_approval(decision, &resource_uri, "write", reasoning_step_id)?;
+        // Hash contents into the canonical arg signature so write
+        // grants don't auto-consume across changed bodies — same path
+        // + same bytes is the same operation; same path + new bytes
+        // is a fresh prompt.
+        let contents_hex = hex::encode({
+            use sha2::{Digest as _, Sha256};
+            let mut h = Sha256::new();
+            h.update(contents);
+            h.finalize()
+        });
+        let canonical_args = serde_json::json!({
+            "path": path.display().to_string(),
+            "contentsSha256": contents_hex,
+        });
+        let decision = self.route_through_approval(
+            decision,
+            &resource_uri,
+            "write",
+            reasoning_step_id,
+            ToolClass::Filesystem,
+            "filesystem__write",
+            &canonical_args,
+        )?;
         match decision {
             Decision::Allow => {
                 self.enforce_aggregate_quota(ToolClass::Filesystem, &resource_uri, "write")?;
@@ -153,8 +186,16 @@ impl Session {
             .policy()
             .check_filesystem_delete(path, now, session_start);
         let resource_uri = file_uri(path);
-        let decision =
-            self.route_through_approval(decision, &resource_uri, "delete", reasoning_step_id)?;
+        let canonical_args = serde_json::json!({"path": path.display().to_string()});
+        let decision = self.route_through_approval(
+            decision,
+            &resource_uri,
+            "delete",
+            reasoning_step_id,
+            ToolClass::Filesystem,
+            "filesystem__delete",
+            &canonical_args,
+        )?;
         match decision {
             Decision::Allow => {
                 self.enforce_aggregate_quota(ToolClass::Filesystem, &resource_uri, "delete")?;
@@ -186,18 +227,26 @@ impl Session {
         let initial = self.policy().check_network_outbound(host, port, proto);
         let was_approval_required = matches!(initial, Decision::RequireApproval { .. });
         let resource_uri = network_uri(host, port, proto);
-        let routed = self.route_through_approval(
-            initial,
-            &resource_uri,
-            "network_outbound",
-            reasoning_step_id,
-        );
         let proto_str = match proto {
             NetworkProto::Http => "http",
             NetworkProto::Https => "https",
             NetworkProto::Udp => "udp",
             NetworkProto::Tcp | NetworkProto::Any => "tcp",
         };
+        let canonical_args = serde_json::json!({
+            "host": host,
+            "port": port,
+            "protocol": proto_str,
+        });
+        let routed = self.route_through_approval(
+            initial,
+            &resource_uri,
+            "network_outbound",
+            reasoning_step_id,
+            ToolClass::Network,
+            "network__connect",
+            &canonical_args,
+        );
 
         let routed = match routed {
             Ok(d) => d,
@@ -463,8 +512,19 @@ impl Session {
         self.rebind()?;
         let decision = self.policy().check_exec(program);
         let resource_uri = format!("exec://{}", program.display());
-        let decision =
-            self.route_through_approval(decision, &resource_uri, "exec", reasoning_step_id)?;
+        let canonical_args = serde_json::json!({
+            "program": program.display().to_string(),
+            "args": args,
+        });
+        let decision = self.route_through_approval(
+            decision,
+            &resource_uri,
+            "exec",
+            reasoning_step_id,
+            ToolClass::Exec,
+            "exec__run",
+            &canonical_args,
+        )?;
         match decision {
             Decision::Allow => {
                 self.enforce_aggregate_quota(ToolClass::Exec, &resource_uri, "exec")?;
@@ -532,9 +592,16 @@ impl Session {
     }
 
     /// Route a `Decision::RequireApproval` through the configured F3
-    /// channel (TTY / file / future web UI). Emits the
-    /// ApprovalRequest → Granted/Rejected/TimedOut entry pair, returns:
+    /// channel (TTY / file / future web UI). Per ADR-029, the gate
+    /// now also consults the task-scoped grant table — identical
+    /// retries of `(tool_name, sha256(canonical_args))` within the
+    /// manifest-configured TTL auto-consume the prior decision
+    /// without re-prompting. Tier behavior (advisory/validating) is
+    /// applied per the manifest's `tools.<class>.approval` block;
+    /// blocking and escalating fall through to validating behavior
+    /// in the foundation PR.
     ///
+    /// Returns:
     /// - `Ok(Decision::Allow)` if granted (caller proceeds; will emit Access).
     /// - `Err(Error::Denied)` if rejected or timed out — already-emitted
     ///   ApprovalRejected/ApprovalTimedOut entry takes the place of a
@@ -543,17 +610,84 @@ impl Session {
     /// - `Ok(decision)` unchanged when the input isn't `RequireApproval`
     ///   or when no channel is configured (legacy halt-on-RequireApproval
     ///   behavior preserved for callers that opt out).
+    #[allow(clippy::too_many_arguments)]
     fn route_through_approval(
         &mut self,
         decision: Decision,
         resource_uri: &str,
         access_kind: &str,
         reasoning_step_id: Option<&str>,
+        tool_class: ToolClass,
+        tool_name: &str,
+        canonical_args: &Value,
     ) -> Result<Decision> {
         let summary = match &decision {
             Decision::RequireApproval { reason } => reason.clone(),
             _ => return Ok(decision),
         };
+
+        // ADR-029 §"Risk-tiered approval scopes" — pull the per-class
+        // tier and TTL once. Default to the legacy halt-and-prompt
+        // (Validating, 5-minute TTL) when the manifest doesn't declare
+        // an `approval` block.
+        let policy = self.approval_policy_for(&tool_class);
+        let tier = policy.map(|p| p.tier).unwrap_or_default();
+        let ttl = Duration::from_secs(
+            policy
+                .map(|p| p.grant_ttl_seconds)
+                .unwrap_or(DEFAULT_GRANT_TTL_SECS),
+        );
+
+        // Advisory: ADR-029 §"Risk-tiered approval scopes" —
+        // "Log to ledger, dispatch immediately. No prompt." Emit the
+        // approval_decision entry as audit then return Allow.
+        if matches!(tier, ApprovalTier::Advisory) {
+            self.emit_approval_decision_advisory(
+                tool_name,
+                canonical_args,
+                resource_uri,
+                access_kind,
+                reasoning_step_id,
+            )?;
+            return Ok(Decision::Allow);
+        }
+
+        // Foundation slice: Blocking and Escalating fall through to
+        // the Validating prompt flow. Behavior switching for them is
+        // tracked as a deferred follow-up — see ADR-029 §"Risk-tiered
+        // approval scopes" + PR #198 body.
+        let _ = ApprovalTier::Blocking;
+        let _ = ApprovalTier::Escalating;
+
+        // Consult the grant table BEFORE prompting. Live grant for
+        // identical (tool_name, canonical_args) within TTL: emit
+        // approval_decision (auto-consumed) and reuse the cached
+        // decision — Allow dispatches, Deny short-circuits with the
+        // original reason. We clone the few fields we need so the
+        // immutable lookup-borrow doesn't conflict with the mutable
+        // emit_* call below.
+        let maybe_grant = self
+            .grant_table
+            .lookup(tool_name, canonical_args, SystemTime::now())
+            .map(|g| (g.arg_hash_hex(), g.grant_id.to_string(), g.decision.clone()));
+        if let Some((arg_hash_hex, grant_id, cached)) = maybe_grant {
+            self.emit_approval_decision_auto_consumed(
+                tool_name,
+                resource_uri,
+                access_kind,
+                reasoning_step_id,
+                &grant_id,
+                &arg_hash_hex,
+                &cached,
+            )?;
+            return match cached {
+                GrantDecision::Allow => Ok(Decision::Allow),
+                GrantDecision::Deny { reason } => Err(Error::Denied {
+                    reason: format!("approval grant denied: {reason}"),
+                }),
+            };
+        }
+
         if self.approval_channel.is_none() {
             return Ok(decision);
         }
@@ -589,10 +723,28 @@ impl Session {
                 decided_at,
             } => {
                 self.emit_approval_granted(&req, &approver_identity, decided_at)?;
+                let grant = ApprovalGrant::allow(tool_name, canonical_args, ttl);
+                let grant_id = grant.grant_id.to_string();
+                let arg_hash_hex = grant.arg_hash_hex();
+                self.grant_table.insert(grant);
+                self.emit_approval_decision_granted(
+                    tool_name,
+                    resource_uri,
+                    access_kind,
+                    reasoning_step_id,
+                    &grant_id,
+                    &arg_hash_hex,
+                    &approver_identity,
+                    ttl.as_secs(),
+                )?;
                 Ok(Decision::Allow)
             }
             ApprovalOutcome::Rejected { reason, decided_at } => {
                 self.emit_approval_rejected(&req, &reason, decided_at)?;
+                // Cache the deny so identical retries within TTL
+                // short-circuit without re-asking the operator.
+                let grant = ApprovalGrant::deny(tool_name, canonical_args, ttl, reason.clone());
+                self.grant_table.insert(grant);
                 Err(Error::Denied {
                     reason: format!("approval rejected: {reason}"),
                 })
@@ -603,6 +755,26 @@ impl Session {
                     reason: "approval timed out".to_string(),
                 })
             }
+        }
+    }
+
+    /// Resolve the manifest's `tools.<class>.approval` policy block, if
+    /// present. Returns `None` when no block is declared for the
+    /// class, which the caller treats as the legacy halt-and-prompt
+    /// (Validating) default.
+    fn approval_policy_for(&self, class: &ToolClass) -> Option<&ApprovalPolicy> {
+        let m = self.policy().manifest();
+        match class {
+            ToolClass::Filesystem => m.tools.filesystem.as_ref()?.approval.as_ref(),
+            ToolClass::Network => m.tools.network.as_ref()?.approval.as_ref(),
+            ToolClass::Exec => m.tools.exec.as_ref()?.approval.as_ref(),
+            ToolClass::Mcp(server) => m
+                .tools
+                .mcp
+                .iter()
+                .find(|s| &s.server_name == server)?
+                .approval
+                .as_ref(),
         }
     }
 
@@ -735,7 +907,183 @@ impl Session {
         })?;
         Ok(())
     }
+
+    /// Emit an `approval_decision` entry for an advisory-tier dispatch
+    /// (ADR-029 §"Risk-tiered approval scopes"). No operator was
+    /// prompted; the entry is purely audit. Includes the canonical
+    /// arg hash so auditors can reconstruct exactly what was
+    /// auto-approved.
+    fn emit_approval_decision_advisory(
+        &mut self,
+        tool_name: &str,
+        canonical_args: &Value,
+        resource_uri: &str,
+        access_kind: &str,
+        reasoning_step_id: Option<&str>,
+    ) -> Result<()> {
+        let arg_hash_hex = hex::encode(aegis_approval_gate::canonical_arg_hash(canonical_args));
+        let agent_hash = self.agent_identity_hash();
+        let session_id = self.session_id().to_string();
+        let mut payload = Map::new();
+        payload.insert(
+            "decision".to_string(),
+            Value::String("auto_advisory".to_string()),
+        );
+        payload.insert("toolName".to_string(), Value::String(tool_name.to_string()));
+        payload.insert("grantArgHashHex".to_string(), Value::String(arg_hash_hex));
+        payload.insert(
+            "resourceUri".to_string(),
+            Value::String(resource_uri.to_string()),
+        );
+        payload.insert(
+            "accessType".to_string(),
+            Value::String(access_kind.to_string()),
+        );
+        if let Some(rsid) = reasoning_step_id {
+            payload.insert(
+                "reasoningStepId".to_string(),
+                Value::String(rsid.to_string()),
+            );
+        }
+        self.ledger_writer_mut().append(Entry {
+            session_id,
+            entry_type: EntryType::ApprovalDecision,
+            agent_identity_hash: agent_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    /// Emit an `approval_decision` entry for an auto-consumed grant
+    /// (ADR-029 §"Auto-consumption rules"). References the source
+    /// grant id so an auditor can trace every silent retry back to
+    /// the original operator decision.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_approval_decision_auto_consumed(
+        &mut self,
+        tool_name: &str,
+        resource_uri: &str,
+        access_kind: &str,
+        reasoning_step_id: Option<&str>,
+        grant_id: &str,
+        arg_hash_hex: &str,
+        cached: &GrantDecision,
+    ) -> Result<()> {
+        let agent_hash = self.agent_identity_hash();
+        let session_id = self.session_id().to_string();
+        let outcome = match cached {
+            GrantDecision::Allow => "auto_consumed_allow",
+            GrantDecision::Deny { .. } => "auto_consumed_deny",
+        };
+        let mut payload = Map::new();
+        payload.insert("decision".to_string(), Value::String(outcome.to_string()));
+        payload.insert("toolName".to_string(), Value::String(tool_name.to_string()));
+        payload.insert(
+            "sourceGrantId".to_string(),
+            Value::String(grant_id.to_string()),
+        );
+        payload.insert(
+            "grantArgHashHex".to_string(),
+            Value::String(arg_hash_hex.to_string()),
+        );
+        payload.insert(
+            "resourceUri".to_string(),
+            Value::String(resource_uri.to_string()),
+        );
+        payload.insert(
+            "accessType".to_string(),
+            Value::String(access_kind.to_string()),
+        );
+        if let Some(rsid) = reasoning_step_id {
+            payload.insert(
+                "reasoningStepId".to_string(),
+                Value::String(rsid.to_string()),
+            );
+        }
+        if let GrantDecision::Deny { reason } = cached {
+            payload.insert("denyReason".to_string(), Value::String(reason.clone()));
+        }
+        self.ledger_writer_mut().append(Entry {
+            session_id,
+            entry_type: EntryType::ApprovalDecision,
+            agent_identity_hash: agent_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    /// Emit an `approval_decision` entry for a freshly-granted
+    /// approval (ADR-029). Pairs with the existing `approval_granted`
+    /// entry: that one records the operator's decision, this one
+    /// records the issued grant so subsequent auto-consumes can chain
+    /// to it via `sourceGrantId`.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_approval_decision_granted(
+        &mut self,
+        tool_name: &str,
+        resource_uri: &str,
+        access_kind: &str,
+        reasoning_step_id: Option<&str>,
+        grant_id: &str,
+        arg_hash_hex: &str,
+        approver_identity: &str,
+        ttl_seconds: u64,
+    ) -> Result<()> {
+        let agent_hash = self.agent_identity_hash();
+        let session_id = self.session_id().to_string();
+        let mut payload = Map::new();
+        payload.insert(
+            "decision".to_string(),
+            Value::String("grant_issued".to_string()),
+        );
+        payload.insert("toolName".to_string(), Value::String(tool_name.to_string()));
+        payload.insert(
+            "sourceGrantId".to_string(),
+            Value::String(grant_id.to_string()),
+        );
+        payload.insert(
+            "grantArgHashHex".to_string(),
+            Value::String(arg_hash_hex.to_string()),
+        );
+        payload.insert(
+            "grantTtlSeconds".to_string(),
+            Value::Number(ttl_seconds.into()),
+        );
+        payload.insert(
+            "approverId".to_string(),
+            Value::String(approver_identity.to_string()),
+        );
+        payload.insert(
+            "resourceUri".to_string(),
+            Value::String(resource_uri.to_string()),
+        );
+        payload.insert(
+            "accessType".to_string(),
+            Value::String(access_kind.to_string()),
+        );
+        if let Some(rsid) = reasoning_step_id {
+            payload.insert(
+                "reasoningStepId".to_string(),
+                Value::String(rsid.to_string()),
+            );
+        }
+        self.ledger_writer_mut().append(Entry {
+            session_id,
+            entry_type: EntryType::ApprovalDecision,
+            agent_identity_hash: agent_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
 }
+
+/// Default grant TTL when `tools.<class>.approval.grant_ttl_seconds`
+/// is not declared in the manifest. Matches the ADR-029 default of
+/// 5 minutes.
+const DEFAULT_GRANT_TTL_SECS: u64 = 300;
 
 fn file_uri(path: &Path) -> String {
     if path.is_absolute() {

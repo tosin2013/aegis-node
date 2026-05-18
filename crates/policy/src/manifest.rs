@@ -110,6 +110,11 @@ pub struct Filesystem {
     /// (ADR-027). `None` = no aggregate cap.
     #[serde(default)]
     pub quota: Option<AggregateQuota>,
+    /// Per-tool-class approval policy (ADR-029). `None` falls back to
+    /// the legacy `approval_required_for` semantics — i.e., effectively
+    /// [`ApprovalTier::Validating`].
+    #[serde(default)]
+    pub approval: Option<ApprovalPolicy>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -123,17 +128,24 @@ pub struct Network {
     /// `None` = no aggregate cap.
     #[serde(default)]
     pub quota: Option<AggregateQuota>,
+    /// Per-tool-class approval policy (ADR-029). `None` falls back to
+    /// the legacy `approval_required_for` semantics.
+    #[serde(default)]
+    pub approval: Option<ApprovalPolicy>,
 }
 
-/// Exec-tool-class settings (ADR-027). Currently carries the
-/// aggregate quota only — per-grant rules stay in [`Manifest::exec_grants`]
-/// to avoid restructuring the manifest in the foundation PR.
+/// Exec-tool-class settings (ADR-027 + ADR-029). Carries the aggregate
+/// quota and the approval policy — per-grant rules stay in
+/// [`Manifest::exec_grants`] to avoid restructuring the manifest.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Exec {
     /// Per-session aggregate quota for exec dispatches.
     #[serde(default)]
     pub quota: Option<AggregateQuota>,
+    /// Per-tool-class approval policy (ADR-029).
+    #[serde(default)]
+    pub approval: Option<ApprovalPolicy>,
 }
 
 /// Per-session aggregate quota for a tool class (ADR-027). All fields
@@ -154,6 +166,54 @@ pub struct AggregateQuota {
     /// `None` = no cap on call count.
     #[serde(default, rename = "max_calls_per_session")]
     pub max_calls_per_session: Option<u64>,
+}
+
+/// Per-tool-class approval policy (ADR-029 task-scoped ephemeral
+/// grants). `tier` selects the gate's behavior on
+/// `Decision::RequireApproval`; `grant_ttl_seconds` controls how long
+/// an issued grant auto-consumes identical retries before re-prompting.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalPolicy {
+    /// Risk tier for this tool class. Default = [`ApprovalTier::Validating`]
+    /// when the block is present but `tier` omitted; matches today's
+    /// halt-and-prompt behavior.
+    #[serde(default)]
+    pub tier: ApprovalTier,
+    /// TTL of an issued grant in seconds. The grant auto-consumes
+    /// identical retries (same tool, same canonical args hash) within
+    /// this window without re-prompting. Default = 300 (5 minutes) per
+    /// ADR-029 §"Auto-consumption rules".
+    #[serde(default = "default_grant_ttl_seconds", rename = "grant_ttl_seconds")]
+    pub grant_ttl_seconds: u64,
+}
+
+fn default_grant_ttl_seconds() -> u64 {
+    300
+}
+
+/// Risk-tiered approval scopes (ADR-029 §"Risk-tiered approval scopes").
+/// Foundation wires only `Advisory` and `Validating`; `Blocking` and
+/// `Escalating` are recognized in the type system and round-trip
+/// through the manifest, but the runtime currently treats them as
+/// `Validating` (deferred follow-up — called out in PR #198 body).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalTier {
+    /// Log to ledger, dispatch immediately. No prompt. For low-risk
+    /// read-only actions where audit is sufficient.
+    Advisory,
+    /// Standard approval prompt on the configured channel. Today's
+    /// default behavior. Required by default for write/exec.
+    #[default]
+    Validating,
+    /// Hard deny with no approval path. For tools the manifest reaches
+    /// but the operator never wants the agent to use under any
+    /// circumstances. **Foundation: treated as `Validating`.**
+    Blocking,
+    /// Routes the approval prompt to a secondary channel
+    /// (e.g., mTLS+webhook). **Foundation: treated as `Validating`.**
+    Escalating,
 }
 
 /// `oneOf {string, object}` from the schema.
@@ -213,6 +273,11 @@ pub struct McpServerGrant {
     /// limit calls to `search-mcp`.
     #[serde(default)]
     pub quota: Option<AggregateQuota>,
+    /// Per-server approval policy (ADR-029). One tier covers all
+    /// `allowed_tools` for this server in the foundation slice;
+    /// per-tool tiers are a follow-up.
+    #[serde(default)]
+    pub approval: Option<ApprovalPolicy>,
 }
 
 /// One entry in [`McpServerGrant::allowed_tools`]. Two shapes are

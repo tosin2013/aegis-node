@@ -55,6 +55,27 @@ When a breaking change is genuinely required:
 
 There is no plan to retire `v1` once `v2` ships. Removal would itself be a breaking change against deployed audit evidence.
 
+## Approval grants (ADR-029)
+
+[ADR-029](adrs/029-task-scoped-ephemeral-approval-grants.md) evolves the F3 approval gate from per-call prompts to **task-scoped ephemeral grants**. The manifest gains an optional `tools.<class>.approval` block with a `tier` enum and a `grant_ttl_seconds` budget. The schema bump is **non-breaking**: every existing manifest behaves exactly as before (effectively `tier: validating` + a 5-minute default TTL when the block is absent).
+
+**Forbid-overrides-permit + audit-by-default.** Every approval decision lands on the F9 ledger as both the legacy `approval_granted` / `approval_rejected` entry (operator's raw decision) and a new `approval_decision` entry (the grant lifecycle: `grant_issued`, `auto_consumed_allow`, `auto_consumed_deny`, `auto_advisory`). Auditors can chart every silent retry back to the original prompt via `sourceGrantId`.
+
+**Auto-consume binding.** Grants bind to `(tool_name, sha256(canonical_args))`. Identical retries within TTL skip the prompt; **argument drift voids the match** (different args → fresh prompt). This is what defeats the "approve once, attacker mutates args" attack ADR-029 §"Context" calls out.
+
+**Foundation slice.** Wires `advisory` (no prompt, log + dispatch) and `validating` (today's prompt behavior, plus the grant table). `blocking` and `escalating` are recognized in the manifest + type system but **treated as `validating`** for now — their distinct behaviors are deferred follow-ups.
+
+**Intentionally deferred (file as separate issues when picked up):**
+
+- Session pause/resume for headless mTLS async approvals (sidecar serialization, `aegis run --resume`, encrypted state).
+- `blocking` tier's hard-deny behavior (the most security-relevant tier left unwired).
+- `escalating` tier's secondary-channel routing.
+- Aggregate-state visibility in the TTY prompt text (ADR-029 §"Visibility into aggregate state").
+- `aegis revoke <session-id> <grant-id>` for early grant revocation.
+- F8 replay viewer rendering of `approval_decision` entries with grant lineage.
+- Go validator behavioral parity for `tier` (parse parity already in via `ApprovalPolicy`).
+- Cross-language conformance fixtures for the new manifest + canonical-args hash.
+
 ## Per-turn workload attestation (ADR-030)
 
 [ADR-030](adrs/030-per-turn-spiffe-mtls-attestation.md) introduces fresh, short-lived SVIDs at every turn boundary in the multi-turn loop. The session-long SVID minted at `Session::boot` is **unchanged** — it still binds the agent's identity for non-turn paths (single-turn `run_turn`, mediator calls outside the loop).
