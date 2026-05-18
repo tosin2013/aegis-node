@@ -6,8 +6,8 @@ use std::fs;
 use std::io::Write;
 
 use aegis_ledger_writer::{
-    verify_file, verify_reader, Entry, EntryType, LedgerWriter, VerifyBreak, VerifyError,
-    GENESIS_PREV_HASH,
+    verify_file, verify_reader, Entry, EntryType, LedgerSchemaVersion, LedgerWriter, VerifyBreak,
+    VerifyError, GENESIS_PREV_HASH,
 };
 use chrono::{TimeZone, Utc};
 use serde_json::{Map, Value};
@@ -25,9 +25,13 @@ fn fixed_uuids() -> Box<dyn FnMut() -> Uuid + Send> {
 }
 
 fn write_three_entries(path: &std::path::Path) -> [u8; 32] {
-    let mut writer =
-        LedgerWriter::create_with_uuid_generator(path, "session-verify".to_string(), fixed_uuids())
-            .unwrap();
+    let mut writer = LedgerWriter::create_with_uuid_generator(
+        path,
+        "session-verify".to_string(),
+        fixed_uuids(),
+        LedgerSchemaVersion::V1,
+    )
+    .unwrap();
     let ts = Utc.with_ymd_and_hms(2026, 4, 28, 0, 0, 0).unwrap();
     let agent_hash = [0xAAu8; 32];
     for i in 0..3u64 {
@@ -161,6 +165,77 @@ fn detects_invalid_json() {
         err,
         VerifyError::Break(VerifyBreak::InvalidJson { line: 0, .. })
     ));
+}
+
+/// ADR-026 §"Schema-version bump policy" — readers detect the
+/// version on line 0 and pin; any subsequent line carrying a
+/// different `@context` is a chain-break.
+#[test]
+fn mixing_v1_and_v2_contexts_within_one_ledger_is_a_break() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mixed.jsonl");
+    let _ = write_three_entries(&path);
+
+    let v1_url = "https://aegis-node.dev/schemas/ledger/v1";
+    let v2_url = "https://aegis-node.dev/schemas/ledger/v2";
+
+    let original = fs::read_to_string(&path).unwrap();
+    let mut lines: Vec<String> = original.lines().map(|s| s.to_string()).collect();
+    // Swap the second line's @context to v2 — chain integrity stays
+    // intact (we don't touch prevHash because the line bytes change,
+    // which also breaks the hash chain; that's fine — the BadContext
+    // break should fire first because it's checked before prevHash).
+    lines[1] = lines[1].replacen(v1_url, v2_url, 1);
+    let mut f = fs::File::create(&path).unwrap();
+    for line in &lines {
+        f.write_all(line.as_bytes()).unwrap();
+        f.write_all(b"\n").unwrap();
+    }
+    drop(f);
+
+    let err = verify_file(&path).unwrap_err();
+    let break_ = match err {
+        VerifyError::Break(b) => b,
+        other => panic!("expected Break, got {other:?}"),
+    };
+    assert!(
+        matches!(break_, VerifyBreak::BadContext { line: 1, .. }),
+        "expected BadContext at line 1, got {break_:?}"
+    );
+}
+
+/// A v2 ledger verifies clean and reports `schema_version: Some(V2)`
+/// on the summary. Catches plumbing regressions on the verifier's
+/// version-detection path.
+#[test]
+fn v2_ledger_verifies_and_reports_schema_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("v2.jsonl");
+    let mut writer = LedgerWriter::create_with_uuid_generator(
+        &path,
+        "session-v2".to_string(),
+        fixed_uuids(),
+        LedgerSchemaVersion::V2,
+    )
+    .unwrap();
+    let ts = Utc.with_ymd_and_hms(2026, 5, 18, 0, 0, 0).unwrap();
+    let agent_hash = [0xCCu8; 32];
+    let mut p = Map::new();
+    p.insert("idx".to_string(), Value::Number(0.into()));
+    writer
+        .append(Entry {
+            session_id: "session-v2".to_string(),
+            entry_type: EntryType::TurnStart,
+            agent_identity_hash: agent_hash,
+            timestamp: ts,
+            payload: p,
+        })
+        .unwrap();
+    let _ = writer.close().unwrap();
+
+    let summary = verify_file(&path).expect("v2 verifies");
+    assert_eq!(summary.schema_version, Some(LedgerSchemaVersion::V2));
+    assert_eq!(summary.entry_count, 1);
 }
 
 #[test]

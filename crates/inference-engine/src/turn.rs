@@ -37,6 +37,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use aegis_ledger_writer::LedgerSchemaVersion;
+use sha2::{Digest as _, Sha256};
+
 use crate::adversarial::{ClassifierVerdict, ToolOrigin};
 use crate::backend::{ChatMessage, ChatRole, InferRequest, ToolCall, ToolDecl};
 use crate::error::{Error, Result};
@@ -219,7 +222,9 @@ impl Session {
             role: ChatRole::User,
             content: user_message.to_string(),
         }];
-        let (outcome, _tokens) = self.run_one_turn(&messages, user_message)?;
+        // Single-turn legacy path does not emit v2 per-turn entries —
+        // turn_number is None to signal that to `run_one_turn`.
+        let (outcome, _tokens) = self.run_one_turn(&messages, user_message, None)?;
         Ok(outcome)
     }
 
@@ -263,6 +268,7 @@ impl Session {
         }];
         let mut turns: Vec<TurnOutcome> = Vec::with_capacity(limits.max_turns as usize);
         let mut tokens_consumed: u64 = 0;
+        let v2 = self.schema_version() == LedgerSchemaVersion::V2;
 
         // The driver runs as a for-loop with explicit cap checks at
         // the top so the bounds are visible without grep'ing for
@@ -294,8 +300,18 @@ impl Session {
                 )?);
             }
 
-            let (mut outcome, used) = self.run_one_turn(&messages, prompt)?;
-            tokens_consumed = tokens_consumed.saturating_add(used.unwrap_or(0));
+            // v2 turn_start lands *before* `run_one_turn` so the
+            // reasoning_step + tool_call/tool_result entries the inner
+            // dispatch emits all parent-by-position to this turn_start
+            // in the ledger stream.
+            if v2 {
+                let ctx_hex = sha256_hex_of_messages(&messages);
+                self.write_turn_start(turn_index, &ctx_hex)?;
+            }
+
+            let (mut outcome, used) = self.run_one_turn(&messages, prompt, Some(turn_index))?;
+            let tokens_this_turn = used.unwrap_or(0);
+            tokens_consumed = tokens_consumed.saturating_add(tokens_this_turn);
             let no_tool_calls = outcome.tool_calls.is_empty();
 
             // ADR-028 adversarial pre-filter — classify every tool
@@ -375,6 +391,16 @@ impl Session {
             }
             turns.push(outcome);
 
+            // v2 turn_end after the dispatch round + adversarial
+            // emissions, before the loop control decides whether to
+            // re-enter. On clean termination we return *after*
+            // emitting turn_end so the ledger always brackets the
+            // final turn.
+            if v2 {
+                let wallclock_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                self.write_turn_end(turn_index, None, used, tokens_consumed, wallclock_ms)?;
+            }
+
             if no_tool_calls {
                 // Clean termination: the model produced text and no
                 // tool calls — the task is its own answer.
@@ -407,6 +433,7 @@ impl Session {
         &mut self,
         messages: &[ChatMessage],
         original_prompt: &str,
+        turn_number: Option<u32>,
     ) -> Result<(TurnOutcome, Option<u64>)> {
         let tools = self.tool_catalog();
 
@@ -431,9 +458,31 @@ impl Session {
         )?;
         let step_id = step_uuid.to_string();
 
+        // v2 per-turn entries fire only on the multi-turn path AND only
+        // when the ledger itself is v2. Both conditions must hold —
+        // emitting tool_call/tool_result on a v1 ledger would taint
+        // the chain with entry types v1 readers don't recognize as
+        // turn-scoped.
+        let emit_v2_entries =
+            turn_number.is_some() && self.schema_version() == LedgerSchemaVersion::V2;
+
         let mut outcomes = Vec::with_capacity(response.tool_calls.len());
-        for call in response.tool_calls {
+        for (call_index, call) in response.tool_calls.into_iter().enumerate() {
+            if emit_v2_entries {
+                let turn_n = turn_number.unwrap_or(0);
+                let tool_call_id = format!("turn-{turn_n}-call-{call_index}");
+                let origin = crate::turn::origin_of(&call.name);
+                let args_hex = sha256_hex_of_json(&call.arguments);
+                self.write_tool_call_entry(turn_n, &tool_call_id, &call.name, &origin, &args_hex)?;
+            }
             let outcome = self.dispatch_tool_call(call, Some(&step_id))?;
+            if emit_v2_entries {
+                let turn_n = turn_number.unwrap_or(0);
+                let tool_call_id = format!("turn-{turn_n}-call-{call_index}");
+                let result_value = tool_call_result_to_value(&outcome.result);
+                let result_hex = sha256_hex_of_json(&result_value);
+                self.write_tool_result_entry(turn_n, &tool_call_id, &result_hex, result_value)?;
+            }
             outcomes.push(outcome);
         }
 
@@ -846,6 +895,32 @@ fn u16_arg(args: &serde_json::Value, key: &str) -> Result<u16> {
 /// Format an MCP tool's qualified name for the LLM catalog.
 pub(crate) fn format_mcp_name(server: &str, tool: &str) -> String {
     format!("{server}__{tool}")
+}
+
+/// SHA-256 of the canonical serialization of a [`serde_json::Value`].
+/// Used by the v2 ledger path to hash tool-call args and tool-result
+/// payloads into `tool_call.requestArgsHex` / `tool_result.resultHashHex`.
+///
+/// `serde_json::Map` is backed by `BTreeMap` in this build (no
+/// `preserve_order` feature), so `to_string` is byte-deterministic
+/// across runs and across reimplementations of the verifier in other
+/// languages.
+fn sha256_hex_of_json(value: &serde_json::Value) -> String {
+    let canonical = serde_json::to_string(value).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// SHA-256 of the canonical serialization of a chat-message slice.
+/// Used by the v2 ledger path to populate `turn_start.contextDigestHex`
+/// so F8 replay can detect a manifest mutation or message-history
+/// tampering between turns.
+fn sha256_hex_of_messages(messages: &[ChatMessage]) -> String {
+    let canonical = serde_json::to_string(messages).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 /// Inverse of [`format_mcp_name`]. Returns `None` when the name

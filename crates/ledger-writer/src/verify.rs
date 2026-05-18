@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::{hash_line, GENESIS_PREV_HASH, LEDGER_CONTEXT};
+use crate::{hash_line, LedgerSchemaVersion, GENESIS_PREV_HASH, LEDGER_CONTEXT, LEDGER_CONTEXT_V2};
 
 /// Successful verification: chain intact, all entries well-formed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +30,9 @@ pub struct VerifySummary {
     pub root_hash_hex: String,
     pub first_timestamp: Option<DateTime<Utc>>,
     pub last_timestamp: Option<DateTime<Utc>>,
+    /// Schema version detected from the first entry's `@context` URL.
+    /// `None` for an empty ledger.
+    pub schema_version: Option<LedgerSchemaVersion>,
 }
 
 /// Concrete reason the chain is broken. `line` is the 0-indexed line in
@@ -106,6 +109,11 @@ pub fn verify_file<P: AsRef<Path>>(path: P) -> Result<VerifySummary, VerifyError
 
 /// Verify a ledger from any [`BufRead`]. Streams line-by-line; suitable
 /// for very large ledgers without loading everything into memory.
+///
+/// Schema version is detected on line 0 (from the `@context` URL); every
+/// subsequent line must match. Mixing v1 + v2 contexts within one file
+/// returns a [`VerifyBreak::BadContext`] error pointing at the first
+/// non-matching line.
 pub fn verify_reader<R: BufRead>(mut reader: R) -> Result<VerifySummary, VerifyError> {
     let mut line_buf = String::new();
     let mut prev_hash = GENESIS_PREV_HASH;
@@ -113,6 +121,7 @@ pub fn verify_reader<R: BufRead>(mut reader: R) -> Result<VerifySummary, VerifyE
     let mut session_id: Option<String> = None;
     let mut first_ts: Option<DateTime<Utc>> = None;
     let mut last_ts: Option<DateTime<Utc>> = None;
+    let mut detected_version: Option<LedgerSchemaVersion> = None;
 
     loop {
         line_buf.clear();
@@ -133,11 +142,25 @@ pub fn verify_reader<R: BufRead>(mut reader: R) -> Result<VerifySummary, VerifyE
         })?;
 
         let ctx = required_str(&v, "@context", line_idx)?;
-        if ctx != LEDGER_CONTEXT {
-            return Err(VerifyError::Break(VerifyBreak::BadContext {
-                line: line_idx,
-                got: ctx.to_string(),
-            }));
+        let line_version = match ctx {
+            LEDGER_CONTEXT => LedgerSchemaVersion::V1,
+            LEDGER_CONTEXT_V2 => LedgerSchemaVersion::V2,
+            _ => {
+                return Err(VerifyError::Break(VerifyBreak::BadContext {
+                    line: line_idx,
+                    got: ctx.to_string(),
+                }));
+            }
+        };
+        match detected_version {
+            None => detected_version = Some(line_version),
+            Some(pinned) if pinned != line_version => {
+                return Err(VerifyError::Break(VerifyBreak::BadContext {
+                    line: line_idx,
+                    got: ctx.to_string(),
+                }));
+            }
+            _ => {}
         }
 
         let sid = required_str(&v, "sessionId", line_idx)?;
@@ -208,6 +231,7 @@ pub fn verify_reader<R: BufRead>(mut reader: R) -> Result<VerifySummary, VerifyE
         root_hash_hex: hex::encode(prev_hash),
         first_timestamp: first_ts,
         last_timestamp: last_ts,
+        schema_version: detected_version,
     })
 }
 

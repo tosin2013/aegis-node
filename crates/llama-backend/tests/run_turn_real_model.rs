@@ -86,6 +86,7 @@ tools: {}
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
         ledger_path: dir.path().join("ledger.jsonl"),
+        ledger_schema: None,
     };
     let session = Session::boot(cfg).expect("boot");
     let mut session = session.with_loaded_model(model);

@@ -4,7 +4,9 @@
 
 use std::fs;
 
-use aegis_ledger_writer::{hash_line, Entry, EntryType, Error, LedgerWriter, GENESIS_PREV_HASH};
+use aegis_ledger_writer::{
+    hash_line, Entry, EntryType, Error, LedgerSchemaVersion, LedgerWriter, GENESIS_PREV_HASH,
+};
 use chrono::{TimeZone, Utc};
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -27,9 +29,13 @@ fn writes_and_chains_entries_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session-test.jsonl");
 
-    let mut writer =
-        LedgerWriter::create_with_uuid_generator(&path, "session-test".to_string(), fixed_uuids())
-            .unwrap();
+    let mut writer = LedgerWriter::create_with_uuid_generator(
+        &path,
+        "session-test".to_string(),
+        fixed_uuids(),
+        LedgerSchemaVersion::V1,
+    )
+    .unwrap();
 
     let ts = Utc.with_ymd_and_hms(2026, 4, 27, 22, 0, 0).unwrap();
 
@@ -183,6 +189,7 @@ fn run_fixture() -> [u8; 32] {
         &path,
         "session-fixture".to_string(),
         fixed_uuids(),
+        LedgerSchemaVersion::V1,
     )
     .unwrap();
 

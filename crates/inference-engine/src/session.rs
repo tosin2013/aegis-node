@@ -19,7 +19,7 @@ use aegis_identity::{
     verify_chat_template_binding, verify_digest_binding, Digest, DigestField, DigestTriple,
     LocalCa, SpiffeId,
 };
-use aegis_ledger_writer::{Entry, EntryType, LedgerWriter};
+use aegis_ledger_writer::{Entry, EntryType, LedgerSchemaVersion, LedgerWriter};
 use aegis_mcp_client::McpClient;
 use aegis_policy::Policy;
 use chrono::{DateTime, Utc};
@@ -49,6 +49,11 @@ pub struct BootConfig {
     pub workload_name: String,
     pub instance: String,
     pub ledger_path: PathBuf,
+    /// Ledger schema version (ADR-026). `None` means the default
+    /// ([`LedgerSchemaVersion::V1`]) — existing callers stay on v1
+    /// without churn. New callers opt in to v2 by setting
+    /// `Some(LedgerSchemaVersion::V2)`.
+    pub ledger_schema: Option<LedgerSchemaVersion>,
 }
 
 /// Live agent session: compiled policy, open ledger, issued SVID, the
@@ -207,7 +212,12 @@ impl Session {
 
         let agent_identity_hash = sha256_bytes(svid.spiffe_id.uri().as_bytes());
 
-        let mut ledger = LedgerWriter::create(&cfg.ledger_path, cfg.session_id.clone())?;
+        let schema_version = cfg.ledger_schema.unwrap_or_default();
+        let mut ledger = LedgerWriter::create_with_version(
+            &cfg.ledger_path,
+            cfg.session_id.clone(),
+            schema_version,
+        )?;
 
         let mut payload = Map::new();
         payload.insert("spiffeId".to_string(), Value::String(svid.spiffe_id.uri()));
@@ -333,6 +343,172 @@ impl Session {
 
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Ledger schema version this session is writing under (ADR-026).
+    /// Determines whether the multi-turn driver emits v2 `turn_start` /
+    /// `turn_end` / `tool_call` / `tool_result` entries.
+    pub fn schema_version(&self) -> LedgerSchemaVersion {
+        self.ledger.schema_version()
+    }
+
+    /// Write a `turn_start` entry (v2, ADR-026 §"Per-turn entry sequence").
+    /// Records the turn number, the bound model digest, and a SHA-256
+    /// of the canonical-serialized input context so F8 replay can
+    /// detect mid-session context tampering. Caller is responsible for
+    /// only invoking this on v2 ledgers — emitting it on a v1 file
+    /// would taint the chain with an entry type v1 consumers don't
+    /// expect.
+    pub(crate) fn write_turn_start(
+        &mut self,
+        turn_number: u32,
+        context_digest_hex: &str,
+    ) -> Result<()> {
+        let mut payload = Map::new();
+        payload.insert("turnNumber".to_string(), Value::Number(turn_number.into()));
+        payload.insert(
+            "modelDigestHex".to_string(),
+            Value::String(hex::encode(self.bound_digests.model.0)),
+        );
+        payload.insert(
+            "contextDigestHex".to_string(),
+            Value::String(context_digest_hex.to_string()),
+        );
+        self.ledger.append(Entry {
+            session_id: self.session_id.clone(),
+            entry_type: EntryType::TurnStart,
+            agent_identity_hash: self.agent_identity_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    /// Write a `turn_end` entry (v2). Closes a turn with cumulative
+    /// usage counters. `quotaSnapshots` lives in ADR-027 territory and
+    /// is emitted as an empty array for now — the field is reserved
+    /// and won't reshape when [#183](https://github.com/tosin2013/aegis-node/issues/183) lands.
+    pub(crate) fn write_turn_end(
+        &mut self,
+        turn_number: u32,
+        tokens_in: Option<u64>,
+        tokens_out: Option<u64>,
+        tokens_cumulative: u64,
+        wallclock_ms_cumulative: u64,
+    ) -> Result<()> {
+        let mut payload = Map::new();
+        payload.insert("turnNumber".to_string(), Value::Number(turn_number.into()));
+        if let Some(t) = tokens_in {
+            payload.insert("tokensIn".to_string(), Value::Number(t.into()));
+        }
+        if let Some(t) = tokens_out {
+            payload.insert("tokensOut".to_string(), Value::Number(t.into()));
+        }
+        payload.insert(
+            "tokensCumulative".to_string(),
+            Value::Number(tokens_cumulative.into()),
+        );
+        payload.insert(
+            "wallclockMsCumulative".to_string(),
+            Value::Number(wallclock_ms_cumulative.into()),
+        );
+        payload.insert("quotaSnapshots".to_string(), Value::Array(Vec::new()));
+        self.ledger.append(Entry {
+            session_id: self.session_id.clone(),
+            entry_type: EntryType::TurnEnd,
+            agent_identity_hash: self.agent_identity_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    /// Write a `tool_call` entry (v2). Records that the model elected
+    /// to invoke `tool_name` with `arguments` during the given turn.
+    /// `request_args_hex` is the SHA-256 of the canonical-serialized
+    /// arguments — F8 replay matches calls to results without storing
+    /// the args twice in the chain.
+    pub(crate) fn write_tool_call_entry(
+        &mut self,
+        turn_number: u32,
+        tool_call_id: &str,
+        tool_name: &str,
+        tool_origin: &crate::adversarial::ToolOrigin,
+        request_args_hex: &str,
+    ) -> Result<()> {
+        let mut payload = Map::new();
+        payload.insert("turnNumber".to_string(), Value::Number(turn_number.into()));
+        payload.insert(
+            "toolCallId".to_string(),
+            Value::String(tool_call_id.to_string()),
+        );
+        payload.insert("toolName".to_string(), Value::String(tool_name.to_string()));
+        payload.insert(
+            "toolOrigin".to_string(),
+            Value::String(tool_origin.to_string()),
+        );
+        payload.insert(
+            "requestArgsHex".to_string(),
+            Value::String(request_args_hex.to_string()),
+        );
+        self.ledger.append(Entry {
+            session_id: self.session_id.clone(),
+            entry_type: EntryType::ToolCall,
+            agent_identity_hash: self.agent_identity_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    /// Write a `tool_result` entry (v2). Pairs with a prior `tool_call`
+    /// via `tool_call_id`. Stores the result inline when ≤32 KB,
+    /// otherwise stores only the hash + a sidecar `resultPayloadRef`.
+    /// Sidecar emission itself is deferred (ADR-026 follow-up); the
+    /// 32 KB threshold is enforced here so existing tests don't bloat
+    /// ledger files.
+    pub(crate) fn write_tool_result_entry(
+        &mut self,
+        turn_number: u32,
+        tool_call_id: &str,
+        result_hash_hex: &str,
+        result_payload: serde_json::Value,
+    ) -> Result<()> {
+        const INLINE_THRESHOLD_BYTES: usize = 32 * 1024;
+        let mut payload = Map::new();
+        payload.insert("turnNumber".to_string(), Value::Number(turn_number.into()));
+        payload.insert(
+            "toolCallId".to_string(),
+            Value::String(tool_call_id.to_string()),
+        );
+        payload.insert(
+            "resultHashHex".to_string(),
+            Value::String(result_hash_hex.to_string()),
+        );
+        let approx_size = serde_json::to_string(&result_payload)
+            .map(|s| s.len())
+            .unwrap_or(usize::MAX);
+        if approx_size <= INLINE_THRESHOLD_BYTES {
+            payload.insert("resultPayload".to_string(), result_payload);
+        } else {
+            // Sidecar mechanism is deferred (ADR-026 follow-up). For
+            // now drop the inline payload and record the hash + a
+            // marker that downstream tooling can detect. This keeps
+            // chain integrity while signalling "blob too large to
+            // inline; sidecar emission TODO".
+            payload.insert(
+                "resultPayloadRef".to_string(),
+                Value::String(format!("pending-sidecar:{result_hash_hex}.{approx_size}b")),
+            );
+        }
+        self.ledger.append(Entry {
+            session_id: self.session_id.clone(),
+            entry_type: EntryType::ToolResult,
+            agent_identity_hash: self.agent_identity_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
     }
 
     /// Append an `AdversarialContent` Violation to the F9 ledger

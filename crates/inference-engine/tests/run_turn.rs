@@ -112,6 +112,7 @@ fn boot_session(dir: &Path, ca_dir: &Path) -> Session {
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
         ledger_path,
+        ledger_schema: None,
     };
     Session::boot(cfg).unwrap()
 }
@@ -345,6 +346,7 @@ fn boot_session_with_manifest(
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
         ledger_path,
+        ledger_schema: None,
     };
     Session::boot(cfg).unwrap()
 }
@@ -556,6 +558,7 @@ tools:
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
         ledger_path: dir.path().join("ledger.jsonl"),
+        ledger_schema: None,
     };
     let err = Session::boot(cfg).unwrap_err();
     assert!(
