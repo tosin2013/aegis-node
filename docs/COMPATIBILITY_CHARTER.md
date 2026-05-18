@@ -55,6 +55,18 @@ When a breaking change is genuinely required:
 
 There is no plan to retire `v1` once `v2` ships. Removal would itself be a breaking change against deployed audit evidence.
 
+## Aggregate quotas (ADR-027)
+
+[ADR-027](adrs/027-aggregate-quota-schema.md) extends the F2 Permission Manifest with optional `tools.<class>.quota` blocks. The schema bump is **non-breaking**: every existing manifest stays valid because `quota` is an optional sub-object on each tool class.
+
+**Forbid-overrides-permit.** A manifest may grant a tool via per-call rules and still deny in aggregate. The deny wins — there is no "the per-call check said yes, so let this through." Mirrors AWS Cedar's evaluation posture.
+
+**Scope: foundation PR.** `max_calls_per_session` only, on `tools.filesystem`, `tools.network`, `tools.exec` (new sub-block carrying just `quota`), and per-server on `tools.mcp[*]`. Byte-counter quotas (`max_bytes_read_per_session`, etc.), per-tool MCP quotas, F10 `aegis validate` lint rules, sliding-window quotas, and Go validator parity are deferred follow-ups.
+
+**Session-scoped accumulators.** Counters reset at session start; there is no cross-session quota state by design (cross-session limits would require a persistent state store outside Aegis-Node's trust boundary). Operators wanting cross-session caps wrap the runtime in their own scheduler.
+
+**Visibility in the ledger.** Each v2 `turn_end` entry carries a `quotaSnapshots[]` array — one entry per declared-or-dispatched class — so auditors can chart budget burn-down across turns. Aggregate-cap breaches surface as `Violation` entries with `violationKind: "AggregateCapExceeded"` for v1-schema compatibility.
+
 ## Ledger v2 (ADR-026)
 
 [ADR-026](adrs/026-hierarchical-per-turn-ledger-protocol.md) introduces a hierarchical per-turn protocol on top of the v1 chain mechanics. The chain itself (`sequenceNumber`, `prevHash`, SHA-256 walk) is **identical** across versions — only the typed payload set differs.

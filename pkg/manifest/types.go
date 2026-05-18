@@ -71,16 +71,43 @@ type Tools struct {
 	Network    *Network         `yaml:"network,omitempty" json:"network,omitempty"`
 	APIs       []APIGrant       `yaml:"apis,omitempty" json:"apis,omitempty"`
 	MCP        []MCPServerGrant `yaml:"mcp,omitempty" json:"mcp,omitempty"`
+	// Exec is the exec-tool-class settings block (ADR-027). The
+	// per-grant rules still live in the top-level ExecGrants; this
+	// block carries the aggregate quota for the class.
+	Exec *Exec `yaml:"exec,omitempty" json:"exec,omitempty"`
 }
 
 type Filesystem struct {
 	Read  []string `yaml:"read,omitempty" json:"read,omitempty"`
 	Write []string `yaml:"write,omitempty" json:"write,omitempty"`
+	// Quota carries the per-session aggregate quota for filesystem
+	// dispatches (ADR-027). Parsed for Go-validator round-trip
+	// parity; enforcement lives in the Rust runtime today.
+	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
 }
 
 type Network struct {
 	Outbound *NetworkPolicy `yaml:"outbound,omitempty" json:"outbound,omitempty"`
 	Inbound  *NetworkPolicy `yaml:"inbound,omitempty" json:"inbound,omitempty"`
+	// Quota carries the per-session aggregate quota for network
+	// dispatches (ADR-027). Parsed for Go-validator round-trip
+	// parity; enforcement lives in the Rust runtime today.
+	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
+}
+
+// Exec is the tools.exec sub-block (ADR-027). Currently carries the
+// aggregate quota only — per-grant exec rules stay in Manifest.ExecGrants.
+type Exec struct {
+	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
+}
+
+// AggregateQuota is the per-session aggregate cap for a tool class
+// (ADR-027). All fields optional; absent quota = no aggregate cap.
+// The Go validator parses + round-trips this shape so quota manifests
+// load cleanly through aegis validate; enforcement is a Rust-runtime
+// concern (the Go side has no dispatcher).
+type AggregateQuota struct {
+	MaxCallsPerSession *uint64 `yaml:"max_calls_per_session,omitempty" json:"max_calls_per_session,omitempty"`
 }
 
 // NetworkMode captures the schema's `oneOf {string enum, allowlist object}`.
@@ -119,6 +146,9 @@ type MCPServerGrant struct {
 	ServerName   string        `yaml:"server_name" json:"server_name"`
 	ServerURI    string        `yaml:"server_uri" json:"server_uri"`
 	AllowedTools []AllowedTool `yaml:"allowed_tools" json:"allowed_tools"`
+	// Quota is the per-server aggregate quota for MCP dispatches
+	// (ADR-027). Per-server, not global across all MCP servers.
+	Quota *AggregateQuota `yaml:"quota,omitempty" json:"quota,omitempty"`
 }
 
 // AllowedTool is one entry in MCPServerGrant.AllowedTools (per ADR-024-A).

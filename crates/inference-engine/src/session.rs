@@ -21,7 +21,7 @@ use aegis_identity::{
 };
 use aegis_ledger_writer::{Entry, EntryType, LedgerSchemaVersion, LedgerWriter};
 use aegis_mcp_client::McpClient;
-use aegis_policy::Policy;
+use aegis_policy::{Policy, SessionAggregateState};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
@@ -105,6 +105,11 @@ pub struct Session {
     /// in a model-backed classifier via
     /// [`Session::with_adversarial_classifier`].
     pub(crate) adversarial_classifier: crate::adversarial::SharedClassifier,
+    /// Per-session aggregate quota accumulator (ADR-027). Zero-cost
+    /// when the manifest declares no quotas; tracks call counts per
+    /// tool class otherwise. Reset on each [`Self::boot`] — there is
+    /// no cross-session quota state by design.
+    pub(crate) aggregate_state: SessionAggregateState,
 }
 
 /// One observed network-connection attempt + the gate's decision.
@@ -266,6 +271,7 @@ impl Session {
             mcp_client: None,
             loaded_model: None,
             adversarial_classifier: crate::adversarial::default_classifier(),
+            aggregate_state: SessionAggregateState::new(),
         })
     }
 
@@ -385,9 +391,10 @@ impl Session {
     }
 
     /// Write a `turn_end` entry (v2). Closes a turn with cumulative
-    /// usage counters. `quotaSnapshots` lives in ADR-027 territory and
-    /// is emitted as an empty array for now — the field is reserved
-    /// and won't reshape when [#183](https://github.com/tosin2013/aegis-node/issues/183) lands.
+    /// usage counters and the per-tool-class aggregate-quota snapshot
+    /// (ADR-027). `quotaSnapshots[]` carries one entry per declared
+    /// or dispatched class — auditors can chart budget burn-down
+    /// across the session.
     pub(crate) fn write_turn_end(
         &mut self,
         turn_number: u32,
@@ -412,7 +419,9 @@ impl Session {
             "wallclockMsCumulative".to_string(),
             Value::Number(wallclock_ms_cumulative.into()),
         );
-        payload.insert("quotaSnapshots".to_string(), Value::Array(Vec::new()));
+        let snapshots = self.aggregate_state.snapshots(self.policy.manifest());
+        let snapshots_json = serde_json::to_value(&snapshots).unwrap_or(Value::Array(Vec::new()));
+        payload.insert("quotaSnapshots".to_string(), snapshots_json);
         self.ledger.append(Entry {
             session_id: self.session_id.clone(),
             entry_type: EntryType::TurnEnd,
@@ -565,6 +574,88 @@ impl Session {
             payload,
         })?;
         Ok(())
+    }
+
+    /// Append an `AggregateCapExceeded` Violation to the F9 ledger
+    /// (ADR-027). Called by the per-tool-class mediators when the
+    /// aggregate accumulator refuses one more dispatch. Like
+    /// `TurnCapExceeded` and `AdversarialContent`, namespaced under
+    /// `violationKind: "AggregateCapExceeded"` so v1 ledger readers
+    /// can ignore it; ADR-026's schema v2 wires it into
+    /// `turn_end.quotaSnapshots[]` as well.
+    pub(crate) fn write_aggregate_cap_violation(
+        &mut self,
+        err: &aegis_policy::AggregateCapExceeded,
+        resource_uri: &str,
+        access_kind: &str,
+    ) -> Result<()> {
+        let mut payload = Map::new();
+        payload.insert(
+            "violationKind".to_string(),
+            Value::String("AggregateCapExceeded".to_string()),
+        );
+        payload.insert(
+            "violationReason".to_string(),
+            Value::String(format!(
+                "aggregate cap exceeded: class={} bound={} observed={} cap={}",
+                err.class.label(),
+                err.bound,
+                err.observed,
+                err.cap,
+            )),
+        );
+        payload.insert(
+            "resourceUri".to_string(),
+            Value::String(resource_uri.to_string()),
+        );
+        payload.insert(
+            "accessType".to_string(),
+            Value::String(access_kind.to_string()),
+        );
+        payload.insert("toolClass".to_string(), Value::String(err.class.label()));
+        payload.insert("capBound".to_string(), Value::String(err.bound.to_string()));
+        payload.insert("observed".to_string(), Value::Number(err.observed.into()));
+        payload.insert("cap".to_string(), Value::Number(err.cap.into()));
+
+        self.ledger.append(Entry {
+            session_id: self.session_id.clone(),
+            entry_type: EntryType::Violation,
+            agent_identity_hash: self.agent_identity_hash,
+            timestamp: Utc::now(),
+            payload,
+        })?;
+        Ok(())
+    }
+
+    /// Run the ADR-027 aggregate-quota gate for `class` and convert any
+    /// cap breach into an `Error::Denied` with a synthesised reason.
+    /// Emits the `AggregateCapExceeded` ledger entry as a side-effect
+    /// on breach. On pass: increments the accumulator and returns
+    /// `Ok(())`; the caller proceeds to dispatch the syscall.
+    pub(crate) fn enforce_aggregate_quota(
+        &mut self,
+        class: aegis_policy::ToolClass,
+        resource_uri: &str,
+        access_kind: &str,
+    ) -> Result<()> {
+        let quota = aegis_policy::quota_for(self.policy.manifest(), &class).cloned();
+        match self
+            .aggregate_state
+            .check_and_increment(class, quota.as_ref())
+        {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let reason = format!(
+                    "aggregate cap exceeded for {}: {}/{} {}",
+                    err.class.label(),
+                    err.observed,
+                    err.cap,
+                    err.bound,
+                );
+                self.write_aggregate_cap_violation(&err, resource_uri, access_kind)?;
+                Err(Error::Denied { reason })
+            }
+        }
     }
 
     /// Append a `TurnCapExceeded` Violation to the F9 ledger.

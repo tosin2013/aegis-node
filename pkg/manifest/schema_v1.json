@@ -54,7 +54,8 @@
           "additionalProperties": false,
           "properties": {
             "read": { "$ref": "#/definitions/pathList" },
-            "write": { "$ref": "#/definitions/pathList" }
+            "write": { "$ref": "#/definitions/pathList" },
+            "quota": { "$ref": "#/definitions/aggregateQuota" }
           }
         },
         "network": {
@@ -62,7 +63,8 @@
           "additionalProperties": false,
           "properties": {
             "outbound": { "$ref": "#/definitions/networkPolicy" },
-            "inbound": { "$ref": "#/definitions/networkPolicy" }
+            "inbound": { "$ref": "#/definitions/networkPolicy" },
+            "quota": { "$ref": "#/definitions/aggregateQuota" }
           }
         },
         "apis": {
@@ -75,6 +77,14 @@
           "description": "MCP servers the agent may connect to (per ADR-018). Closed-by-default — without an entry, MCP tool calls are denied.",
           "items": { "$ref": "#/definitions/mcpServerGrant" },
           "uniqueItems": true
+        },
+        "exec": {
+          "type": "object",
+          "description": "Exec-tool-class settings (ADR-027). Per-grant rules still live in the top-level `exec_grants`; this block carries the aggregate quota for the class.",
+          "additionalProperties": false,
+          "properties": {
+            "quota": { "$ref": "#/definitions/aggregateQuota" }
+          }
         }
       }
     },
@@ -199,6 +209,19 @@
           "description": "Names of MCP tools from this server the agent may invoke. Closed-by-default; empty array means none. Each entry is either a bare name (string, one-layer enforcement: only the MCP allowlist gates) OR an object with optional `pre_validate` clauses that ask the mediator to also check the tool's args against `tools.filesystem.*` / `tools.network.*` policy before dispatch (per ADR-024).",
           "items": { "$ref": "#/definitions/allowedTool" },
           "uniqueItems": true
+        },
+        "quota": { "$ref": "#/definitions/aggregateQuota" }
+      }
+    },
+    "aggregateQuota": {
+      "type": "object",
+      "description": "Per-session aggregate quota for this tool class (ADR-027). All fields optional; absent quota = no aggregate cap. Counters reset at session start.",
+      "additionalProperties": false,
+      "properties": {
+        "max_calls_per_session": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Hard cap on the number of dispatched calls in this tool class per session. The (N+1)th call returns Denied with an AggregateCapExceeded violation."
         }
       }
     },

@@ -33,7 +33,7 @@ use aegis_ledger_writer::{Entry, EntryType};
 use aegis_policy::{
     check_identity_binding,
     manifest::{PreValidateClause, PreValidateKind},
-    Decision, NetworkProto,
+    Decision, NetworkProto, ToolClass,
 };
 use chrono::Utc;
 use serde_json::{Map, Value};
@@ -86,6 +86,7 @@ impl Session {
             self.route_through_approval(decision, &resource_uri, "read", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
+                self.enforce_aggregate_quota(ToolClass::Filesystem, &resource_uri, "read")?;
                 let bytes = fs::read(path)?;
                 self.emit_success(
                     &resource_uri,
@@ -121,6 +122,7 @@ impl Session {
             self.route_through_approval(decision, &resource_uri, "write", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
+                self.enforce_aggregate_quota(ToolClass::Filesystem, &resource_uri, "write")?;
                 fs::write(path, contents)?;
                 self.emit_success(
                     &resource_uri,
@@ -155,6 +157,7 @@ impl Session {
             self.route_through_approval(decision, &resource_uri, "delete", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
+                self.enforce_aggregate_quota(ToolClass::Filesystem, &resource_uri, "delete")?;
                 fs::remove_file(path)?;
                 self.emit_success(&resource_uri, AccessType::Delete, 0, reasoning_step_id)?;
                 Ok(())
@@ -341,6 +344,14 @@ impl Session {
             )?;
         }
 
+        // ADR-027 aggregate quota — refuse the call if the per-server
+        // counter would breach `tools.mcp[].quota.max_calls_per_session`.
+        self.enforce_aggregate_quota(
+            ToolClass::Mcp(server_name.to_string()),
+            &resource_uri,
+            "mcp_tool_call",
+        )?;
+
         let mut client = match self.mcp_client.take() {
             Some(c) => c,
             None => {
@@ -456,6 +467,7 @@ impl Session {
             self.route_through_approval(decision, &resource_uri, "exec", reasoning_step_id)?;
         match decision {
             Decision::Allow => {
+                self.enforce_aggregate_quota(ToolClass::Exec, &resource_uri, "exec")?;
                 let output = Command::new(program).args(args).output()?;
                 self.emit_success(&resource_uri, AccessType::Exec, 0, reasoning_step_id)?;
                 Ok(output)
