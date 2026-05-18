@@ -26,9 +26,9 @@ pub use decision::{Decision, NetworkProto};
 pub use error::{Error, Result};
 pub use identity_binding::{check_identity_binding, check_identity_binding_now};
 pub use manifest::{
-    Agent, AggregateQuota, ApiGrant, ApprovalClass, Exec, ExecGrant, Filesystem, Identity,
-    Manifest, Network, NetworkAllowEntry, NetworkMode, NetworkPolicy, NetworkProtocol, Tools,
-    WriteAction, WriteGrant,
+    Agent, AggregateQuota, ApiGrant, ApprovalClass, ApprovalPolicy, ApprovalTier, Exec, ExecGrant,
+    Filesystem, Identity, Manifest, Network, NetworkAllowEntry, NetworkMode, NetworkPolicy,
+    NetworkProtocol, Tools, WriteAction, WriteGrant,
 };
 pub use policy::Policy;
 pub use violation::{emit_violation, ViolationEvent};

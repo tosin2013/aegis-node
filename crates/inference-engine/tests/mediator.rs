@@ -456,12 +456,17 @@ fn approval_granted_via_file_channel_proceeds_with_full_entry_sequence() {
         .iter()
         .map(|e| e["entryType"].as_str().unwrap())
         .collect();
+    // ADR-029 adds an approval_decision entry (decision=grant_issued)
+    // recording the grant + its bound arg hash for future
+    // auto-consumes. It lands between approval_granted (the operator's
+    // raw decision) and access (the dispatch).
     assert_eq!(
         kinds,
         vec![
             "session_start",
             "approval_request",
             "approval_granted",
+            "approval_decision",
             "access",
             "network_attestation",
             "session_end"

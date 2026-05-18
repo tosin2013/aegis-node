@@ -14,7 +14,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use aegis_approval_gate::ApprovalChannel;
+use aegis_approval_gate::{ApprovalChannel, SessionGrantTable};
 use aegis_identity::{
     verify_chat_template_binding, verify_digest_binding, Digest, DigestField, DigestTriple,
     LocalCa, SpiffeId, X509Svid,
@@ -124,6 +124,10 @@ pub struct Session {
     /// ([`Self::svid_cert_pem`] / [`Self::svid_key_pem`]) takes over
     /// for single-turn paths and mediator calls invoked directly.
     pub(crate) current_turn_svid: Option<X509Svid>,
+    /// Task-scoped ephemeral approval-grant table (ADR-029). Lookup
+    /// key is `(tool_name, sha256(canonical_args))`. Reset at boot;
+    /// in-memory only — grants vaporize at session end by design.
+    pub(crate) grant_table: SessionGrantTable,
 }
 
 /// One observed network-connection attempt + the gate's decision.
@@ -290,6 +294,7 @@ impl Session {
             adversarial_classifier: crate::adversarial::default_classifier(),
             aggregate_state: SessionAggregateState::new(),
             current_turn_svid: None,
+            grant_table: SessionGrantTable::new(),
         })
     }
 

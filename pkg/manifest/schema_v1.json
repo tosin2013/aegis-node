@@ -55,7 +55,8 @@
           "properties": {
             "read": { "$ref": "#/definitions/pathList" },
             "write": { "$ref": "#/definitions/pathList" },
-            "quota": { "$ref": "#/definitions/aggregateQuota" }
+            "quota": { "$ref": "#/definitions/aggregateQuota" },
+            "approval": { "$ref": "#/definitions/approvalPolicy" }
           }
         },
         "network": {
@@ -64,7 +65,8 @@
           "properties": {
             "outbound": { "$ref": "#/definitions/networkPolicy" },
             "inbound": { "$ref": "#/definitions/networkPolicy" },
-            "quota": { "$ref": "#/definitions/aggregateQuota" }
+            "quota": { "$ref": "#/definitions/aggregateQuota" },
+            "approval": { "$ref": "#/definitions/approvalPolicy" }
           }
         },
         "apis": {
@@ -80,10 +82,11 @@
         },
         "exec": {
           "type": "object",
-          "description": "Exec-tool-class settings (ADR-027). Per-grant rules still live in the top-level `exec_grants`; this block carries the aggregate quota for the class.",
+          "description": "Exec-tool-class settings (ADR-027 + ADR-029). Per-grant rules still live in the top-level `exec_grants`; this block carries the aggregate quota and approval policy for the class.",
           "additionalProperties": false,
           "properties": {
-            "quota": { "$ref": "#/definitions/aggregateQuota" }
+            "quota": { "$ref": "#/definitions/aggregateQuota" },
+            "approval": { "$ref": "#/definitions/approvalPolicy" }
           }
         }
       }
@@ -210,7 +213,25 @@
           "items": { "$ref": "#/definitions/allowedTool" },
           "uniqueItems": true
         },
-        "quota": { "$ref": "#/definitions/aggregateQuota" }
+        "quota": { "$ref": "#/definitions/aggregateQuota" },
+        "approval": { "$ref": "#/definitions/approvalPolicy" }
+      }
+    },
+    "approvalPolicy": {
+      "type": "object",
+      "description": "Per-tool-class approval policy (ADR-029). Selects the gate's behavior on Decision::RequireApproval; grant_ttl_seconds controls how long an issued grant auto-consumes identical retries before re-prompting.",
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": ["advisory", "validating", "blocking", "escalating"],
+          "description": "Risk tier. advisory: log + dispatch, no prompt. validating: standard prompt. blocking: hard deny (foundation: treated as validating). escalating: secondary-channel routing (foundation: treated as validating)."
+        },
+        "grant_ttl_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "TTL of an issued grant. Identical retries within this window auto-consume without re-prompting. Default 300 (5 minutes)."
+        }
       }
     },
     "aggregateQuota": {
