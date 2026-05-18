@@ -10,6 +10,7 @@
 //! lands in F0-B (issue #25); this crate gains a `Mediator` type at
 //! that point.
 
+pub mod adversarial;
 pub mod attestation;
 pub mod backend;
 pub mod error;
@@ -17,6 +18,10 @@ mod mediator;
 mod session;
 mod turn;
 
+pub use adversarial::{
+    default_classifier, wrap_flagged, AdversarialClassifier, ClassifierVerdict,
+    RegexHeuristicClassifier, SharedClassifier, ToolOrigin,
+};
 pub use backend::{
     Backend, BackendError, BackendErrorKind, ChatMessage, ChatRole, InferRequest, InferResponse,
     LoadedModel, ToolCall, ToolDecl,

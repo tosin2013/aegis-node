@@ -23,6 +23,13 @@ serde_json = "1"
 sha2 = "0.10"
 hex = "0.4"
 hmac = "0.12"
+# Regex backs the default `RegexHeuristicClassifier` in
+# adversarial.rs (ADR-028). `std` + `perf` for the matcher;
+# `unicode-case` + `unicode-perl` for case-insensitive matching
+# and `\s`/`\w`/`\d` over the IPI patterns. Skips the heavier
+# unicode-id / unicode-script tables that aren't relevant to
+# adversarial pattern matching.
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
 thiserror = "1"
 uuid = { version = "1", features = ["v7"] }
 
