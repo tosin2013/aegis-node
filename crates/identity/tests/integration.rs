@@ -3,9 +3,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use aegis_identity::{
-    extract_chat_template_from_pem, extract_digest_triple_from_pem, extract_spiffe_id_from_pem,
-    verify_chat_template_binding, verify_digest_binding, Digest, DigestField, DigestTriple, Error,
-    LocalCa, SpiffeId,
+    cert_thumbprint_hex, extract_chat_template_from_pem, extract_digest_triple_from_pem,
+    extract_spiffe_id_from_pem, extract_turn_binding_from_pem, verify_chat_template_binding,
+    verify_digest_binding, Digest, DigestField, DigestTriple, Error, LocalCa, SpiffeId,
 };
 
 const TRUST_DOMAIN: &str = "aegis-node.local";
@@ -179,6 +179,63 @@ fn verify_chat_template_binding_signals_drift() {
 }
 
 #[cfg(unix)]
+/// Per-turn SVID issuance round-trip (ADR-030). The cert carries
+/// the TurnBinding extension; `extract_turn_binding_from_pem`
+/// recovers the audience verbatim. Session SVIDs (issued via
+/// `issue_svid`) carry NO turn binding — the extractor returns None
+/// rather than an error.
+#[test]
+fn per_turn_svid_carries_audience_binding() {
+    let dir = tempfile::tempdir().unwrap();
+    let ca = LocalCa::init(dir.path(), TRUST_DOMAIN).unwrap();
+    let digests = test_digests();
+    let audience = "aegis-turn://session-xyz/7";
+
+    let svid = ca
+        .issue_turn_svid(
+            "research",
+            "inst-001",
+            digests,
+            None,
+            audience,
+            time::Duration::seconds(60),
+        )
+        .unwrap();
+
+    let extracted = extract_turn_binding_from_pem(&svid.cert_pem)
+        .unwrap()
+        .expect("per-turn SVID carries turn binding");
+    assert_eq!(extracted.audience, audience);
+
+    // Digest binding still intact alongside the turn binding.
+    let dt = extract_digest_triple_from_pem(&svid.cert_pem).unwrap();
+    assert_eq!(dt, digests);
+
+    // Session SVIDs (no turn binding) → extractor returns None.
+    let session_svid = ca.issue_svid("research", "inst-001", digests).unwrap();
+    assert!(extract_turn_binding_from_pem(&session_svid.cert_pem)
+        .unwrap()
+        .is_none());
+
+    // Thumbprints are 64-char lowercase hex.
+    let tp = cert_thumbprint_hex(&svid.cert_pem).unwrap();
+    assert_eq!(tp.len(), 64);
+    assert!(tp.bytes().all(|b| b.is_ascii_hexdigit()));
+    // Two distinct issuances → distinct thumbprints (fresh key per cert).
+    let svid2 = ca
+        .issue_turn_svid(
+            "research",
+            "inst-001",
+            digests,
+            None,
+            audience,
+            time::Duration::seconds(60),
+        )
+        .unwrap();
+    let tp2 = cert_thumbprint_hex(&svid2.cert_pem).unwrap();
+    assert_ne!(tp, tp2);
+}
+
 #[test]
 fn ca_key_file_has_owner_only_permissions() {
     use std::os::unix::fs::MetadataExt;

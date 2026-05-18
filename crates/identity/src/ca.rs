@@ -25,8 +25,8 @@ use time::{Duration, OffsetDateTime};
 use crate::error::{Error, Result};
 use crate::spiffe::SpiffeId;
 use crate::svid::{
-    Digest, DigestTriple, X509Svid, CHAT_TEMPLATE_BINDING_LEN, CHAT_TEMPLATE_BINDING_OID,
-    DIGEST_BINDING_OID,
+    Digest, DigestTriple, TurnBinding, X509Svid, CHAT_TEMPLATE_BINDING_LEN,
+    CHAT_TEMPLATE_BINDING_OID, DIGEST_BINDING_OID, TURN_BINDING_OID,
 };
 
 const CA_CERT_FILE: &str = "ca.crt";
@@ -215,6 +215,76 @@ impl LocalCa {
         })
     }
 
+    /// Issue a short-lived per-turn SVID (ADR-030). Identical to
+    /// [`Self::issue_svid_with_chat_template`] but additionally:
+    ///
+    /// - Stamps a [`TURN_BINDING_OID`] extension carrying the turn's
+    ///   audience URI (e.g., `aegis-turn://session-xyz/3`). A stolen
+    ///   turn-N SVID can't authenticate dispatches on turn M because
+    ///   the embedded audience won't match.
+    /// - Caps validity at `turn_ttl` (the runtime passes the remaining
+    ///   wallclock budget for the turn, bounded to a sensible minimum).
+    ///   Short-lived by design — defeats long-lived credential theft.
+    ///
+    /// The same `(model, manifest, config)` digest triple is bound as
+    /// on the session SVID, plus the optional chat-template. Verifiers
+    /// see one extra extension; they can detect "this is a turn SVID,
+    /// not a session SVID" by the presence of [`TURN_BINDING_OID`].
+    pub fn issue_turn_svid(
+        &self,
+        workload_name: &str,
+        instance: &str,
+        digests: DigestTriple,
+        chat_template: Option<Digest>,
+        audience: &str,
+        turn_ttl: Duration,
+    ) -> Result<X509Svid> {
+        let spiffe_id = SpiffeId::new(&self.trust_domain, workload_name, instance)?;
+        let now = OffsetDateTime::now_utc();
+
+        let mut params = CertificateParams::default();
+        params.not_before = now - Duration::minutes(5);
+        params.not_after = now + turn_ttl;
+        params
+            .distinguished_name
+            .push(DnType::CommonName, workload_name);
+        params.subject_alt_names = vec![SanType::URI(
+            Ia5String::try_from(spiffe_id.uri())
+                .map_err(|e| Error::CertParse(format!("SPIFFE URI not IA5-encodable: {e}")))?,
+        )];
+
+        let mut ext =
+            CustomExtension::from_oid_content(DIGEST_BINDING_OID, digests.encode().to_vec());
+        ext.set_criticality(false);
+        params.custom_extensions.push(ext);
+
+        if let Some(template) = chat_template {
+            let mut ct_ext =
+                CustomExtension::from_oid_content(CHAT_TEMPLATE_BINDING_OID, template.0.to_vec());
+            ct_ext.set_criticality(false);
+            params.custom_extensions.push(ct_ext);
+        }
+
+        let turn_binding = TurnBinding {
+            audience: audience.to_string(),
+        };
+        let mut turn_ext =
+            CustomExtension::from_oid_content(TURN_BINDING_OID, turn_binding.encode()?);
+        turn_ext.set_criticality(false);
+        params.custom_extensions.push(turn_ext);
+
+        let leaf_key = KeyPair::generate()?;
+        let leaf = params.signed_by(&leaf_key, &self.ca_cert, &self.ca_key)?;
+
+        Ok(X509Svid {
+            spiffe_id,
+            digests,
+            chat_template,
+            cert_pem: leaf.pem(),
+            key_pem: leaf_key.serialize_pem(),
+        })
+    }
+
     /// PEM of the CA root certificate. Useful for trust-bundle distribution.
     pub fn root_cert_pem(&self) -> String {
         self.ca_cert.pem()
@@ -306,6 +376,48 @@ pub fn extract_chat_template_from_pem(cert_pem: &str) -> Result<Option<Digest>> 
             }
             Ok(Some(Digest::from_bytes(ext.value)?))
         }
+        None => Ok(None),
+    }
+}
+
+/// Compute the SHA-256 thumbprint of a leaf cert from its PEM. Used
+/// by the F9 ledger to record which SVID was active during each turn
+/// (per ADR-030) without storing the full PEM in every entry.
+pub fn cert_thumbprint_hex(cert_pem: &str) -> Result<String> {
+    use sha2::{Digest as _, Sha256};
+    use x509_parser::pem::Pem;
+
+    let pem = Pem::iter_from_buffer(cert_pem.as_bytes())
+        .next()
+        .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
+        .map_err(|e| Error::CertParse(e.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&pem.contents);
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Extract the [`TurnBinding`] from a per-turn SVID's PEM. Returns
+/// `Ok(None)` when the cert was not issued via
+/// [`LocalCa::issue_turn_svid`] — i.e., it's a session-long SVID and
+/// the absence of the extension is correct, not an error.
+pub fn extract_turn_binding_from_pem(cert_pem: &str) -> Result<Option<TurnBinding>> {
+    use x509_parser::parse_x509_certificate;
+    use x509_parser::pem::Pem;
+
+    let pem = Pem::iter_from_buffer(cert_pem.as_bytes())
+        .next()
+        .ok_or_else(|| Error::CertParse("no PEM block".to_string()))?
+        .map_err(|e| Error::CertParse(e.to_string()))?;
+    let (_, cert) =
+        parse_x509_certificate(&pem.contents).map_err(|e| Error::CertParse(e.to_string()))?;
+
+    let oid_str = oid_components_to_dotted(TURN_BINDING_OID);
+    match cert
+        .extensions()
+        .iter()
+        .find(|e| e.oid.to_id_string() == oid_str)
+    {
+        Some(ext) => Ok(Some(TurnBinding::decode(ext.value)?)),
         None => Ok(None),
     }
 }

@@ -24,12 +24,13 @@ pub use binding::{
     verify_chat_template_binding, verify_digest_binding, DigestField, DigestMismatch,
 };
 pub use ca::{
-    extract_chat_template_from_pem, extract_digest_triple_from_pem, extract_spiffe_id_from_pem,
-    LocalCa,
+    cert_thumbprint_hex, extract_chat_template_from_pem, extract_digest_triple_from_pem,
+    extract_spiffe_id_from_pem, extract_turn_binding_from_pem, LocalCa,
 };
 pub use error::{Error, Result};
 pub use spiffe::SpiffeId;
 pub use svid::{
-    Digest, DigestTriple, X509Svid, CHAT_TEMPLATE_BINDING_LEN, CHAT_TEMPLATE_BINDING_OID,
-    DIGEST_BINDING_LEN, DIGEST_BINDING_OID,
+    Digest, DigestTriple, TurnBinding, X509Svid, CHAT_TEMPLATE_BINDING_LEN,
+    CHAT_TEMPLATE_BINDING_OID, DIGEST_BINDING_LEN, DIGEST_BINDING_OID, MAX_TURN_BINDING_LEN,
+    TURN_BINDING_OID,
 };

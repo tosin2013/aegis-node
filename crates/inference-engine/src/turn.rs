@@ -303,10 +303,17 @@ impl Session {
             // v2 turn_start lands *before* `run_one_turn` so the
             // reasoning_step + tool_call/tool_result entries the inner
             // dispatch emits all parent-by-position to this turn_start
-            // in the ledger stream.
+            // in the ledger stream. ADR-030: mint the per-turn SVID
+            // here so the audience + thumbprint can be recorded in the
+            // turn_start payload; the SVID is dropped at turn_end.
             if v2 {
                 let ctx_hex = sha256_hex_of_messages(&messages);
-                self.write_turn_start(turn_index, &ctx_hex)?;
+                let audience = format!("aegis-turn://{}/{}", self.session_id(), turn_index);
+                let remaining = limits
+                    .max_seconds
+                    .saturating_sub(started.elapsed().as_secs());
+                let thumbprint = self.issue_turn_svid(&audience, remaining)?;
+                self.write_turn_start(turn_index, &ctx_hex, &thumbprint, &audience)?;
             }
 
             let (mut outcome, used) = self.run_one_turn(&messages, prompt, Some(turn_index))?;
@@ -395,10 +402,12 @@ impl Session {
             // emissions, before the loop control decides whether to
             // re-enter. On clean termination we return *after*
             // emitting turn_end so the ledger always brackets the
-            // final turn.
+            // final turn. ADR-030: drop the per-turn SVID — it lives
+            // only for the duration of the turn that issued it.
             if v2 {
                 let wallclock_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
                 self.write_turn_end(turn_index, None, used, tokens_consumed, wallclock_ms)?;
+                self.drop_turn_svid();
             }
 
             if no_tool_calls {
