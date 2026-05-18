@@ -22,7 +22,7 @@
 
 use std::path::PathBuf;
 
-use aegis_ledger_writer::{verify_file, Entry, EntryType, LedgerWriter};
+use aegis_ledger_writer::{verify_file, Entry, EntryType, LedgerSchemaVersion, LedgerWriter};
 use chrono::{TimeZone, Utc};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -57,9 +57,13 @@ fn main() {
         Uuid::from_bytes(bytes)
     };
 
-    let mut w =
-        LedgerWriter::create_with_uuid_generator(&out, session_id.clone(), Box::new(next_uuid))
-            .expect("open writer");
+    let mut w = LedgerWriter::create_with_uuid_generator(
+        &out,
+        session_id.clone(),
+        Box::new(next_uuid),
+        LedgerSchemaVersion::V1,
+    )
+    .expect("open writer");
 
     // Pinned agent identity hash for stability.
     let agent_hash = [0x3Bu8; 32];

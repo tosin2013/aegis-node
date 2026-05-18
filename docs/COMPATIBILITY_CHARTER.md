@@ -11,7 +11,7 @@ These artifacts are the **committed API**. Breaking any of them requires a major
 | Surface | Version axis | Current | Compatibility window |
 |---|---|---|---|
 | Permission Manifest | `schemaVersion` field in the manifest itself | `"1"` | Forever, unless superseded by `schemaVersion: "2"` with an explicit migration path |
-| Trajectory Ledger / Access Log | JSON-LD `@context` URI (`https://aegis-node.dev/schemas/ledger/v1#`) | `v1` | Forever for stored ledgers (read compatibility); writers may move to `v2` |
+| Trajectory Ledger / Access Log | JSON-LD `@context` URI (`https://aegis-node.dev/schemas/ledger/v1#` or `…/v2#`) | `v1` (default), `v2` (opt-in per ADR-026) | Forever for stored ledgers (read compatibility); writers may move to `v2`. v1 and v2 are both first-class — see §"Ledger v2 (ADR-026)" below |
 | IPC contract | proto package (`aegis.v1`) | `v1` | Forever for the wire format; new functionality lives in `aegis.v2` |
 | F1–F10 feature contracts | PRD §2 | n/a | The ten security-review questions are the product spec; their answers cannot be silently dropped |
 
@@ -54,6 +54,24 @@ When a breaking change is genuinely required:
 5. Existing v1 artifacts continue to round-trip.
 
 There is no plan to retire `v1` once `v2` ships. Removal would itself be a breaking change against deployed audit evidence.
+
+## Ledger v2 (ADR-026)
+
+[ADR-026](adrs/026-hierarchical-per-turn-ledger-protocol.md) introduces a hierarchical per-turn protocol on top of the v1 chain mechanics. The chain itself (`sequenceNumber`, `prevHash`, SHA-256 walk) is **identical** across versions — only the typed payload set differs.
+
+**Version detection.** Readers detect the version from the `@context` URL on the first entry (`session_start`). Every subsequent line MUST carry the same context URL — mixing v1 and v2 within one ledger file is a chain-break (rejected by `aegis verify` with `VerifyBreak::BadContext`).
+
+**Forward-compat rule for new entry types.** v1 consumers reading a v2 ledger encounter `entryType` values they don't recognize (`turn_start`, `turn_end`, `tool_call`, `tool_result`, `approval_decision`). They MUST skip these entries, advancing `prevHash` accounting through them. This is the same rule v1 already documented for itself; ADR-026 makes it concrete.
+
+**Per-turn entry shape.** v2 brackets each turn with `turn_start` / `turn_end` and emits `tool_call` / `tool_result` pairs (joined by `toolCallId`) for every model-initiated dispatch. Existing v1 entry types (`session_start`, `access`, `violation`, `network_attestation`, `session_end`) keep their shape; v2 may add an optional `turnNumber` field on `access` and `violation` for per-turn aggregation. Consumers that ignore `turnNumber` see no behavior change.
+
+**Default and opt-in.** As of the foundation PR, the writer default remains `v1` for back-compat. v2 is opt-in via `BootConfig::ledger_schema = Some(LedgerSchemaVersion::V2)`. The CLI default will flip to v2 once the deferred follow-ups land:
+
+- Sidecar blob mechanism for tool-result payloads >32 KB (ADR-026 §"Tool-result payload size policy").
+- Cross-language conformance fixtures (Go ↔ Rust) for the new entry kinds.
+- `aegis verify` CLI surface for the per-line schema-version report (the `VerifySummary.schema_version` field is already populated).
+- F8 replay viewer per-turn fold/unfold rendering.
+- `approval_decision` emission tied to F3 grants (the entry kind exists; emission is pending the approval-gate refactor).
 
 ## Storage and replay compatibility
 

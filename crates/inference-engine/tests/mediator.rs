@@ -39,6 +39,7 @@ fn boot(dir: &Path, ca_dir: &Path, session_id: &str, manifest_yaml: &str) -> (Se
         workload_name: "research".to_string(),
         instance: "inst-1".to_string(),
         ledger_path: ledger_path.clone(),
+        ledger_schema: None,
     };
     (Session::boot(cfg).unwrap(), ledger_path)
 }

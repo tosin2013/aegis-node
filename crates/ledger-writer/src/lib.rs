@@ -36,6 +36,43 @@ pub use verify::{verify_file, verify_reader, VerifyBreak, VerifyError, VerifySum
 /// JSON-LD `@context` URI for v1 ledger entries.
 pub const LEDGER_CONTEXT: &str = "https://aegis-node.dev/schemas/ledger/v1";
 
+/// JSON-LD `@context` URI for v2 ledger entries (ADR-026 — hierarchical
+/// per-turn ledger protocol). Carries the new `turn_start`, `turn_end`,
+/// `tool_call`, `tool_result`, and `approval_decision` entry types; the
+/// chain mechanics (sequenceNumber + prevHash + SHA-256) are identical
+/// to v1.
+pub const LEDGER_CONTEXT_V2: &str = "https://aegis-node.dev/schemas/ledger/v2";
+
+/// Schema version pinned on the `LedgerWriter` at construction time.
+/// Every entry the writer emits carries the corresponding `@context`
+/// URL ([`LEDGER_CONTEXT`] for v1, [`LEDGER_CONTEXT_V2`] for v2). The
+/// `aegis verify` reader detects the version on line 0 and requires
+/// every subsequent line to match — mixing versions within one ledger
+/// file is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LedgerSchemaVersion {
+    /// v1 — the original flat entry stream. Default for back-compat;
+    /// new callers should opt in to [`Self::V2`] explicitly.
+    #[default]
+    V1,
+    /// v2 — hierarchical per-turn protocol (ADR-026). Adds `turn_start`,
+    /// `turn_end`, `tool_call`, `tool_result`, `approval_decision`
+    /// entry types and an optional `turnNumber` field on `access` and
+    /// `violation` entries.
+    V2,
+}
+
+impl LedgerSchemaVersion {
+    /// JSON-LD `@context` URL for this version.
+    pub fn context_url(self) -> &'static str {
+        match self {
+            Self::V1 => LEDGER_CONTEXT,
+            Self::V2 => LEDGER_CONTEXT_V2,
+        }
+    }
+}
+
 /// Genesis prev-hash: 32 zero bytes, used as the previous-hash for the first
 /// entry of every session.
 pub const GENESIS_PREV_HASH: [u8; 32] = [0u8; 32];
@@ -53,6 +90,13 @@ const RESERVED_KEYS: &[&str] = &[
 ];
 
 /// Kind of ledger entry. Mirrors `aegis.v1.EntryType` in the proto contract.
+///
+/// The variants `TurnStart`, `TurnEnd`, `ToolCall`, `ToolResult`, and
+/// `ApprovalDecision` are emitted only when the writer is constructed
+/// with [`LedgerSchemaVersion::V2`] (ADR-026). v1 readers encountering
+/// these as unknown `entryType` strings skip them per the existing
+/// forward-compat rule, but the writer is responsible for not mixing
+/// versions within one ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryType {
@@ -66,6 +110,11 @@ pub enum EntryType {
     ApprovalTimedOut,
     Violation,
     NetworkAttestation,
+    TurnStart,
+    TurnEnd,
+    ToolCall,
+    ToolResult,
+    ApprovalDecision,
 }
 
 /// An entry to append. The writer fills in `entryId`, `sequenceNumber`,
@@ -102,13 +151,32 @@ pub struct LedgerWriter {
     next_sequence: u64,
     prev_hash: [u8; 32],
     uuid_generator: UuidGenerator,
+    schema_version: LedgerSchemaVersion,
 }
 
 impl LedgerWriter {
-    /// Create a new ledger file at `path`. Errors if the file already exists
-    /// — sessions own their ledger; reusing a path would imply tampering.
+    /// Create a new ledger file at `path` using the default v1 schema.
+    /// Errors if the file already exists — sessions own their ledger;
+    /// reusing a path would imply tampering. Equivalent to
+    /// [`Self::create_with_version`] with [`LedgerSchemaVersion::V1`].
     pub fn create<P: AsRef<Path>>(path: P, session_id: String) -> Result<Self> {
-        Self::create_with_uuid_generator(path, session_id, Box::new(Uuid::now_v7))
+        Self::create_with_uuid_generator(
+            path,
+            session_id,
+            Box::new(Uuid::now_v7),
+            LedgerSchemaVersion::V1,
+        )
+    }
+
+    /// Create a new ledger file pinned to the given schema version.
+    /// `aegis verify` detects the version on the first line and requires
+    /// every subsequent entry to carry the matching `@context`.
+    pub fn create_with_version<P: AsRef<Path>>(
+        path: P,
+        session_id: String,
+        schema_version: LedgerSchemaVersion,
+    ) -> Result<Self> {
+        Self::create_with_uuid_generator(path, session_id, Box::new(Uuid::now_v7), schema_version)
     }
 
     /// Like `create` but with an injectable UUID generator. Used by tests for
@@ -117,6 +185,7 @@ impl LedgerWriter {
         path: P,
         session_id: String,
         uuid_generator: UuidGenerator,
+        schema_version: LedgerSchemaVersion,
     ) -> Result<Self> {
         let file = OpenOptions::new().create_new(true).write(true).open(path)?;
         Ok(Self {
@@ -125,7 +194,14 @@ impl LedgerWriter {
             next_sequence: 0,
             prev_hash: GENESIS_PREV_HASH,
             uuid_generator,
+            schema_version,
         })
+    }
+
+    /// Schema version pinned at construction time. Determines the
+    /// `@context` URL stamped on every entry this writer emits.
+    pub fn schema_version(&self) -> LedgerSchemaVersion {
+        self.schema_version
     }
 
     /// Append an entry. Builds the canonical JSON-LD line, writes it +
@@ -150,7 +226,7 @@ impl LedgerWriter {
         let mut obj = Map::new();
         obj.insert(
             "@context".to_string(),
-            Value::String(LEDGER_CONTEXT.to_string()),
+            Value::String(self.schema_version.context_url().to_string()),
         );
         obj.insert("entryId".to_string(), Value::String(entry_id.to_string()));
         obj.insert(

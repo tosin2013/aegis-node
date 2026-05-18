@@ -43,6 +43,7 @@ fn boot_cfg(dir: &Path, ca_dir: &Path, session_id: &str) -> BootConfig {
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
         ledger_path,
+        ledger_schema: None,
     }
 }
 
@@ -143,6 +144,7 @@ tools: {}
         workload_name: "research".to_string(),
         instance: "inst-001".to_string(),
         ledger_path: dir.path().join("ledger.jsonl"),
+        ledger_schema: None,
     };
     let err = Session::boot(cfg).unwrap_err();
     assert!(matches!(err, Error::Policy(_)), "got {err:?}");

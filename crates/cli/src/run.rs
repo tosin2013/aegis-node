@@ -234,6 +234,7 @@ pub fn execute(args: RunArgs) -> Result<RunOutcome> {
         workload_name: args.workload.clone(),
         instance: args.instance.clone(),
         ledger_path: ledger_path.clone(),
+        ledger_schema: None,
     };
     let mut session = Session::boot(cfg).context("boot")?;
 
@@ -632,6 +633,7 @@ pub fn boot_session_for_ui(
         workload_name: workload,
         instance,
         ledger_path,
+        ledger_schema: None,
     };
     let mut session = Session::boot(cfg).context("boot")?;
 

@@ -94,6 +94,7 @@ fn boot_session(dir: &Path, ca_dir: &Path) -> Session {
         workload_name: "loop".to_string(),
         instance: "inst-001".to_string(),
         ledger_path,
+        ledger_schema: None,
     };
     Session::boot(cfg).unwrap()
 }

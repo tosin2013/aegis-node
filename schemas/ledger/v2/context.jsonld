@@ -1,0 +1,142 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "aegis": "https://aegis-node.dev/schemas/ledger/v2#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+
+    "entryId": "aegis:entryId",
+    "sessionId": "aegis:sessionId",
+    "entryType": "aegis:entryType",
+    "timestamp": {
+      "@id": "aegis:timestamp",
+      "@type": "xsd:dateTime"
+    },
+    "agentIdentityHash": {
+      "@id": "aegis:agentIdentityHash",
+      "@type": "xsd:hexBinary"
+    },
+    "prevHash": {
+      "@id": "aegis:prevHash",
+      "@type": "xsd:hexBinary"
+    },
+    "sequenceNumber": {
+      "@id": "aegis:sequenceNumber",
+      "@type": "xsd:nonNegativeInteger"
+    },
+
+    "reasoningStepId": "aegis:reasoningStepId",
+    "input": "aegis:input",
+    "reasoning": "aegis:reasoning",
+    "toolsConsidered": {
+      "@id": "aegis:toolsConsidered",
+      "@container": "@list"
+    },
+    "toolSelected": "aegis:toolSelected",
+
+    "resourceUri": {
+      "@id": "aegis:resourceUri",
+      "@type": "@id"
+    },
+    "accessType": "aegis:accessType",
+    "bytesAccessed": {
+      "@id": "aegis:bytesAccessed",
+      "@type": "xsd:nonNegativeInteger"
+    },
+
+    "approverId": "aegis:approverId",
+    "actionSummary": "aegis:actionSummary",
+    "decision": "aegis:decision",
+    "decidedAt": {
+      "@id": "aegis:decidedAt",
+      "@type": "xsd:dateTime"
+    },
+    "expiresAt": {
+      "@id": "aegis:expiresAt",
+      "@type": "xsd:dateTime"
+    },
+
+    "violationReason": "aegis:violationReason",
+    "networkConnectionsObserved": {
+      "@id": "aegis:networkConnectionsObserved",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "ledgerRootHash": {
+      "@id": "aegis:ledgerRootHash",
+      "@type": "xsd:hexBinary"
+    },
+
+    "turnNumber": {
+      "@id": "aegis:turnNumber",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "toolCallId": "aegis:toolCallId",
+    "toolName": "aegis:toolName",
+    "toolOrigin": "aegis:toolOrigin",
+    "requestArgsHex": {
+      "@id": "aegis:requestArgsHex",
+      "@type": "xsd:hexBinary"
+    },
+    "resultHashHex": {
+      "@id": "aegis:resultHashHex",
+      "@type": "xsd:hexBinary"
+    },
+    "resultPayload": "aegis:resultPayload",
+    "resultPayloadRef": "aegis:resultPayloadRef",
+
+    "modelDigestHex": {
+      "@id": "aegis:modelDigestHex",
+      "@type": "xsd:hexBinary"
+    },
+    "contextDigestHex": {
+      "@id": "aegis:contextDigestHex",
+      "@type": "xsd:hexBinary"
+    },
+    "seed": {
+      "@id": "aegis:seed",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "temperature": {
+      "@id": "aegis:temperature",
+      "@type": "xsd:double"
+    },
+    "topP": {
+      "@id": "aegis:topP",
+      "@type": "xsd:double"
+    },
+    "topK": {
+      "@id": "aegis:topK",
+      "@type": "xsd:nonNegativeInteger"
+    },
+
+    "tokensIn": {
+      "@id": "aegis:tokensIn",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "tokensOut": {
+      "@id": "aegis:tokensOut",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "tokensCumulative": {
+      "@id": "aegis:tokensCumulative",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "wallclockMsCumulative": {
+      "@id": "aegis:wallclockMsCumulative",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "quotaSnapshots": {
+      "@id": "aegis:quotaSnapshots",
+      "@container": "@list"
+    },
+
+    "grantTtlSeconds": {
+      "@id": "aegis:grantTtlSeconds",
+      "@type": "xsd:nonNegativeInteger"
+    },
+    "grantArgHashHex": {
+      "@id": "aegis:grantArgHashHex",
+      "@type": "xsd:hexBinary"
+    },
+    "decidedBy": "aegis:decidedBy"
+  }
+}
