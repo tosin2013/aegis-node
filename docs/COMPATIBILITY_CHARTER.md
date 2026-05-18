@@ -55,6 +55,16 @@ When a breaking change is genuinely required:
 
 There is no plan to retire `v1` once `v2` ships. Removal would itself be a breaking change against deployed audit evidence.
 
+## Evidence pack v1 (#187)
+
+`aegis evidence cmmc --ledger <path> --out <dir>` (per the [Compliance Traceability Matrix](COMPLIANCE_MATRIX.md) §"Evidence artifact generation") emits a JSON + Markdown bundle mapping F9 ledger entries to NIST SP 800-171 controls.
+
+**Frozen surface.** The pack JSON shape is pinned at `schemas/evidence/v1/evidence-pack.schema.json`; downstream tools (C3PAO ingest, internal dashboards) may rely on it. Schema bumps follow the same rules as ledger v1→v2: new fields can be additive at minor versions; renames/removals require a v2 bump and a transition window.
+
+**Cryptographic anchor.** The pack embeds the F9 ledger's chain root in `ledgerRootHex` — auditors re-derive it via `aegis verify <ledger>` to confirm the pack and the chain agree. No cosign signature on the pack itself yet; that's a deferred follow-up.
+
+**Foundation scope.** v2 ledgers only; NIST SP 800-171 mapping only; single ledger input; unsigned. AI RMF + OWASP framework outputs, v1 ledger compat shim, multi-ledger aggregation, cosign `--sign`, and the CI lint asserting full COMPLIANCE_MATRIX.md coverage are deferred follow-ups.
+
 ## Approval grants (ADR-029)
 
 [ADR-029](adrs/029-task-scoped-ephemeral-approval-grants.md) evolves the F3 approval gate from per-call prompts to **task-scoped ephemeral grants**. The manifest gains an optional `tools.<class>.approval` block with a `tier` enum and a `grant_ttl_seconds` budget. The schema bump is **non-breaking**: every existing manifest behaves exactly as before (effectively `tier: validating` + a 5-minute default TTL when the block is absent).

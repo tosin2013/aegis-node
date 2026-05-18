@@ -54,6 +54,7 @@ dependencies = [
  "aegis-policy",
  "aegis-ui-server",
  "anyhow",
+ "chrono",
  "clap",
  "dirs",
  "hex",
