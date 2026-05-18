@@ -31,6 +31,12 @@ hmac = "0.12"
 # adversarial pattern matching.
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
 thiserror = "1"
+# `time` ties the per-turn SVID lifetime to the multi-turn loop's
+# wallclock budget (ADR-030). aegis-identity exposes
+# `LocalCa::issue_turn_svid` with a `time::Duration` argument; we
+# re-export the dep here so session.rs can construct it without
+# pulling in the whole `time` API surface.
+time = { version = "0.3", default-features = false, features = ["std"] }
 uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]

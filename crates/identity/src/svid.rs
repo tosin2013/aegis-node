@@ -35,6 +35,93 @@ pub const CHAT_TEMPLATE_BINDING_OID: &[u64] = &[1, 3, 6, 1, 4, 1, 99999, 2];
 /// Length of the chat-template-binding extension payload.
 pub const CHAT_TEMPLATE_BINDING_LEN: usize = 32;
 
+/// Aegis private turn-binding OID (ADR-030, F1 extension). Carried as a
+/// non-critical custom extension on per-turn SVIDs issued by
+/// [`crate::LocalCa::issue_turn_svid`]. Records the turn's audience
+/// claim so a stolen SVID from turn N cannot be replayed at turn M:
+/// verifiers reject a cert whose embedded audience disagrees with the
+/// turn the request is bound to.
+///
+/// The extension is **only emitted on per-turn SVIDs**. Session-long
+/// SVIDs ([`crate::LocalCa::issue_svid`] +
+/// [`crate::LocalCa::issue_svid_with_chat_template`]) omit it. A verifier
+/// that sees a TURN_BINDING extension knows the SVID is turn-scoped;
+/// a verifier that sees only DIGEST_BINDING (+ optional CHAT_TEMPLATE)
+/// knows the SVID is session-scoped.
+pub const TURN_BINDING_OID: &[u64] = &[1, 3, 6, 1, 4, 1, 99999, 3];
+
+/// Turn binding wire format inside the [`TURN_BINDING_OID`] extension.
+///
+/// Layout: `[2 bytes big-endian audience length N][N bytes UTF-8 audience]`.
+///
+/// The audience is a stable URI string of the form
+/// `aegis-turn://<session_id>/<turn_number>` (per ADR-030 §"Identity
+/// claim shape"). Length prefix lets future formats append more fields
+/// (turn context-digest, attestation selectors) without breaking
+/// existing parsers — they decode the prefix-bounded audience and stop.
+///
+/// Maximum encoded length is bounded by [`MAX_TURN_BINDING_LEN`] so
+/// the extension stays a fixed size budget; a session ID + small turn
+/// number always fits well inside it.
+pub const MAX_TURN_BINDING_LEN: usize = 2 + 512;
+
+/// Decoded turn-binding extension. `audience` is the freshly-minted
+/// URI for the per-turn SVID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnBinding {
+    pub audience: String,
+}
+
+impl TurnBinding {
+    /// Encode the turn binding into the wire format for the X.509
+    /// extension. Errors if the audience is too long to fit the
+    /// 2-byte length prefix or is empty.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let bytes = self.audience.as_bytes();
+        if bytes.is_empty() {
+            return Err(Error::CertParse(
+                "turn binding audience must not be empty".to_string(),
+            ));
+        }
+        if bytes.len() > u16::MAX as usize {
+            return Err(Error::CertParse(format!(
+                "turn binding audience too long: {} bytes",
+                bytes.len()
+            )));
+        }
+        let len = u16::try_from(bytes.len()).map_err(|_| {
+            Error::CertParse("turn binding audience exceeds u16 length".to_string())
+        })?;
+        let mut out = Vec::with_capacity(2 + bytes.len());
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(bytes);
+        Ok(out)
+    }
+
+    /// Decode the wire format. Errors on short input, mismatched
+    /// length prefix, or non-UTF-8 audience bytes.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 2 {
+            return Err(Error::CertParse(format!(
+                "turn binding truncated: {} bytes",
+                bytes.len()
+            )));
+        }
+        let len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        if bytes.len() < 2 + len {
+            return Err(Error::CertParse(format!(
+                "turn binding length prefix {} exceeds remaining {} bytes",
+                len,
+                bytes.len() - 2
+            )));
+        }
+        let audience = std::str::from_utf8(&bytes[2..2 + len])
+            .map_err(|e| Error::CertParse(format!("turn binding audience not utf-8: {e}")))?
+            .to_string();
+        Ok(Self { audience })
+    }
+}
+
 /// SHA-256 digest of one bound artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Digest(pub [u8; 32]);
@@ -109,4 +196,39 @@ pub struct X509Svid {
     pub chat_template: Option<Digest>,
     pub cert_pem: String,
     pub key_pem: String,
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turn_binding_round_trip() {
+        let tb = TurnBinding {
+            audience: "aegis-turn://session-abc/3".to_string(),
+        };
+        let encoded = tb.encode().unwrap();
+        // 2 bytes length prefix + audience body
+        assert_eq!(encoded.len(), 2 + tb.audience.len());
+        let decoded = TurnBinding::decode(&encoded).unwrap();
+        assert_eq!(decoded, tb);
+    }
+
+    #[test]
+    fn turn_binding_rejects_empty_audience() {
+        let tb = TurnBinding {
+            audience: String::new(),
+        };
+        let err = tb.encode().unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn turn_binding_decode_rejects_short_input() {
+        assert!(TurnBinding::decode(&[]).is_err());
+        assert!(TurnBinding::decode(&[0]).is_err());
+        // Length prefix says 10 bytes but only 1 follows.
+        assert!(TurnBinding::decode(&[0, 10, b'x']).is_err());
+    }
 }

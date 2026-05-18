@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use aegis_approval_gate::ApprovalChannel;
 use aegis_identity::{
     verify_chat_template_binding, verify_digest_binding, Digest, DigestField, DigestTriple,
-    LocalCa, SpiffeId,
+    LocalCa, SpiffeId, X509Svid,
 };
 use aegis_ledger_writer::{Entry, EntryType, LedgerSchemaVersion, LedgerWriter};
 use aegis_mcp_client::McpClient;
@@ -81,6 +81,14 @@ pub struct Session {
     pub(crate) manifest_path: PathBuf,
     pub(crate) model_path: PathBuf,
     pub(crate) config_path: Option<PathBuf>,
+    /// Local CA directory — retained so the multi-turn driver can
+    /// re-load the CA each turn to mint a fresh per-turn SVID
+    /// (ADR-030). The CA is cheap to load (couple of file reads); we
+    /// don't cache it on Session because the load path also surfaces
+    /// any post-boot CA tampering as a typed error.
+    pub(crate) identity_dir: PathBuf,
+    pub(crate) workload_name: String,
+    pub(crate) instance: String,
     /// F3 approval channel — routes `Decision::RequireApproval`. None
     /// means the legacy halt-on-RequireApproval behavior; set via
     /// [`Session::with_approval_channel`] after boot.
@@ -110,6 +118,12 @@ pub struct Session {
     /// tool class otherwise. Reset on each [`Self::boot`] — there is
     /// no cross-session quota state by design.
     pub(crate) aggregate_state: SessionAggregateState,
+    /// Per-turn SVID (ADR-030). Issued at `turn_start` by the
+    /// multi-turn driver; dropped at `turn_end`. `None` outside a turn
+    /// — the session SVID
+    /// ([`Self::svid_cert_pem`] / [`Self::svid_key_pem`]) takes over
+    /// for single-turn paths and mediator calls invoked directly.
+    pub(crate) current_turn_svid: Option<X509Svid>,
 }
 
 /// One observed network-connection attempt + the gate's decision.
@@ -266,12 +280,16 @@ impl Session {
             manifest_path: cfg.manifest_path,
             model_path: cfg.model_path,
             config_path: cfg.config_path,
+            identity_dir: cfg.identity_dir,
+            workload_name: cfg.workload_name,
+            instance: cfg.instance,
             approval_channel: None,
             network_log: Vec::new(),
             mcp_client: None,
             loaded_model: None,
             adversarial_classifier: crate::adversarial::default_classifier(),
             aggregate_state: SessionAggregateState::new(),
+            current_turn_svid: None,
         })
     }
 
@@ -358,17 +376,24 @@ impl Session {
         self.ledger.schema_version()
     }
 
-    /// Write a `turn_start` entry (v2, ADR-026 §"Per-turn entry sequence").
-    /// Records the turn number, the bound model digest, and a SHA-256
-    /// of the canonical-serialized input context so F8 replay can
-    /// detect mid-session context tampering. Caller is responsible for
-    /// only invoking this on v2 ledgers — emitting it on a v1 file
-    /// would taint the chain with an entry type v1 consumers don't
-    /// expect.
+    /// Write a `turn_start` entry (v2, ADR-026 §"Per-turn entry
+    /// sequence" + ADR-030 §"Interaction with the F9 ledger"). Records
+    /// the turn number, the bound model digest, the SHA-256 of the
+    /// canonical-serialized input context, the per-turn SVID's
+    /// thumbprint, and the SVID's audience claim. F8 replay reads
+    /// `contextDigestHex` to detect mid-session context tampering;
+    /// auditors cross-check `svidThumbprintHex` against access entries
+    /// from this turn (cross-check itself is a deferred follow-up).
+    ///
+    /// Caller is responsible for only invoking this on v2 ledgers —
+    /// emitting it on a v1 file would taint the chain with an entry
+    /// type v1 consumers don't expect.
     pub(crate) fn write_turn_start(
         &mut self,
         turn_number: u32,
         context_digest_hex: &str,
+        svid_thumbprint_hex: &str,
+        spiffe_id_aud: &str,
     ) -> Result<()> {
         let mut payload = Map::new();
         payload.insert("turnNumber".to_string(), Value::Number(turn_number.into()));
@@ -380,6 +405,14 @@ impl Session {
             "contextDigestHex".to_string(),
             Value::String(context_digest_hex.to_string()),
         );
+        payload.insert(
+            "svidThumbprintHex".to_string(),
+            Value::String(svid_thumbprint_hex.to_string()),
+        );
+        payload.insert(
+            "spiffeIdAud".to_string(),
+            Value::String(spiffe_id_aud.to_string()),
+        );
         self.ledger.append(Entry {
             session_id: self.session_id.clone(),
             entry_type: EntryType::TurnStart,
@@ -388,6 +421,51 @@ impl Session {
             payload,
         })?;
         Ok(())
+    }
+
+    /// Drop the active per-turn SVID. Called by the multi-turn driver
+    /// at `turn_end` (ADR-030 §"Per-turn rebinding lifecycle"). Memory
+    /// containing the key material falls out of scope; Rust's drop
+    /// semantics handle the zero-out at the `Drop` impl of the
+    /// underlying buffer types. The session-long SVID is unaffected.
+    pub(crate) fn drop_turn_svid(&mut self) {
+        self.current_turn_svid = None;
+    }
+
+    /// Issue a per-turn SVID (ADR-030). Loads the local CA from disk,
+    /// hashes the live digest triple, mints a short-lived SVID with a
+    /// `TURN_BINDING` extension carrying `audience`, stashes it as
+    /// `self.current_turn_svid`, and returns the cert's SHA-256
+    /// thumbprint so the caller can record it in `turn_start` without
+    /// re-borrowing `self`. The session-long SVID
+    /// ([`Self::cert_pem`]) remains in place for dispatch paths
+    /// outside the multi-turn loop.
+    ///
+    /// TTL caps at 60s + the remaining wallclock budget for the
+    /// session so the per-turn SVID can never outlive the loop that
+    /// issued it. Bounded to ≥60s so a near-empty budget still mints
+    /// a usable cert.
+    pub(crate) fn issue_turn_svid(
+        &mut self,
+        audience: &str,
+        wallclock_remaining_seconds: u64,
+    ) -> Result<String> {
+        let ttl_secs = wallclock_remaining_seconds.saturating_add(60).max(60);
+        let ttl = time::Duration::seconds(i64::try_from(ttl_secs).unwrap_or(i64::MAX));
+
+        let live_digests = self.compute_live_digests()?;
+        let ca = LocalCa::load(&self.identity_dir)?;
+        let svid = ca.issue_turn_svid(
+            &self.workload_name,
+            &self.instance,
+            live_digests,
+            self.bound_chat_template,
+            audience,
+            ttl,
+        )?;
+        let thumbprint = aegis_identity::cert_thumbprint_hex(&svid.cert_pem)?;
+        self.current_turn_svid = Some(svid);
+        Ok(thumbprint)
     }
 
     /// Write a `turn_end` entry (v2). Closes a turn with cumulative

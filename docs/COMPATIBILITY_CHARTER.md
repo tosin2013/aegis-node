@@ -55,6 +55,28 @@ When a breaking change is genuinely required:
 
 There is no plan to retire `v1` once `v2` ships. Removal would itself be a breaking change against deployed audit evidence.
 
+## Per-turn workload attestation (ADR-030)
+
+[ADR-030](adrs/030-per-turn-spiffe-mtls-attestation.md) introduces fresh, short-lived SVIDs at every turn boundary in the multi-turn loop. The session-long SVID minted at `Session::boot` is **unchanged** — it still binds the agent's identity for non-turn paths (single-turn `run_turn`, mediator calls outside the loop).
+
+**Per-turn SVID lifecycle.** `Session::run` issues a turn SVID at `turn_start`, stashes it as `current_turn_svid`, and drops it at `turn_end`. Each per-turn SVID carries:
+
+- the bound `(model, manifest, config)` digest triple (unchanged from session SVIDs),
+- the optional chat-template digest (unchanged),
+- a NEW `TURN_BINDING` custom extension (OID `1.3.6.1.4.1.99999.3`) carrying a 2-byte-length-prefixed UTF-8 audience string of the form `aegis-turn://<session_id>/<turn_number>`.
+
+A verifier seeing the `TURN_BINDING` extension knows the SVID is turn-scoped; absence means it's a session SVID. v1 ledger consumers that don't parse the extension at all see a regular SVID with one extra non-critical extension — TLS libraries pass it through cleanly.
+
+**Audience replay protection.** A stolen turn-N SVID cannot be replayed at turn M because the embedded audience disagrees. Foundation PR records the audience + thumbprint in `turn_start.spiffeIdAud` and `turn_start.svidThumbprintHex`; the dispatch-side cross-check ("every access entry's signing SVID matches the active turn's SVID") is a deferred follow-up.
+
+**Foundation PR scope.** Per-turn SVID issuance with the TurnBinding extension; ledger `turn_start` carries `svidThumbprintHex` + `spiffeIdAud`. Deferred follow-ups:
+
+- The <50 ms latency benchmark + HKDF-derived fallback if attestation runs slow (ADR-030 §"Latency budget").
+- MCP-over-network mTLS transport adoption of the per-turn SVID (ADR-022 dependency).
+- `aegis verify` cross-check of access entries' signing SVID against their turn-bracket SVID.
+- Process-attestation selector expansion (`process:binary_digest`, etc.).
+- ADR-029 approval-channel cross-binding (resume must re-attest before next turn).
+
 ## Aggregate quotas (ADR-027)
 
 [ADR-027](adrs/027-aggregate-quota-schema.md) extends the F2 Permission Manifest with optional `tools.<class>.quota` blocks. The schema bump is **non-breaking**: every existing manifest stays valid because `quota` is an optional sub-object on each tool class.
