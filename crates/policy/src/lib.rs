@@ -11,6 +11,7 @@
 //! plane lands, `Policy::from_resolved_json` will be the canonical entry
 //! point and the YAML loader becomes a CLI/dev convenience.
 
+pub mod aggregate;
 pub mod decision;
 pub mod error;
 mod identity_binding;
@@ -18,12 +19,16 @@ pub mod manifest;
 mod policy;
 mod violation;
 
+pub use aggregate::{
+    quota_for, AggregateCapExceeded, QuotaSnapshot, SessionAggregateState, ToolClass,
+};
 pub use decision::{Decision, NetworkProto};
 pub use error::{Error, Result};
 pub use identity_binding::{check_identity_binding, check_identity_binding_now};
 pub use manifest::{
-    Agent, ApiGrant, ApprovalClass, ExecGrant, Filesystem, Identity, Manifest, Network,
-    NetworkAllowEntry, NetworkMode, NetworkPolicy, NetworkProtocol, Tools, WriteAction, WriteGrant,
+    Agent, AggregateQuota, ApiGrant, ApprovalClass, Exec, ExecGrant, Filesystem, Identity,
+    Manifest, Network, NetworkAllowEntry, NetworkMode, NetworkPolicy, NetworkProtocol, Tools,
+    WriteAction, WriteGrant,
 };
 pub use policy::Policy;
 pub use violation::{emit_violation, ViolationEvent};

@@ -92,6 +92,11 @@ pub struct Tools {
     pub apis: Vec<ApiGrant>,
     #[serde(default)]
     pub mcp: Vec<McpServerGrant>,
+    /// Exec-tool-class settings (ADR-027). Per-grant rules live in
+    /// the top-level `exec_grants`; this block carries the aggregate
+    /// quota for the class. `None` means no aggregate cap.
+    #[serde(default)]
+    pub exec: Option<Exec>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -101,6 +106,10 @@ pub struct Filesystem {
     pub read: Vec<String>,
     #[serde(default)]
     pub write: Vec<String>,
+    /// Per-session aggregate quota for filesystem dispatches
+    /// (ADR-027). `None` = no aggregate cap.
+    #[serde(default)]
+    pub quota: Option<AggregateQuota>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -110,6 +119,41 @@ pub struct Network {
     pub outbound: Option<NetworkPolicy>,
     #[serde(default)]
     pub inbound: Option<NetworkPolicy>,
+    /// Per-session aggregate quota for network dispatches (ADR-027).
+    /// `None` = no aggregate cap.
+    #[serde(default)]
+    pub quota: Option<AggregateQuota>,
+}
+
+/// Exec-tool-class settings (ADR-027). Currently carries the
+/// aggregate quota only — per-grant rules stay in [`Manifest::exec_grants`]
+/// to avoid restructuring the manifest in the foundation PR.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Exec {
+    /// Per-session aggregate quota for exec dispatches.
+    #[serde(default)]
+    pub quota: Option<AggregateQuota>,
+}
+
+/// Per-session aggregate quota for a tool class (ADR-027). All fields
+/// optional; absent quota = no aggregate cap. Counters reset at
+/// session start — there is no cross-session quota state (out of
+/// scope for v1.0.0 per the ADR's §"Runtime accumulator").
+///
+/// Foundation PR carries `max_calls_per_session` only; byte-counter
+/// quotas (`max_bytes_read_per_session`, `max_bytes_written_per_session`,
+/// `max_bytes_uploaded_per_session`, `max_bytes_downloaded_per_session`)
+/// land in follow-ups that wire byte tracking into each dispatch path.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AggregateQuota {
+    /// Hard cap on the number of dispatched calls in this tool class
+    /// per session. The (N+1)th call returns `Denied` with an
+    /// `AggregateCapExceeded` violation entered on the F9 ledger.
+    /// `None` = no cap on call count.
+    #[serde(default, rename = "max_calls_per_session")]
+    pub max_calls_per_session: Option<u64>,
 }
 
 /// `oneOf {string, object}` from the schema.
@@ -163,6 +207,12 @@ pub struct McpServerGrant {
     pub server_name: String,
     pub server_uri: String,
     pub allowed_tools: Vec<AllowedTool>,
+    /// Per-session aggregate quota for dispatches to this MCP server
+    /// (ADR-027). Per-server, not global across all MCP servers —
+    /// each server gets its own counter so a quota on `fs-mcp` doesn't
+    /// limit calls to `search-mcp`.
+    #[serde(default)]
+    pub quota: Option<AggregateQuota>,
 }
 
 /// One entry in [`McpServerGrant::allowed_tools`]. Two shapes are
