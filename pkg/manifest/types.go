@@ -124,8 +124,8 @@ type AggregateQuota struct {
 // identical retries. Parse-only on the Go side — behavior dispatch
 // lives in the Rust runtime.
 type ApprovalPolicy struct {
-	Tier             string `yaml:"tier,omitempty" json:"tier,omitempty"`
-	GrantTTLSeconds  uint64 `yaml:"grant_ttl_seconds,omitempty" json:"grant_ttl_seconds,omitempty"`
+	Tier            string `yaml:"tier,omitempty" json:"tier,omitempty"`
+	GrantTTLSeconds uint64 `yaml:"grant_ttl_seconds,omitempty" json:"grant_ttl_seconds,omitempty"`
 }
 
 // NetworkMode captures the schema's `oneOf {string enum, allowlist object}`.
