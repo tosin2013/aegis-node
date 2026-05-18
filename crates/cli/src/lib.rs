@@ -21,6 +21,7 @@ use aegis_ledger_writer::{verify_file, VerifyError};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+pub mod evidence;
 pub mod pull;
 pub mod run;
 pub mod ui;
@@ -47,6 +48,19 @@ enum Command {
     Pull(PullArgs),
     /// Start the localhost-bound Community UI server (ADR-031, sub-phase 1d.0).
     Ui(ui::UiArgs),
+    /// Compliance evidence generation (ADR-011 + COMPLIANCE_MATRIX.md).
+    Evidence {
+        #[command(subcommand)]
+        sub: EvidenceCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum EvidenceCommand {
+    /// Generate a CMMC 2.0 / NIST SP 800-171 evidence pack from one
+    /// trajectory ledger (per ADR-011 F9 + the Compliance Traceability
+    /// Matrix).
+    Cmmc(evidence::CmmcArgs),
 }
 
 #[derive(Debug, Args)]
@@ -149,6 +163,9 @@ pub fn run() -> Result<()> {
         Command::Run(args) => cmd_run(args),
         Command::Pull(args) => cmd_pull(args),
         Command::Ui(args) => ui::execute(args),
+        Command::Evidence { sub } => match sub {
+            EvidenceCommand::Cmmc(args) => evidence::execute(args),
+        },
     }
 }
 

@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://aegis-node.dev/schemas/evidence/v1/evidence-pack.schema.json",
+  "title": "Aegis-Node Evidence Pack v1",
+  "description": "Output of `aegis evidence cmmc` (ADR-011 + COMPLIANCE_MATRIX.md). Maps F9 ledger entries to NIST SP 800-171 controls so a C3PAO can ingest the bundle as evidence for CMMC 2.0 Level 2 assessment.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "ledgerRootHex",
+    "ledgerSchemaVersion",
+    "generatedAt",
+    "entry_count",
+    "controls",
+    "controls_covered"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["1"],
+      "description": "Pack schema version. Bumped when the JSON shape changes incompatibly."
+    },
+    "session_id": {
+      "type": ["string", "null"],
+      "description": "Session ID extracted from the ledger (uniform across all entries; null only for an empty ledger)."
+    },
+    "ledgerRootHex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Hex-encoded F9 chain root. `aegis verify <ledger>` re-derives this value."
+    },
+    "ledgerSchemaVersion": {
+      "type": "string",
+      "enum": ["v1", "v2", "unknown"],
+      "description": "Detected ledger schema. Foundation emits packs from v2 ledgers; v1 support is a compat shim follow-up."
+    },
+    "since": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Lower bound (inclusive of equal) of the date filter applied to the walk."
+    },
+    "until": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Upper bound (inclusive of equal) of the date filter applied to the walk."
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Wallclock when this pack was generated."
+    },
+    "entry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of ledger entries inspected (after date filtering)."
+    },
+    "controls_covered": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Length of the `controls` map. Exposed at the top level so a glance suffices."
+    },
+    "controls": {
+      "type": "object",
+      "description": "Per-control evidence. Keys are NIST SP 800-171 control IDs (e.g. \"3.3.1\"); values describe the matching ledger evidence.",
+      "patternProperties": {
+        "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$": {
+          "type": "object",
+          "required": [
+            "control",
+            "evidence_count",
+            "first_sequence_number",
+            "last_sequence_number",
+            "sample_entry_ids"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "control": {
+              "type": "object",
+              "required": ["id", "family", "title"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string" },
+                "family": {
+                  "type": "string",
+                  "enum": ["AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PE", "PS", "RA", "CA", "SC", "SI"]
+                },
+                "title": { "type": "string", "minLength": 1 }
+              }
+            },
+            "evidence_count": { "type": "integer", "minimum": 1 },
+            "first_sequence_number": { "type": "integer", "minimum": 0 },
+            "last_sequence_number": { "type": "integer", "minimum": 0 },
+            "sample_entry_ids": {
+              "type": "array",
+              "items": { "type": "string" },
+              "maxItems": 10
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
